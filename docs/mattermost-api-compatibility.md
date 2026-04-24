@@ -32,11 +32,11 @@ reports matched, missing, and extra route shapes.
 Using Mattermost `master` OpenAPI source:
 
 - Official API v4 endpoints: 539
-- Local routed endpoints: 100
-- Matched endpoint shapes: 58
-- Missing official endpoint shapes: 481
+- Local routed endpoints: 109
+- Matched endpoint shapes: 67
+- Missing official endpoint shapes: 472
 - Local-only endpoint shapes: 42
-- Route-shape coverage: 10.76%
+- Route-shape coverage: 12.43%
 
 This is not perfect API compatibility yet. It is a measured compatibility
 baseline that can now improve continuously.
@@ -136,3 +136,13 @@ permission denial, and not-found behavior where applicable.
   - `GET /api/v4/license/client?format=old`
   - `GET /api/v4/system/timezones`
   - `GET /api/v4/config/environment`
+- Added official aliases for existing self/team/channel/post workflows:
+  - `GET /api/v4/teams`
+  - `GET /api/v4/teams/{team_id}`
+  - `GET /api/v4/teams/{team_id}/channels`
+  - `GET /api/v4/users/{user_id}/teams`
+  - `GET /api/v4/users/{user_id}/teams/{team_id}/channels`
+  - `GET /api/v4/users/{user_id}/teams/{team_id}/channels/members`
+  - `GET /api/v4/users/{user_id}/sessions`
+  - `GET /api/v4/channels/{channel_id}/members/{user_id}`
+  - `GET /api/v4/posts/{post_id}`

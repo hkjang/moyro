@@ -277,6 +277,7 @@ func New(cfg *config.Config, db *store.DB, hub *ws.Hub, host *pluginhost.Host, l
 			r.Get("/users/{userID}", h.getUser)
 			r.Get("/users/username/{username}", h.getUserByUsername)
 			r.Get("/users/{userID}/image", h.getUserImage)
+			r.Get("/users/{userID}/sessions", h.listUserSessions)
 			// Phase 16: soft-delete / restore. DELETE accepts self-for-self
 			// so a regular user can close their own account; handler
 			// enforces the admin-or-self check. Reactivate is admin-only.
@@ -286,7 +287,10 @@ func New(cfg *config.Config, db *store.DB, hub *ws.Hub, host *pluginhost.Host, l
 			r.Put("/users/me/status", h.updateMyStatus)
 			r.Get("/system/timezones", h.getSupportedTimezones)
 			r.Post("/teams", h.createTeam)
+			r.Get("/teams", h.listTeams)
+			r.Get("/teams/{teamID}", h.getTeam)
 			r.Get("/users/me/teams", h.listTeams)
+			r.Get("/users/{userID}/teams", h.listTeamsForUserParam)
 			r.Post("/teams/{teamID}/posts/search", h.searchPosts)
 
 			// Team invite CRUD. Handler performs the "caller must be
@@ -297,13 +301,16 @@ func New(cfg *config.Config, db *store.DB, hub *ws.Hub, host *pluginhost.Host, l
 			r.Delete("/teams/{teamID}/invites/{inviteID}", h.revokeInvite)
 
 			r.Post("/channels", h.createChannel)
+			r.Get("/teams/{teamID}/channels", h.listChannels)
 			r.Get("/users/me/teams/{teamID}/channels", h.listChannels)
+			r.Get("/users/{userID}/teams/{teamID}/channels", h.listChannelsForUserParam)
 			r.Post("/channels/direct", h.createDirectChannel)
 			r.Get("/channels/{channelID}", h.getChannel)
 			r.Put("/channels/{channelID}", h.patchChannel)
 			r.Post("/channels/{channelID}/view", h.viewChannel)
 
 			r.Post("/posts", h.createPost)
+			r.Get("/posts/{postID}", h.getPost)
 			r.Get("/channels/{channelID}/posts", h.listPosts)
 			r.Put("/posts/{postID}", h.updatePost)
 			r.Delete("/posts/{postID}", h.deletePost)
@@ -369,6 +376,7 @@ func New(cfg *config.Config, db *store.DB, hub *ws.Hub, host *pluginhost.Host, l
 			// /members catch-all; chi matches in registration order but
 			// specific paths before parameterized ones is safest.
 			r.Get("/channels/{channelID}/members/autocomplete", h.channelMembersAutocomplete)
+			r.Get("/channels/{channelID}/members/{targetUserID}", h.getChannelMember)
 			r.Post("/channels/{channelID}/members", h.addChannelMember)
 			// Phase 18 — self-join for public channel discovery. Distinct
 			// from addChannelMember (which requires already being a member
@@ -378,6 +386,7 @@ func New(cfg *config.Config, db *store.DB, hub *ws.Hub, host *pluginhost.Host, l
 			r.Get("/channels/{channelID}/members/me/notify_props", h.getMyNotifyProps)
 			r.Put("/channels/{channelID}/members/me/notify_props", h.putMyNotifyProps)
 			r.Get("/users/me/teams/{teamID}/channels/members", h.listMyChannelMembers)
+			r.Get("/users/{userID}/teams/{teamID}/channels/members", h.listChannelMembersForUserParam)
 
 			r.Post("/commands/execute", h.executeCommand)
 

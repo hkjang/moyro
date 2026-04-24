@@ -38,31 +38,31 @@ import (
 )
 
 type handlers struct {
-	cfg       *config.Config
-	auth      *auth.Service
-	teams     *teams.Service
-	channels  *channels.Service
-	posts     *posts.Service
-	reactions *reactions.Service
-	files     *files.Service
-	status    *userstatus.Service
-	audit     *audit.Service
-	slash     *slashcmd.Service
-	bots      *bots.Service
-	incoming  *webhooks.IncomingService
-	outgoing  *webhooks.OutgoingService
-	outDisp   *webhooks.Dispatcher
-	emojis    *emojis.Service
-	oauthReg  *oauth.Registry
+	cfg        *config.Config
+	auth       *auth.Service
+	teams      *teams.Service
+	channels   *channels.Service
+	posts      *posts.Service
+	reactions  *reactions.Service
+	files      *files.Service
+	status     *userstatus.Service
+	audit      *audit.Service
+	slash      *slashcmd.Service
+	bots       *bots.Service
+	incoming   *webhooks.IncomingService
+	outgoing   *webhooks.OutgoingService
+	outDisp    *webhooks.Dispatcher
+	emojis     *emojis.Service
+	oauthReg   *oauth.Registry
 	oauthIdent *oauth.IdentityStore
-	invites   *invites.Service
-	saved     *savedposts.Service
-	links     *links.Service
-	scheduled *scheduled.Service
-	reminders *reminders.Service
-	hub       *ws.Hub
-	host      *pluginhost.Host
-	logger    *slog.Logger
+	invites    *invites.Service
+	saved      *savedposts.Service
+	links      *links.Service
+	scheduled  *scheduled.Service
+	reminders  *reminders.Service
+	hub        *ws.Hub
+	host       *pluginhost.Host
+	logger     *slog.Logger
 }
 
 type ctxKey string
@@ -140,6 +140,28 @@ func extractBearer(r *http.Request) string {
 func userID(r *http.Request) string {
 	v, _ := r.Context().Value(userIDKey).(string)
 	return v
+}
+
+func (h *handlers) requireUserParamAccess(w http.ResponseWriter, r *http.Request, param string) (string, bool) {
+	targetID := chi.URLParam(r, param)
+	actorID := userID(r)
+	if targetID == "" || targetID == "me" {
+		targetID = actorID
+	}
+	if targetID == "" || actorID == "" {
+		writeError(w, http.StatusUnauthorized, "api.context.session_expired.app_error", "missing token")
+		return "", false
+	}
+	if actorID == targetID {
+		return targetID, true
+	}
+	if h.auth != nil {
+		if ok, _ := h.auth.HasRole(r.Context(), actorID, "system_admin"); ok {
+			return targetID, true
+		}
+	}
+	writeError(w, http.StatusForbidden, "api.context.permissions.app_error", "admin required")
+	return "", false
 }
 
 // requireRole gates a sub-route on the caller holding a specific role
@@ -502,22 +524,7 @@ type sessionView struct {
 }
 
 func (h *handlers) listMySessions(w http.ResponseWriter, r *http.Request) {
-	uid := userID(r)
-	sessions, err := h.auth.ListSessions(r.Context(), uid)
-	if err != nil {
-		writeError(w, 500, "api.session.list.app_error", err.Error())
-		return
-	}
-	current := extractBearer(r)
-	out := make([]sessionView, 0, len(sessions))
-	for _, s := range sessions {
-		out = append(out, sessionView{
-			ID: s.ID, UserID: s.UserID, DeviceID: s.DeviceID,
-			ExpiresAt: s.ExpiresAt, CreateAt: s.CreateAt,
-			IsCurrent: s.Token == current,
-		})
-	}
-	writeJSON(w, 200, out)
+	h.writeSessionsForUser(w, r, userID(r))
 }
 
 func (h *handlers) revokeMySession(w http.ResponseWriter, r *http.Request) {
@@ -889,12 +896,7 @@ func (h *handlers) createTeam(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *handlers) listTeams(w http.ResponseWriter, r *http.Request) {
-	list, err := h.teams.ListForUser(r.Context(), userID(r))
-	if err != nil {
-		writeError(w, 500, "api.team.list.app_error", err.Error())
-		return
-	}
-	writeJSON(w, 200, list)
+	h.listTeamsForUserID(w, r, userID(r))
 }
 
 // ---- Team invites (Phase 16) ----
@@ -912,8 +914,8 @@ func (h *handlers) canManageTeamInvites(ctx context.Context, actorID, teamID str
 }
 
 type createInviteReq struct {
-	MaxUses    int   `json:"max_uses"`     // 0 = unlimited within TTL
-	TTLSeconds int64 `json:"ttl_seconds"`  // defaults to 7 days if <= 0
+	MaxUses    int   `json:"max_uses"`    // 0 = unlimited within TTL
+	TTLSeconds int64 `json:"ttl_seconds"` // defaults to 7 days if <= 0
 }
 
 type inviteView struct {
@@ -1100,16 +1102,7 @@ func (h *handlers) createChannel(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *handlers) listChannels(w http.ResponseWriter, r *http.Request) {
-	teamID := chi.URLParam(r, "teamID")
-	// Phase 16: when include_deleted=true the sidebar can surface archived
-	// channels dimmed. Default false preserves existing behaviour.
-	includeDeleted := r.URL.Query().Get("include_deleted") == "true"
-	list, err := h.channels.ListForUserIncludingDeleted(r.Context(), userID(r), teamID, includeDeleted)
-	if err != nil {
-		writeError(w, 500, "api.channel.list.app_error", err.Error())
-		return
-	}
-	writeJSON(w, 200, list)
+	h.listChannelsForUserID(w, r, userID(r))
 }
 
 // archiveChannel — admin-only (mounted inside the system_admin group).
@@ -2065,14 +2058,7 @@ func (h *handlers) deleteReminder(w http.ResponseWriter, r *http.Request) {
 // notify_props. The webapp uses this to restore sidebar state on
 // reconnect so badges survive a reload.
 func (h *handlers) listMyChannelMembers(w http.ResponseWriter, r *http.Request) {
-	teamID := chi.URLParam(r, "teamID")
-	uid := userID(r)
-	list, err := h.channels.ListForUserWithCounts(r.Context(), uid, teamID)
-	if err != nil {
-		writeError(w, 500, "api.channel.members.me.app_error", err.Error())
-		return
-	}
-	writeJSON(w, 200, list)
+	h.listChannelMembersForUserID(w, r, userID(r))
 }
 
 func (h *handlers) getMyNotifyProps(w http.ResponseWriter, r *http.Request) {
