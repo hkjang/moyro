@@ -1,5 +1,5 @@
 import { jsx as _jsx, jsxs as _jsxs, Fragment as _Fragment } from "react/jsx-runtime";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useDispatch } from "react-redux";
 import { setAuth } from "@/store/authSlice";
 import { api } from "@/api/client";
@@ -17,6 +17,22 @@ const PROVIDER_LABELS = {
     google: "Google로 계속하기",
     github: "GitHub으로 계속하기",
 };
+const DEV_AUTO_LOGIN = {
+    enabled: import.meta.env.DEV && import.meta.env.VITE_MODDLE_DEV_AUTO_LOGIN !== "false",
+    loginId: import.meta.env.VITE_MODDLE_DEV_LOGIN_ID || "webuser",
+    username: import.meta.env.VITE_MODDLE_DEV_USERNAME || "webuser",
+    email: import.meta.env.VITE_MODDLE_DEV_EMAIL || "web@x.com",
+    password: import.meta.env.VITE_MODDLE_DEV_PASSWORD || "P@ssw0rd1",
+};
+const DEV_AUTO_LOGIN_DISABLED_KEY = "moddle.devAutoLogin.disabled";
+function isDevAutoLoginDisabled() {
+    try {
+        return window.localStorage.getItem(DEV_AUTO_LOGIN_DISABLED_KEY) === "true";
+    }
+    catch {
+        return false;
+    }
+}
 export function LoginView() {
     const [mode, setMode] = useState("login");
     const [loginId, setLoginId] = useState("");
@@ -35,7 +51,65 @@ export function LoginView() {
     const [invite, setInvite] = useState(null);
     const [inviteId, setInviteId] = useState("");
     const [inviteError, setInviteError] = useState(null);
+    const devAutoLoginStartedRef = useRef(false);
     const dispatch = useDispatch();
+    // Development-only fast path: Vite dev sessions should land directly in
+    // the chat app. If the default user is missing, create it once and retry.
+    // Invite and OAuth error URLs deliberately bypass this path so those flows
+    // remain testable during development.
+    useEffect(() => {
+        if (!DEV_AUTO_LOGIN.enabled || devAutoLoginStartedRef.current)
+            return;
+        if (window.location.hash.startsWith("#invite="))
+            return;
+        if (window.location.hash.startsWith("#oauth_error="))
+            return;
+        if (isDevAutoLoginDisabled())
+            return;
+        devAutoLoginStartedRef.current = true;
+        let cancelled = false;
+        setMode("login");
+        setLoginId(DEV_AUTO_LOGIN.loginId);
+        setPassword(DEV_AUTO_LOGIN.password);
+        setError(null);
+        setBusy(true);
+        async function loginOrCreateDevUser() {
+            try {
+                let res;
+                try {
+                    res = await api.login(DEV_AUTO_LOGIN.loginId, DEV_AUTO_LOGIN.password);
+                }
+                catch {
+                    try {
+                        await api.register(DEV_AUTO_LOGIN.username, DEV_AUTO_LOGIN.email, DEV_AUTO_LOGIN.password);
+                    }
+                    catch (registerErr) {
+                        const msg = registerErr instanceof Error ? registerErr.message.toLowerCase() : "";
+                        const likelyExistingUser = msg.includes("already") || msg.includes("duplicate") || msg.includes("exists");
+                        if (!likelyExistingUser)
+                            throw registerErr;
+                    }
+                    res = await api.login(DEV_AUTO_LOGIN.loginId, DEV_AUTO_LOGIN.password);
+                }
+                if (!cancelled) {
+                    dispatch(setAuth({ token: res.token, user: res.user }));
+                }
+            }
+            catch (err) {
+                if (!cancelled) {
+                    setError(err instanceof Error ? `Dev auto login failed: ${err.message}` : "Dev auto login failed");
+                }
+            }
+            finally {
+                if (!cancelled)
+                    setBusy(false);
+            }
+        }
+        void loginOrCreateDevUser();
+        return () => {
+            cancelled = true;
+        };
+    }, [dispatch]);
     // Read enabled OAuth providers once on mount. A failure here is
     // non-fatal — we just hide the social buttons and fall back to the
     // password form so the instance stays usable.

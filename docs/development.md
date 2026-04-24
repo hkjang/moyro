@@ -47,6 +47,37 @@ Set-Location webapp
 & 'C:\Program Files\nodejs\npm.cmd' run dev
 ```
 
+In Vite development mode, the login screen auto-signs in with a local dev
+account. If the account does not exist yet, the webapp registers it once and
+then logs in.
+
+Default dev account:
+
+- username/login: `webuser`
+- email: `web@x.com`
+- password: `P@ssw0rd1`
+
+Override with `webapp/.env.local`:
+
+```dotenv
+VITE_MODDLE_DEV_LOGIN_ID=webuser
+VITE_MODDLE_DEV_USERNAME=webuser
+VITE_MODDLE_DEV_EMAIL=web@x.com
+VITE_MODDLE_DEV_PASSWORD=P@ssw0rd1
+```
+
+Disable auto-login when testing the login/OAuth/invite screens:
+
+```dotenv
+VITE_MODDLE_DEV_AUTO_LOGIN=false
+```
+
+You can also disable it in one browser profile without changing files:
+
+```js
+localStorage.setItem("moddle.devAutoLogin.disabled", "true")
+```
+
 Prefer TypeScript files in `webapp/src`. The neighboring `.js` files are
 legacy/generated artifacts and should not be treated as the source of truth
 unless a task explicitly targets them.

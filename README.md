@@ -55,6 +55,11 @@ Set-Location webapp
 The server listens on `http://localhost:8065` by default. The Vite web app
 uses its configured dev proxy for `/api/v4`.
 
+In Vite development mode the web login screen auto-signs in as
+`webuser / P@ssw0rd1`, creating that dev account once if needed. See
+[Development Guide](docs/development.md) for overrides and how to disable it
+while testing auth flows.
+
 ## Verification
 
 Use the Windows-friendly project check:
