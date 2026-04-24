@@ -13,7 +13,7 @@ remaining small enough to evolve quickly.
 - `plugins/` - local plugin fixtures
 - `deploy/` - development Docker Compose services
 - `docs/` - architecture, development, plugin, and roadmap notes
-- `scripts/` - verification and contract smoke tests
+- `scripts/` - dev launcher, verification, and contract smoke tests
 
 ## Current Capabilities
 
@@ -30,6 +30,18 @@ remaining small enough to evolve quickly.
 - Web plugin registry/runtime skeleton
 
 ## Quick Start
+
+Fast path on Windows:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\dev.ps1
+```
+
+That starts the local Docker services, opens the Go server in one PowerShell
+window, and opens the Vite web app in another. Use `-SkipInfra` when Docker
+services are already running.
+
+Manual path:
 
 Start the infrastructure:
 

@@ -10,13 +10,13 @@ Status: mostly present.
 - Auth, sessions, users, teams, channels
 - Posts, threads, files, reactions, markdown
 - WebSocket events and reconnect recovery
-- Local dev services and verification script
+- Local dev services, dev launcher, and verification script
 - Basic architecture and development docs
 
 Next polish:
 
-- Add focused tests around auth, post creation, WebSocket event payloads, and
-  plugin hook order.
+- Keep expanding focused tests around auth, post creation, WebSocket event
+  payloads, plugin hook order, and compatibility contracts.
 - Split `ChatView.tsx` into smaller feature components without changing UI.
 - Make OpenAPI and actual handlers converge.
 

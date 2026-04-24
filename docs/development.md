@@ -7,6 +7,30 @@
 - Docker Desktop for PostgreSQL, Redis, and MinIO dev services
 - PowerShell for the project verification script
 
+## One-Command Launcher
+
+From the repo root:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\dev.ps1
+```
+
+The launcher starts the Docker Compose dev services, then opens separate
+PowerShell windows for:
+
+- `go run ./cmd/moddle` in `server/`
+- `npm run dev -- --host 127.0.0.1 --port 5173` in `webapp/`
+
+It also points `MODDLE_PLUGIN_DIR` at the repo-level `plugins/` directory so
+local plugin fixtures are available during development.
+
+Useful switches:
+
+- `-SkipInfra` when PostgreSQL, Redis, and MinIO are already running
+- `-NoServer` to start only infrastructure and the web app
+- `-NoWeb` to start only infrastructure and the server
+- `-WebPort 5174` to move Vite to another port
+
 ## Local Services
 
 ```powershell

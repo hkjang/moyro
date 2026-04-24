@@ -32,16 +32,28 @@ function Resolve-NpmCmd {
   throw "npm was not found on PATH"
 }
 
+function Invoke-Native {
+  param(
+    [Parameter(Mandatory = $true)][string]$FilePath,
+    [Parameter(Mandatory = $true)][string[]]$Arguments
+  )
+
+  & $FilePath @Arguments
+  if ($LASTEXITCODE -ne 0) {
+    throw ("Command failed with exit code {0}: {1} {2}" -f $LASTEXITCODE, $FilePath, ($Arguments -join ' '))
+  }
+}
+
 $npm = Resolve-NpmCmd
 
 Write-Step "web typecheck"
 Push-Location (Join-Path $root "webapp")
 try {
-  & $npm run typecheck
+  Invoke-Native $npm @("run", "typecheck")
 
   if (-not $SkipBuild) {
     Write-Step "web production build"
-    & $npm run build
+    Invoke-Native $npm @("run", "build")
   }
 } finally {
   Pop-Location
@@ -53,7 +65,7 @@ New-Item -ItemType Directory -Force -Path $goCache | Out-Null
 $env:GOCACHE = $goCache
 Push-Location (Join-Path $root "server")
 try {
-  go test ./...
+  Invoke-Native "go" @("test", "./...")
 } finally {
   Pop-Location
 }
