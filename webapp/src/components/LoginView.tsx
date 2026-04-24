@@ -1,0 +1,258 @@
+import { useEffect, useState } from "react";
+import { useDispatch } from "react-redux";
+import { setAuth } from "@/store/authSlice";
+import { api, type InvitePreview } from "@/api/client";
+
+type Mode = "login" | "register";
+
+// Messages for the handful of server-side OAuth failures the callback
+// surfaces via #oauth_error=... Everything else falls back to "login error".
+const OAUTH_ERROR_MESSAGES: Record<string, string> = {
+  state_missing: "로그인 세션이 만료되었습니다. 다시 시도해 주세요.",
+  state_mismatch: "보안 상태값이 일치하지 않습니다. 다시 로그인해 주세요.",
+  missing_params: "인증 콜백이 완전하지 않습니다.",
+  exchange_failed: "소셜 로그인 제공자와 통신하지 못했습니다.",
+  resolve_failed: "계정을 처리하지 못했습니다. 관리자에게 문의해 주세요.",
+  unverified_email:
+    "이메일이 확인되지 않아 기존 계정과 자동 연결할 수 없습니다. 기존 비밀번호로 먼저 로그인해 주세요.",
+};
+
+const PROVIDER_LABELS: Record<string, string> = {
+  google: "Google로 계속하기",
+  github: "GitHub으로 계속하기",
+};
+
+export function LoginView() {
+  const [mode, setMode] = useState<Mode>("login");
+  const [loginId, setLoginId] = useState("");
+  const [username, setUsername] = useState("");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [providers, setProviders] = useState<string[]>([]);
+  // `invite` is null until the `#invite=<id>` fragment parse completes (and
+  // the server confirms it). A failed preview (expired / revoked / bad id)
+  // surfaces via `inviteError` so users don't get a silent signup with no
+  // team attached. `inviteId` is retained on failure so we can round-trip
+  // the value to the backend if the admin re-activates the invite mid-flow,
+  // but UI-wise we don't show the banner unless we have a preview.
+  const [invite, setInvite] = useState<InvitePreview | null>(null);
+  const [inviteId, setInviteId] = useState("");
+  const [inviteError, setInviteError] = useState<string | null>(null);
+  const dispatch = useDispatch();
+
+  // Read enabled OAuth providers once on mount. A failure here is
+  // non-fatal — we just hide the social buttons and fall back to the
+  // password form so the instance stays usable.
+  useEffect(() => {
+    let cancelled = false;
+    api.ping().then(
+      (p) => {
+        if (!cancelled && Array.isArray(p.oauth_providers)) {
+          setProviders(p.oauth_providers);
+        }
+      },
+      () => {
+        /* ignore */
+      },
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // Consume #oauth_error=... that the callback may have set when the
+  // flow failed before we got a token. We clear the hash so reloading
+  // doesn't re-surface the same error message indefinitely.
+  useEffect(() => {
+    if (!window.location.hash.startsWith("#oauth_error=")) return;
+    const code = decodeURIComponent(
+      window.location.hash.slice("#oauth_error=".length),
+    );
+    setError(OAUTH_ERROR_MESSAGES[code] ?? `소셜 로그인에 실패했습니다 (${code}).`);
+    history.replaceState(null, "", window.location.pathname + window.location.search);
+  }, []);
+
+  // Detect `#invite=<id>` on mount. If the preview succeeds we auto-switch
+  // to the Signup tab so the invited user doesn't have to click "회원가입"
+  // manually. The hash is left in place so a page reload re-reads it;
+  // clearing it on success would force a refresh to undo the mode-switch.
+  useEffect(() => {
+    if (!window.location.hash.startsWith("#invite=")) return;
+    const id = decodeURIComponent(window.location.hash.slice("#invite=".length));
+    if (!id) return;
+    setInviteId(id);
+    let cancelled = false;
+    api.getInvite(id).then(
+      (p) => {
+        if (cancelled) return;
+        setInvite(p);
+        setMode("register");
+        setInviteError(null);
+      },
+      (err: unknown) => {
+        if (cancelled) return;
+        setInviteError(
+          err instanceof Error ? err.message : "초대 링크가 유효하지 않습니다.",
+        );
+      },
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  async function submit(e: React.FormEvent) {
+    e.preventDefault();
+    setError(null);
+    setBusy(true);
+    try {
+      if (mode === "register") {
+        // Pass the invite through iff we successfully previewed it. Bogus
+        // hashes were already surfaced above and would 400 here anyway.
+        await api.register(username, email, password, invite ? inviteId : "");
+        const res = await api.login(username, password);
+        dispatch(setAuth({ token: res.token, user: res.user }));
+      } else {
+        const res = await api.login(loginId, password);
+        dispatch(setAuth({ token: res.token, user: res.user }));
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "요청에 실패했습니다");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="login-page">
+      <div className="login-card">
+        <div className="login-brand">
+          <div className="login-logo" aria-hidden>M</div>
+          <h1 className="login-title">Moddle</h1>
+        </div>
+        <p className="login-subtitle">
+          {mode === "login" ? "팀과 다시 연결하세요." : "팀을 위한 새 계정을 만드세요."}
+        </p>
+
+        {invite && (
+          <div className="invite-banner" role="status">
+            <strong>{invite.team_display_name}</strong> 팀에 초대되었습니다.
+            <br />
+            계정을 만들면 자동으로 팀에 합류합니다.
+          </div>
+        )}
+        {!invite && inviteError && (
+          <div className="login-error" role="alert">
+            초대 링크가 유효하지 않습니다: {inviteError}
+          </div>
+        )}
+
+        <div className="login-tabs" role="tablist">
+          <button
+            type="button"
+            role="tab"
+            aria-selected={mode === "login"}
+            className="login-tab"
+            onClick={() => { setMode("login"); setError(null); }}
+          >
+            로그인
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={mode === "register"}
+            className="login-tab"
+            onClick={() => { setMode("register"); setError(null); }}
+          >
+            회원가입
+          </button>
+        </div>
+
+        <form onSubmit={submit}>
+          {mode === "login" ? (
+            <div className="field">
+              <label htmlFor="loginId">아이디 또는 이메일</label>
+              <input
+                id="loginId"
+                autoComplete="username"
+                value={loginId}
+                onChange={(e) => setLoginId(e.target.value)}
+                placeholder="webuser"
+                required
+              />
+            </div>
+          ) : (
+            <>
+              <div className="field">
+                <label htmlFor="username">사용자명</label>
+                <input
+                  id="username"
+                  autoComplete="username"
+                  value={username}
+                  onChange={(e) => setUsername(e.target.value)}
+                  placeholder="영문 소문자, 숫자"
+                  required
+                />
+              </div>
+              <div className="field">
+                <label htmlFor="email">이메일</label>
+                <input
+                  id="email"
+                  type="email"
+                  autoComplete="email"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  placeholder="you@company.com"
+                  required
+                />
+              </div>
+            </>
+          )}
+
+          <div className="field">
+            <label htmlFor="password">비밀번호</label>
+            <input
+              id="password"
+              type="password"
+              autoComplete={mode === "login" ? "current-password" : "new-password"}
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              placeholder="••••••••"
+              required
+            />
+          </div>
+
+          <button type="submit" className="btn-primary" disabled={busy}>
+            {busy ? "처리 중…" : mode === "login" ? "로그인" : "계정 만들기"}
+          </button>
+
+          {error && <div className="login-error" role="alert">{error}</div>}
+        </form>
+
+        {providers.length > 0 && (
+          <>
+            <div className="login-divider"><span>또는</span></div>
+            <div className="oauth-buttons">
+              {providers.map((name) => (
+                <a
+                  key={name}
+                  className={`oauth-btn oauth-btn-${name}`}
+                  href={`/api/v4/oauth/${encodeURIComponent(name)}/login`}
+                >
+                  <span className={`oauth-icon oauth-icon-${name}`} aria-hidden />
+                  <span>{PROVIDER_LABELS[name] ?? `${name}로 계속하기`}</span>
+                </a>
+              ))}
+            </div>
+          </>
+        )}
+
+        <div className="login-footer">
+          Mattermost 호환 · /api/v4
+        </div>
+      </div>
+    </div>
+  );
+}

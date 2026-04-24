@@ -1,0 +1,37 @@
+name: moddle
+
+services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: moddle-postgres
+    environment:
+      POSTGRES_USER: moddle
+      POSTGRES_PASSWORD: moddle
+      POSTGRES_DB: moddle
+    ports:
+      - "5433:5432"
+    volumes:
+      - moddle-pg:/var/lib/postgresql/data
+
+  redis:
+    image: redis:7-alpine
+    container_name: moddle-redis
+    ports:
+      - "6380:6379"
+
+  minio:
+    image: minio/minio:latest
+    container_name: moddle-minio
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: moddle
+      MINIO_ROOT_PASSWORD: moddlepass
+    ports:
+      - "9100:9000"
+      - "9101:9001"
+    volumes:
+      - moddle-minio:/data
+
+volumes:
+  moddle-pg:
+  moddle-minio:

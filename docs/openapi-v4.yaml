@@ -1,0 +1,609 @@
+openapi: 3.1.0
+info:
+  title: Moddle MM Compatibility API
+  version: 0.1.0
+  description: |
+    Mattermost v4 호환 API. 필드명과 경로는 Mattermost REST API v4와 최대한 일치시켜
+    기존 클라이언트·봇·플러그인의 이식성을 높인다.
+servers:
+  - url: http://localhost:8065/api/v4
+    description: local dev
+security:
+  - bearerAuth: []
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  schemas:
+    Error:
+      type: object
+      required: [id, message, status_code]
+      properties:
+        id: { type: string }
+        message: { type: string }
+        detailed_error: { type: string }
+        request_id: { type: string }
+        status_code: { type: integer }
+    User:
+      type: object
+      required: [id, username, email]
+      properties:
+        id: { type: string, format: uuid }
+        username: { type: string }
+        email: { type: string, format: email }
+        roles: { type: string }
+    LoginRequest:
+      type: object
+      required: [login_id, password]
+      properties:
+        login_id: { type: string }
+        password: { type: string }
+    LoginResponse:
+      type: object
+      properties:
+        token: { type: string }
+        user: { $ref: "#/components/schemas/User" }
+    Team:
+      type: object
+      properties:
+        id: { type: string }
+        name: { type: string }
+        display_name: { type: string }
+        type: { type: string, enum: [O, I] }
+        create_at: { type: integer, format: int64 }
+        update_at: { type: integer, format: int64 }
+        delete_at: { type: integer, format: int64 }
+    Channel:
+      type: object
+      properties:
+        id: { type: string }
+        team_id: { type: string }
+        type: { type: string, enum: [O, P, D, G] }
+        display_name: { type: string }
+        name: { type: string }
+        header: { type: string }
+        purpose: { type: string }
+        create_at: { type: integer, format: int64 }
+        update_at: { type: integer, format: int64 }
+        delete_at: { type: integer, format: int64 }
+    Post:
+      type: object
+      properties:
+        id: { type: string }
+        channel_id: { type: string }
+        user_id: { type: string }
+        root_id: { type: string }
+        message: { type: string }
+        props: { type: object, additionalProperties: true }
+        file_ids:
+          type: array
+          items: { type: string }
+        create_at: { type: integer, format: int64 }
+        update_at: { type: integer, format: int64 }
+        delete_at: { type: integer, format: int64 }
+    PostList:
+      type: object
+      properties:
+        order:
+          type: array
+          items: { type: string }
+        posts:
+          type: object
+          additionalProperties: { $ref: "#/components/schemas/Post" }
+    CreateTeam:
+      type: object
+      required: [name, display_name]
+      properties:
+        name: { type: string }
+        display_name: { type: string }
+        type: { type: string, default: O }
+    CreateChannel:
+      type: object
+      required: [team_id, name, display_name]
+      properties:
+        team_id: { type: string }
+        name: { type: string }
+        display_name: { type: string }
+        type: { type: string, default: O }
+    CreatePost:
+      type: object
+      required: [channel_id, message]
+      properties:
+        channel_id: { type: string }
+        message: { type: string }
+        root_id: { type: string }
+        props: { type: object, additionalProperties: true }
+        file_ids:
+          type: array
+          items: { type: string }
+    UpdatePost:
+      type: object
+      properties:
+        id: { type: string }
+        message: { type: string }
+        props: { type: object, additionalProperties: true }
+    Reaction:
+      type: object
+      required: [user_id, post_id, emoji_name]
+      properties:
+        user_id: { type: string }
+        post_id: { type: string }
+        emoji_name: { type: string }
+        create_at: { type: integer, format: int64 }
+    FileInfo:
+      type: object
+      properties:
+        id: { type: string }
+        user_id: { type: string }
+        post_id: { type: string }
+        channel_id: { type: string }
+        name: { type: string }
+        extension: { type: string }
+        size: { type: integer, format: int64 }
+        mime_type: { type: string }
+        create_at: { type: integer, format: int64 }
+        update_at: { type: integer, format: int64 }
+        delete_at: { type: integer, format: int64 }
+    ChannelMember:
+      type: object
+      properties:
+        channel_id: { type: string }
+        user_id: { type: string }
+        roles: { type: string }
+        last_viewed_at: { type: integer, format: int64 }
+        create_at: { type: integer, format: int64 }
+    SearchPostsRequest:
+      type: object
+      required: [terms]
+      properties:
+        terms: { type: string }
+        is_or_search: { type: boolean }
+        per_page: { type: integer, default: 60 }
+        page: { type: integer, default: 0 }
+    Plugin:
+      type: object
+      properties:
+        id: { type: string }
+        version: { type: string }
+        state: { type: string }
+        manifest: { type: object }
+
+paths:
+  /system/ping:
+    get:
+      security: []
+      summary: Server liveness
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string }
+
+  /users:
+    post:
+      security: []
+      summary: Create (register) a user
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [username, email, password]
+              properties:
+                username: { type: string }
+                email: { type: string }
+                password: { type: string }
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/User" }
+
+  /users/login:
+    post:
+      security: []
+      summary: Authenticate and receive a session token
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/LoginRequest" }
+      responses:
+        "200":
+          description: OK
+          headers:
+            Token: { schema: { type: string } }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/LoginResponse" }
+
+  /users/me:
+    get:
+      summary: Get the authenticated user
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/User" }
+
+  /teams:
+    post:
+      summary: Create a team
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateTeam" }
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Team" }
+
+  /users/me/teams:
+    get:
+      summary: Teams for the authenticated user
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Team" }
+
+  /channels:
+    post:
+      summary: Create a channel
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateChannel" }
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Channel" }
+
+  /users/me/teams/{teamID}/channels:
+    parameters:
+      - name: teamID
+        in: path
+        required: true
+        schema: { type: string }
+    get:
+      summary: List channels for the user in a team
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Channel" }
+
+  /posts:
+    post:
+      summary: Create a post
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreatePost" }
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Post" }
+
+  /channels/{channelID}/posts:
+    parameters:
+      - name: channelID
+        in: path
+        required: true
+        schema: { type: string }
+      - name: page
+        in: query
+        schema: { type: integer, default: 0 }
+      - name: per_page
+        in: query
+        schema: { type: integer, default: 60, maximum: 200 }
+    get:
+      summary: List posts in a channel
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PostList" }
+
+  /posts/{postID}:
+    parameters:
+      - name: postID
+        in: path
+        required: true
+        schema: { type: string }
+    put:
+      summary: Update (edit) a post
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/UpdatePost" }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Post" }
+    delete:
+      summary: Soft-delete a post
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties: { status: { type: string } }
+
+  /teams/{teamID}/posts/search:
+    parameters:
+      - name: teamID
+        in: path
+        required: true
+        schema: { type: string }
+    post:
+      summary: Full-text search posts visible to the caller in a team
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SearchPostsRequest" }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PostList" }
+
+  /reactions:
+    post:
+      summary: Add a reaction to a post
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [post_id, emoji_name]
+              properties:
+                post_id: { type: string }
+                emoji_name: { type: string }
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Reaction" }
+
+  /posts/{postID}/reactions:
+    parameters:
+      - name: postID
+        in: path
+        required: true
+        schema: { type: string }
+    get:
+      summary: List reactions on a post
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Reaction" }
+
+  /users/{userID}/posts/{postID}/reactions/{emoji}:
+    parameters:
+      - name: userID
+        in: path
+        required: true
+        schema: { type: string }
+      - name: postID
+        in: path
+        required: true
+        schema: { type: string }
+      - name: emoji
+        in: path
+        required: true
+        schema: { type: string }
+    delete:
+      summary: Remove a reaction (caller's only)
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties: { status: { type: string } }
+
+  /files:
+    post:
+      summary: Upload one or more files for later post attachment
+      parameters:
+        - name: channel_id
+          in: query
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                files:
+                  type: array
+                  items: { type: string, format: binary }
+                client_ids:
+                  type: array
+                  items: { type: string }
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  file_infos:
+                    type: array
+                    items: { $ref: "#/components/schemas/FileInfo" }
+                  client_ids:
+                    type: array
+                    items: { type: string }
+
+  /files/{fileID}:
+    parameters:
+      - name: fileID
+        in: path
+        required: true
+        schema: { type: string }
+    get:
+      summary: Download a file
+      responses:
+        "200":
+          description: Binary payload
+          content:
+            application/octet-stream:
+              schema: { type: string, format: binary }
+
+  /files/{fileID}/info:
+    parameters:
+      - name: fileID
+        in: path
+        required: true
+        schema: { type: string }
+    get:
+      summary: File metadata
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/FileInfo" }
+
+  /channels/{channelID}/members:
+    parameters:
+      - name: channelID
+        in: path
+        required: true
+        schema: { type: string }
+    get:
+      summary: List channel members
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/ChannelMember" }
+    post:
+      summary: Invite (add) a user to a channel
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [user_id]
+              properties:
+                user_id: { type: string }
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ChannelMember" }
+
+  /channels/{channelID}/members/{userID}:
+    parameters:
+      - name: channelID
+        in: path
+        required: true
+        schema: { type: string }
+      - name: userID
+        in: path
+        required: true
+        schema: { type: string }
+    delete:
+      summary: Remove a channel member (self-leave or admin kick)
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties: { status: { type: string } }
+
+  /users/logout:
+    post:
+      summary: Revoke the caller's current session
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties: { status: { type: string } }
+
+  /plugins:
+    get:
+      summary: List installed plugins
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Plugin" }
+
+  /websocket:
+    get:
+      summary: WebSocket upgrade endpoint
+      description: |
+        Upgrades to WebSocket. Events follow the Mattermost envelope:
+        `{ event, data, broadcast, seq }`. Core events:
+
+        - `posted` — new post in channel. `data.post` is a stringified Post JSON.
+          `data.mentions` is a stringified JSON array of user IDs referenced with @.
+        - `post_edited` — message/props of an existing post changed.
+        - `post_deleted` — soft-delete broadcast.
+        - `typing` — another user is typing in a channel (fanned to channel members, omits the author).
+        - `user_added` / `user_removed` — channel membership changes.
+        - `reaction_added` / `reaction_removed` — reaction lifecycle on a post.
+        - `mention` — direct fan-out to each mentioned user (notification hook).
+
+        Client-to-server actions (`{seq, action, data}`):
+
+        - `user_typing` — client announces it is typing. `data.channel_id` required, `data.parent_id` optional.
+      responses:
+        "101": { description: Switching Protocols }

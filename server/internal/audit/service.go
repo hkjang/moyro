@@ -1,0 +1,129 @@
+// Package audit writes admin-visible action records to the audit_logs table.
+// Calls are fire-and-forget — a failure to log must never block the primary
+// action, so all errors are swallowed after a debug log. The table is append-
+// only from this service's perspective; operators prune via external jobs.
+package audit
+
+import (
+	"context"
+	"encoding/json"
+	"log/slog"
+	"time"
+
+	"github.com/moddle/moddle/server/internal/store"
+)
+
+// Canonical action names. Kept as constants so scanners/greps find every
+// callsite and so misspellings surface at compile time.
+const (
+	ActionUserLogin         = "user.login"
+	ActionUserLoginFailed   = "user.login.failed"
+	ActionUserLogout        = "user.logout"
+	ActionUserRegister      = "user.register"
+	ActionUserPasswordChg   = "user.password.change"
+	ActionUserProfileUpdate = "user.profile.update"
+	ActionTeamCreate        = "team.create"
+	ActionChannelCreate     = "channel.create"
+	ActionChannelPatch      = "channel.patch"
+	ActionChannelDirectOpen = "channel.direct.open"
+	ActionPostDelete        = "post.delete"
+	ActionPostPin           = "post.pin"
+	ActionPostUnpin         = "post.unpin"
+	ActionMemberAdd         = "channel.member.add"
+	ActionMemberRemove      = "channel.member.remove"
+	ActionCommandExecute    = "command.execute"
+	ActionEmojiCreate       = "emoji.create"
+	ActionEmojiDelete       = "emoji.delete"
+	// Phase 16
+	ActionInviteCreate      = "team.invite.create"
+	ActionInviteRevoke      = "team.invite.revoke"
+	ActionInviteConsume     = "team.invite.consume"
+	ActionUserDeactivate    = "user.deactivate"
+	ActionUserReactivate    = "user.reactivate"
+	ActionSessionRevoke     = "user.session.revoke"
+	ActionChannelArchive    = "channel.archive"
+	ActionChannelRestore    = "channel.restore"
+)
+
+type Entry struct {
+	ID       int64           `json:"id"`
+	ActorID  string          `json:"actor_id"`
+	Action   string          `json:"action"`
+	Target   string          `json:"target"`
+	Payload  json.RawMessage `json:"payload"`
+	CreateAt int64           `json:"create_at"`
+}
+
+type Service struct {
+	db     *store.DB
+	logger *slog.Logger
+}
+
+func New(db *store.DB, logger *slog.Logger) *Service {
+	return &Service{db: db, logger: logger}
+}
+
+// Log writes a single audit record. Errors are logged at debug and swallowed
+// so callers don't need to worry about failure paths in hot handlers.
+func (s *Service) Log(ctx context.Context, actorID, action, target string, payload map[string]any) {
+	raw := []byte("null")
+	if payload != nil {
+		if b, err := json.Marshal(payload); err == nil {
+			raw = b
+		}
+	}
+	_, err := s.db.Pool.Exec(ctx, `
+		INSERT INTO audit_logs (actor_id, action, target, payload, create_at)
+		VALUES ($1,$2,$3,$4,$5)
+	`, nullIfEmpty(actorID), action, nullIfEmpty(target), raw, time.Now().UnixMilli())
+	if err != nil {
+		s.logger.Debug("audit write failed", "action", action, "err", err)
+	}
+}
+
+// LogAsync spawns a goroutine so the caller's request path isn't tied to
+// the audit insert latency. Use this from hot post/message handlers.
+func (s *Service) LogAsync(actorID, action, target string, payload map[string]any) {
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer cancel()
+		s.Log(ctx, actorID, action, target, payload)
+	}()
+}
+
+// List returns the newest N entries, optionally filtered by action prefix
+// and actor_id. Empty strings mean "no filter". Used by the admin console
+// audit log tab.
+func (s *Service) List(ctx context.Context, limit int, actionPrefix, actorID string) ([]Entry, error) {
+	if limit <= 0 || limit > 500 {
+		limit = 100
+	}
+	rows, err := s.db.Pool.Query(ctx, `
+		SELECT id, COALESCE(actor_id,''), action, COALESCE(target,''), COALESCE(payload,'null'::jsonb), create_at
+		FROM audit_logs
+		WHERE ($2 = '' OR action LIKE $2 || '%')
+		  AND ($3 = '' OR actor_id = $3)
+		ORDER BY id DESC
+		LIMIT $1
+	`, limit, actionPrefix, actorID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []Entry{}
+	for rows.Next() {
+		var e Entry
+		if err := rows.Scan(&e.ID, &e.ActorID, &e.Action, &e.Target, &e.Payload, &e.CreateAt); err != nil {
+			return nil, err
+		}
+		out = append(out, e)
+	}
+	return out, rows.Err()
+}
+
+func nullIfEmpty(s string) any {
+	if s == "" {
+		return nil
+	}
+	return s
+}

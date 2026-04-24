@@ -1,0 +1,586 @@
+package channels
+
+import (
+	"context"
+	"encoding/json"
+	"sort"
+	"strings"
+	"time"
+
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
+	"github.com/moddle/moddle/server/internal/store"
+)
+
+type Channel struct {
+	ID          string `json:"id"`
+	TeamID      string `json:"team_id"`
+	Type        string `json:"type"` // O, P, D, G
+	DisplayName string `json:"display_name"`
+	Name        string `json:"name"`
+	Header      string `json:"header"`
+	Purpose     string `json:"purpose"`
+	CreateAt    int64  `json:"create_at"`
+	UpdateAt    int64  `json:"update_at"`
+	DeleteAt    int64  `json:"delete_at"`
+}
+
+type Service struct{ db *store.DB }
+
+func New(db *store.DB) *Service { return &Service{db: db} }
+
+func (s *Service) Create(ctx context.Context, teamID, name, display, channelType, creatorID string) (*Channel, error) {
+	now := time.Now().UnixMilli()
+	c := &Channel{
+		ID:          uuid.NewString(),
+		TeamID:      teamID,
+		Type:        channelType,
+		DisplayName: display,
+		Name:        name,
+		CreateAt:    now,
+		UpdateAt:    now,
+	}
+	tx, err := s.db.Pool.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback(ctx)
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO channels (id, team_id, type, display_name, name, create_at, update_at)
+		VALUES ($1,$2,$3,$4,$5,$6,$6)
+	`, c.ID, c.TeamID, c.Type, c.DisplayName, c.Name, now); err != nil {
+		return nil, err
+	}
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO channel_members (channel_id, user_id, roles, create_at)
+		VALUES ($1,$2,'channel_admin channel_user',$3)
+	`, c.ID, creatorID, now); err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, err
+	}
+	return c, nil
+}
+
+func (s *Service) ListForUser(ctx context.Context, userID, teamID string) ([]Channel, error) {
+	rows, err := s.db.Pool.Query(ctx, `
+		SELECT c.id, COALESCE(c.team_id,''), c.type, c.display_name, c.name, c.header, c.purpose, c.create_at, c.update_at, c.delete_at
+		FROM channels c
+		JOIN channel_members m ON m.channel_id = c.id
+		WHERE m.user_id = $1 AND c.team_id = $2 AND c.delete_at = 0
+		ORDER BY c.create_at ASC`, userID, teamID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Channel
+	for rows.Next() {
+		var c Channel
+		if err := rows.Scan(&c.ID, &c.TeamID, &c.Type, &c.DisplayName, &c.Name, &c.Header, &c.Purpose, &c.CreateAt, &c.UpdateAt, &c.DeleteAt); err != nil {
+			return nil, err
+		}
+		out = append(out, c)
+	}
+	return out, rows.Err()
+}
+
+// EnsureDefault creates the "general" channel in the given team if missing.
+func (s *Service) EnsureDefault(ctx context.Context, teamID string) (*Channel, error) {
+	var c Channel
+	err := s.db.Pool.QueryRow(ctx, `
+		SELECT id, team_id, type, display_name, name, header, purpose, create_at, update_at, delete_at
+		FROM channels WHERE team_id=$1 AND name='general' AND delete_at=0
+	`, teamID).Scan(&c.ID, &c.TeamID, &c.Type, &c.DisplayName, &c.Name, &c.Header, &c.Purpose, &c.CreateAt, &c.UpdateAt, &c.DeleteAt)
+	if err == nil {
+		return &c, nil
+	}
+	now := time.Now().UnixMilli()
+	c = Channel{
+		ID:          uuid.NewString(),
+		TeamID:      teamID,
+		Type:        "O",
+		DisplayName: "General",
+		Name:        "general",
+		CreateAt:    now,
+		UpdateAt:    now,
+	}
+	if _, err := s.db.Pool.Exec(ctx, `
+		INSERT INTO channels (id, team_id, type, display_name, name, create_at, update_at)
+		VALUES ($1,$2,$3,$4,$5,$6,$6)
+	`, c.ID, c.TeamID, c.Type, c.DisplayName, c.Name, now); err != nil {
+		return nil, err
+	}
+	return &c, nil
+}
+
+// Join adds a user as a regular channel member, ignoring duplicates.
+func (s *Service) Join(ctx context.Context, channelID, userID string) error {
+	_, err := s.db.Pool.Exec(ctx, `
+		INSERT INTO channel_members (channel_id, user_id, roles, create_at)
+		VALUES ($1,$2,'channel_user',$3)
+		ON CONFLICT (channel_id, user_id) DO NOTHING
+	`, channelID, userID, time.Now().UnixMilli())
+	return err
+}
+
+type Member struct {
+	ChannelID    string `json:"channel_id"`
+	UserID       string `json:"user_id"`
+	Roles        string `json:"roles"`
+	LastViewedAt int64  `json:"last_viewed_at"`
+	CreateAt     int64  `json:"create_at"`
+}
+
+// ListMembers returns everyone in the channel ordered by join time.
+func (s *Service) ListMembers(ctx context.Context, channelID string) ([]Member, error) {
+	rows, err := s.db.Pool.Query(ctx, `
+		SELECT channel_id, user_id, roles, last_viewed_at, create_at
+		FROM channel_members WHERE channel_id=$1
+		ORDER BY create_at ASC
+	`, channelID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []Member{}
+	for rows.Next() {
+		var m Member
+		if err := rows.Scan(&m.ChannelID, &m.UserID, &m.Roles, &m.LastViewedAt, &m.CreateAt); err != nil {
+			return nil, err
+		}
+		out = append(out, m)
+	}
+	return out, rows.Err()
+}
+
+// Remove deletes a channel membership row.
+func (s *Service) Remove(ctx context.Context, channelID, userID string) error {
+	_, err := s.db.Pool.Exec(ctx, `
+		DELETE FROM channel_members WHERE channel_id=$1 AND user_id=$2
+	`, channelID, userID)
+	return err
+}
+
+// Get fetches a single channel by id (ignores delete_at so clients can
+// still render tombstones of removed channels).
+func (s *Service) Get(ctx context.Context, channelID string) (*Channel, error) {
+	var c Channel
+	var teamID *string
+	err := s.db.Pool.QueryRow(ctx, `
+		SELECT id, team_id, type, display_name, name, header, purpose, create_at, update_at, delete_at
+		FROM channels WHERE id=$1
+	`, channelID).Scan(&c.ID, &teamID, &c.Type, &c.DisplayName, &c.Name, &c.Header, &c.Purpose, &c.CreateAt, &c.UpdateAt, &c.DeleteAt)
+	if err != nil {
+		return nil, err
+	}
+	if teamID != nil {
+		c.TeamID = *teamID
+	}
+	return &c, nil
+}
+
+// Patch applies partial updates. Empty strings mean "leave alone" to match
+// the common REST PATCH semantic.
+func (s *Service) Patch(ctx context.Context, channelID, displayName, header, purpose string) (*Channel, error) {
+	_, err := s.db.Pool.Exec(ctx, `
+		UPDATE channels SET
+			display_name = COALESCE(NULLIF($2,''), display_name),
+			header       = CASE WHEN $3::text = '__unchanged__' THEN header  ELSE $3 END,
+			purpose      = CASE WHEN $4::text = '__unchanged__' THEN purpose ELSE $4 END,
+			update_at    = $5
+		WHERE id=$1 AND delete_at=0
+	`, channelID, displayName, header, purpose, time.Now().UnixMilli())
+	if err != nil {
+		return nil, err
+	}
+	return s.Get(ctx, channelID)
+}
+
+// EnsureDirect returns the D-type channel between two users, creating it
+// on first call. Direct channels carry no team and use a canonical name of
+// the two user ids joined with "__" in sorted order — the same scheme
+// Mattermost uses for stable lookup.
+func (s *Service) EnsureDirect(ctx context.Context, userA, userB string) (*Channel, error) {
+	ids := []string{userA, userB}
+	sort.Strings(ids)
+	name := ids[0] + "__" + ids[1]
+
+	var c Channel
+	var teamID *string
+	err := s.db.Pool.QueryRow(ctx, `
+		SELECT id, team_id, type, display_name, name, header, purpose, create_at, update_at, delete_at
+		FROM channels WHERE type='D' AND name=$1 AND delete_at=0
+	`, name).Scan(&c.ID, &teamID, &c.Type, &c.DisplayName, &c.Name, &c.Header, &c.Purpose, &c.CreateAt, &c.UpdateAt, &c.DeleteAt)
+	if err == nil {
+		if teamID != nil {
+			c.TeamID = *teamID
+		}
+		return &c, nil
+	}
+	if err != pgx.ErrNoRows {
+		return nil, err
+	}
+
+	now := time.Now().UnixMilli()
+	c = Channel{
+		ID:          uuid.NewString(),
+		Type:        "D",
+		Name:        name,
+		DisplayName: "",
+		CreateAt:    now,
+		UpdateAt:    now,
+	}
+	tx, err := s.db.Pool.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback(ctx)
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO channels (id, team_id, type, display_name, name, create_at, update_at)
+		VALUES ($1, NULL, $2, $3, $4, $5, $5)
+	`, c.ID, c.Type, c.DisplayName, c.Name, now); err != nil {
+		return nil, err
+	}
+	// Both participants are channel_users. Self-DMs still work (one row).
+	for _, uid := range uniqueStrings(ids) {
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO channel_members (channel_id, user_id, roles, create_at)
+			VALUES ($1,$2,'channel_user',$3)
+			ON CONFLICT (channel_id, user_id) DO NOTHING
+		`, c.ID, uid, now); err != nil {
+			return nil, err
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, err
+	}
+	return &c, nil
+}
+
+// MarkViewed bumps last_viewed_at for the (channel, user) pair to now and
+// zeros the unread / mention counters. Returns the updated timestamp so
+// callers can broadcast it.
+func (s *Service) MarkViewed(ctx context.Context, channelID, userID string) (int64, error) {
+	now := time.Now().UnixMilli()
+	_, err := s.db.Pool.Exec(ctx, `
+		UPDATE channel_members
+		SET last_viewed_at=$1, msg_count=0, mention_count=0
+		WHERE channel_id=$2 AND user_id=$3
+	`, now, channelID, userID)
+	return now, err
+}
+
+// MemberWithCounts is a channel_members row with unread counters and the
+// caller's notify props inlined. Returned by ListForUserWithCounts so the
+// webapp can restore sidebar badges on reconnect in one round-trip.
+type MemberWithCounts struct {
+	ChannelID     string         `json:"channel_id"`
+	UserID        string         `json:"user_id"`
+	Roles         string         `json:"roles"`
+	LastViewedAt  int64          `json:"last_viewed_at"`
+	MsgCount      int64          `json:"msg_count"`
+	MentionCount  int64          `json:"mention_count"`
+	NotifyProps   map[string]any `json:"notify_props"`
+}
+
+// ListForUserWithCounts returns every channel_members row the user owns
+// in a given team, including counters + notify props. Joined on channels
+// so DMs (team_id IS NULL) and team channels can both be filtered off a
+// single query — DMs are included only when teamID is "" (sidebar home).
+func (s *Service) ListForUserWithCounts(ctx context.Context, userID, teamID string) ([]MemberWithCounts, error) {
+	q := `
+		SELECT m.channel_id, m.user_id, m.roles, m.last_viewed_at,
+		       m.msg_count, m.mention_count, m.notify_props
+		FROM channel_members m
+		JOIN channels c ON c.id = m.channel_id
+		WHERE m.user_id = $1 AND c.delete_at = 0
+		  AND (c.team_id = $2 OR ($2 = '' AND c.team_id IS NULL) OR c.type = 'D')
+	`
+	rows, err := s.db.Pool.Query(ctx, q, userID, teamID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []MemberWithCounts{}
+	for rows.Next() {
+		var m MemberWithCounts
+		var propsRaw []byte
+		if err := rows.Scan(&m.ChannelID, &m.UserID, &m.Roles, &m.LastViewedAt, &m.MsgCount, &m.MentionCount, &propsRaw); err != nil {
+			return nil, err
+		}
+		m.NotifyProps = map[string]any{}
+		if len(propsRaw) > 0 {
+			_ = json.Unmarshal(propsRaw, &m.NotifyProps)
+		}
+		out = append(out, m)
+	}
+	return out, rows.Err()
+}
+
+// GetNotifyProps returns the caller's notification prefs for a channel,
+// merged with the server defaults so clients never see an empty map.
+func (s *Service) GetNotifyProps(ctx context.Context, channelID, userID string) (map[string]any, error) {
+	var raw []byte
+	err := s.db.Pool.QueryRow(ctx, `
+		SELECT notify_props FROM channel_members WHERE channel_id=$1 AND user_id=$2
+	`, channelID, userID).Scan(&raw)
+	if err != nil {
+		return nil, err
+	}
+	props := defaultNotifyProps()
+	if len(raw) > 0 {
+		user := map[string]any{}
+		if jerr := json.Unmarshal(raw, &user); jerr == nil {
+			for k, v := range user {
+				props[k] = v
+			}
+		}
+	}
+	return props, nil
+}
+
+// SetNotifyProps overwrites the notify_props JSONB with the given map.
+// Unknown keys are allowed (forward-compat with future settings).
+func (s *Service) SetNotifyProps(ctx context.Context, channelID, userID string, props map[string]any) error {
+	if props == nil {
+		props = map[string]any{}
+	}
+	raw, _ := json.Marshal(props)
+	_, err := s.db.Pool.Exec(ctx, `
+		UPDATE channel_members SET notify_props=$1
+		WHERE channel_id=$2 AND user_id=$3
+	`, raw, channelID, userID)
+	return err
+}
+
+func defaultNotifyProps() map[string]any {
+	return map[string]any{
+		"desktop":     "all",     // all | mentions | none
+		"mark_unread": "all",     // all | mention (mention-only counts as muted)
+	}
+}
+
+// Counter is the per-member result of BumpUnread. Desktop surfaces the
+// current notification preference so the handler can skip the WS fanout
+// for muted / DND users without a second query.
+type Counter struct {
+	UserID       string `json:"user_id"`
+	MsgCount     int64  `json:"msg_count"`
+	MentionCount int64  `json:"mention_count"`
+	Desktop      string `json:"desktop"`
+}
+
+// BumpUnread increments msg_count for every member of the channel except
+// the author, and mention_count for each mentioned user. Muted members
+// (mark_unread=mention) get msg_count bumped only when they're also
+// mentioned. Runs in a single SQL statement for atomicity + speed.
+func (s *Service) BumpUnread(ctx context.Context, channelID, authorID string, mentionedIDs []string) ([]Counter, error) {
+	if mentionedIDs == nil {
+		mentionedIDs = []string{}
+	}
+	rows, err := s.db.Pool.Query(ctx, `
+		UPDATE channel_members
+		SET mention_count = mention_count + CASE WHEN user_id = ANY($2) THEN 1 ELSE 0 END,
+		    msg_count     = msg_count + CASE
+		      WHEN (notify_props->>'mark_unread' = 'mention' AND NOT (user_id = ANY($2))) THEN 0
+		      ELSE 1 END
+		WHERE channel_id = $1 AND user_id <> $3
+		RETURNING user_id, msg_count, mention_count,
+		          COALESCE(notify_props->>'desktop', 'all') AS desktop
+	`, channelID, mentionedIDs, authorID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []Counter{}
+	for rows.Next() {
+		var c Counter
+		if err := rows.Scan(&c.UserID, &c.MsgCount, &c.MentionCount, &c.Desktop); err != nil {
+			return nil, err
+		}
+		out = append(out, c)
+	}
+	return out, rows.Err()
+}
+
+func uniqueStrings(in []string) []string {
+	seen := map[string]struct{}{}
+	out := in[:0]
+	for _, s := range in {
+		if _, ok := seen[s]; ok {
+			continue
+		}
+		seen[s] = struct{}{}
+		out = append(out, s)
+	}
+	return out
+}
+
+// MembersAutocomplete returns up to `limit` members of the channel whose
+// username starts with (or contains) the given prefix. Results are ordered
+// so prefix matches float to the top — a username starting with "al" beats
+// one that merely contains "al" in the middle. The `prefix` is matched
+// against usernames only; email is skipped deliberately to keep the
+// mention-picker visually tight and to avoid leaking email addresses to
+// users who happen to share a channel but aren't admins.
+//
+// The caller is expected to have already verified the requesting user is
+// a member of the channel; this method returns rows unconditionally.
+func (s *Service) MembersAutocomplete(ctx context.Context, channelID, prefix string, limit int) ([]channelMember, error) {
+	if limit <= 0 || limit > 50 {
+		limit = 8
+	}
+	// LOWER() on both sides lets the SQL planner use btree(username) if it
+	// exists, while staying case-insensitive. `prefix` is already the raw
+	// token the user typed (no surrounding %), so we build both patterns
+	// here for ORDER BY differentiation.
+	prefixPat := prefix + "%"
+	anyPat := "%" + prefix + "%"
+	rows, err := s.db.Pool.Query(ctx, `
+		SELECT u.id, u.username, u.email, u.roles, COALESCE(u.picture,'')
+		FROM channel_members m
+		JOIN users u ON u.id = m.user_id
+		WHERE m.channel_id = $1
+		  AND u.delete_at = 0
+		  AND u.username ILIKE $3
+		ORDER BY
+		  CASE WHEN u.username ILIKE $2 THEN 0 ELSE 1 END,
+		  u.username ASC
+		LIMIT $4
+	`, channelID, prefixPat, anyPat, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []channelMember{}
+	for rows.Next() {
+		var m channelMember
+		if err := rows.Scan(&m.ID, &m.Username, &m.Email, &m.Roles, &m.Picture); err != nil {
+			return nil, err
+		}
+		out = append(out, m)
+	}
+	return out, rows.Err()
+}
+
+// channelMember mirrors auth.User without importing that package (avoids a
+// potential import cycle). The handler re-shapes into auth.User on the way
+// out so the wire format stays consistent across endpoints.
+type channelMember struct {
+	ID       string `json:"id"`
+	Username string `json:"username"`
+	Email    string `json:"email"`
+	Roles    string `json:"roles"`
+	Picture  string `json:"picture"`
+}
+
+// Archive soft-deletes the channel by stamping delete_at. The row stays so
+// existing posts + audit log entries keep resolving, but ListForUser hides
+// it by default. Returns whether anything changed so the caller can skip
+// audit + broadcast on a no-op.
+func (s *Service) Archive(ctx context.Context, channelID string) (bool, error) {
+	now := time.Now().UnixMilli()
+	cmd, err := s.db.Pool.Exec(ctx, `
+		UPDATE channels SET delete_at=$2, update_at=$2 WHERE id=$1 AND delete_at=0
+	`, channelID, now)
+	if err != nil {
+		return false, err
+	}
+	return cmd.RowsAffected() > 0, nil
+}
+
+// Restore clears delete_at so the channel shows up in listings again.
+func (s *Service) Restore(ctx context.Context, channelID string) (bool, error) {
+	now := time.Now().UnixMilli()
+	cmd, err := s.db.Pool.Exec(ctx, `
+		UPDATE channels SET delete_at=0, update_at=$2 WHERE id=$1 AND delete_at<>0
+	`, channelID, now)
+	if err != nil {
+		return false, err
+	}
+	return cmd.RowsAffected() > 0, nil
+}
+
+// ListForUserIncludingDeleted is ListForUser with an optional include-
+// archived toggle. When includeDeleted is true the delete_at filter is
+// dropped so the sidebar can show archived channels dimmed.
+func (s *Service) ListForUserIncludingDeleted(ctx context.Context, userID, teamID string, includeDeleted bool) ([]Channel, error) {
+	q := `
+		SELECT c.id, COALESCE(c.team_id,''), c.type, c.display_name, c.name, c.header, c.purpose, c.create_at, c.update_at, c.delete_at
+		FROM channels c
+		JOIN channel_members m ON m.channel_id = c.id
+		WHERE m.user_id = $1 AND c.team_id = $2`
+	if !includeDeleted {
+		q += ` AND c.delete_at = 0`
+	}
+	q += ` ORDER BY c.create_at ASC`
+	rows, err := s.db.Pool.Query(ctx, q, userID, teamID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Channel
+	for rows.Next() {
+		var c Channel
+		if err := rows.Scan(&c.ID, &c.TeamID, &c.Type, &c.DisplayName, &c.Name, &c.Header, &c.Purpose, &c.CreateAt, &c.UpdateAt, &c.DeleteAt); err != nil {
+			return nil, err
+		}
+		out = append(out, c)
+	}
+	return out, rows.Err()
+}
+
+func (s *Service) IsMember(ctx context.Context, channelID, userID string) (bool, error) {
+	var exists bool
+	err := s.db.Pool.QueryRow(ctx, `
+		SELECT EXISTS(SELECT 1 FROM channel_members WHERE channel_id=$1 AND user_id=$2)
+	`, channelID, userID).Scan(&exists)
+	return exists, err
+}
+
+// ListPublicDiscoverable returns public (O-type) channels in the given team
+// that the user has NOT joined, optionally filtered by a name/display-name
+// prefix. Used by the "채널 탐색" modal so users can find channels they were
+// never explicitly invited to. Excludes archived channels (delete_at != 0).
+// Private (P), DM (D), and group (G) channels are intentionally skipped —
+// the whole point of non-O types is that they aren't discoverable.
+func (s *Service) ListPublicDiscoverable(ctx context.Context, teamID, userID, query string, limit, offset int) ([]Channel, error) {
+	if limit <= 0 || limit > 100 {
+		limit = 30
+	}
+	if offset < 0 {
+		offset = 0
+	}
+	args := []any{teamID, userID, limit, offset}
+	sql := `
+		SELECT c.id, COALESCE(c.team_id,''), c.type, c.display_name, c.name, c.header, c.purpose, c.create_at, c.update_at, c.delete_at
+		FROM channels c
+		WHERE c.team_id = $1
+		  AND c.type = 'O'
+		  AND c.delete_at = 0
+		  AND NOT EXISTS (
+		    SELECT 1 FROM channel_members m
+		    WHERE m.channel_id = c.id AND m.user_id = $2
+		  )`
+	if q := strings.TrimSpace(query); q != "" {
+		args = append(args, "%"+q+"%")
+		sql += ` AND (c.name ILIKE $5 OR c.display_name ILIKE $5)`
+	}
+	sql += ` ORDER BY c.display_name ASC LIMIT $3 OFFSET $4`
+
+	rows, err := s.db.Pool.Query(ctx, sql, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []Channel{}
+	for rows.Next() {
+		var c Channel
+		if err := rows.Scan(&c.ID, &c.TeamID, &c.Type, &c.DisplayName, &c.Name, &c.Header, &c.Purpose, &c.CreateAt, &c.UpdateAt, &c.DeleteAt); err != nil {
+			return nil, err
+		}
+		out = append(out, c)
+	}
+	return out, rows.Err()
+}

@@ -1,0 +1,465 @@
+package webhooks
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"errors"
+	"io"
+	"log/slog"
+	"net"
+	"net/http"
+	"net/url"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
+	"github.com/moddle/moddle/server/internal/posts"
+	"github.com/moddle/moddle/server/internal/store"
+)
+
+// OutgoingService owns CRUD for outgoing webhooks.
+type OutgoingService struct{ db *store.DB }
+
+func NewOutgoing(db *store.DB) *OutgoingService { return &OutgoingService{db: db} }
+
+type OutgoingHook struct {
+	ID            string   `json:"id"`
+	Token         string   `json:"token"`
+	CreatorID     string   `json:"creator_id"`
+	TeamID        string   `json:"team_id"`
+	ChannelID     string   `json:"channel_id"`
+	TriggerWords  []string `json:"trigger_words"`
+	TriggerWhen   int      `json:"trigger_when"`
+	CallbackURLs  []string `json:"callback_urls"`
+	DisplayName   string   `json:"display_name"`
+	ContentType   string   `json:"content_type"`
+	CreateAt      int64    `json:"create_at"`
+	UpdateAt      int64    `json:"update_at"`
+	DeleteAt      int64    `json:"delete_at"`
+}
+
+func (s *OutgoingService) Create(ctx context.Context, creatorID, teamID, channelID string, triggerWords, callbackURLs []string, triggerWhen int, displayName, contentType string) (*OutgoingHook, error) {
+	id := uuid.NewString()
+	token := uuid.NewString()
+	if contentType == "" {
+		contentType = "application/json"
+	}
+	now := time.Now().UnixMilli()
+	rawTriggers, _ := json.Marshal(triggerWords)
+	rawCallbacks, _ := json.Marshal(callbackURLs)
+	_, err := s.db.Pool.Exec(ctx, `
+		INSERT INTO outgoing_webhooks
+			(id, token, creator_id, team_id, channel_id, trigger_words, trigger_when, callback_urls, display_name, content_type, create_at, update_at)
+		VALUES ($1,$2,$3,$4,NULLIF($5,''),$6,$7,$8,$9,$10,$11,$11)
+	`, id, token, creatorID, teamID, channelID, rawTriggers, triggerWhen, rawCallbacks, displayName, contentType, now)
+	if err != nil {
+		return nil, err
+	}
+	return &OutgoingHook{
+		ID: id, Token: token, CreatorID: creatorID, TeamID: teamID, ChannelID: channelID,
+		TriggerWords: triggerWords, TriggerWhen: triggerWhen, CallbackURLs: callbackURLs,
+		DisplayName: displayName, ContentType: contentType, CreateAt: now, UpdateAt: now,
+	}, nil
+}
+
+func (s *OutgoingService) List(ctx context.Context) ([]OutgoingHook, error) {
+	rows, err := s.db.Pool.Query(ctx, `
+		SELECT id, token, creator_id, team_id, COALESCE(channel_id,''), trigger_words, trigger_when, callback_urls,
+		       display_name, content_type, create_at, update_at, delete_at
+		FROM outgoing_webhooks
+		WHERE delete_at = 0
+		ORDER BY create_at DESC
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []OutgoingHook{}
+	for rows.Next() {
+		var h OutgoingHook
+		var triggers, callbacks []byte
+		if err := rows.Scan(&h.ID, &h.Token, &h.CreatorID, &h.TeamID, &h.ChannelID,
+			&triggers, &h.TriggerWhen, &callbacks, &h.DisplayName, &h.ContentType,
+			&h.CreateAt, &h.UpdateAt, &h.DeleteAt); err != nil {
+			return nil, err
+		}
+		_ = json.Unmarshal(triggers, &h.TriggerWords)
+		_ = json.Unmarshal(callbacks, &h.CallbackURLs)
+		out = append(out, h)
+	}
+	return out, rows.Err()
+}
+
+func (s *OutgoingService) Delete(ctx context.Context, id string) error {
+	now := time.Now().UnixMilli()
+	tag, err := s.db.Pool.Exec(ctx, `
+		UPDATE outgoing_webhooks SET delete_at = $2 WHERE id = $1 AND delete_at = 0
+	`, id, now)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrHookNotFound
+	}
+	return nil
+}
+
+// candidatesFor returns every active outgoing hook whose scope includes the
+// post's channel/team. We don't match trigger words here — the dispatcher
+// does that in-memory so we don't force Postgres to split JSONB arrays.
+func (s *OutgoingService) candidatesFor(ctx context.Context, teamID, channelID string) ([]OutgoingHook, error) {
+	rows, err := s.db.Pool.Query(ctx, `
+		SELECT id, token, creator_id, team_id, COALESCE(channel_id,''), trigger_words, trigger_when, callback_urls,
+		       display_name, content_type, create_at, update_at, delete_at
+		FROM outgoing_webhooks
+		WHERE delete_at = 0
+		  AND team_id = $1
+		  AND (channel_id IS NULL OR channel_id = $2)
+	`, teamID, channelID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []OutgoingHook{}
+	for rows.Next() {
+		var h OutgoingHook
+		var triggers, callbacks []byte
+		if err := rows.Scan(&h.ID, &h.Token, &h.CreatorID, &h.TeamID, &h.ChannelID,
+			&triggers, &h.TriggerWhen, &callbacks, &h.DisplayName, &h.ContentType,
+			&h.CreateAt, &h.UpdateAt, &h.DeleteAt); err != nil {
+			return nil, err
+		}
+		_ = json.Unmarshal(triggers, &h.TriggerWords)
+		_ = json.Unmarshal(callbacks, &h.CallbackURLs)
+		out = append(out, h)
+	}
+	return out, rows.Err()
+}
+
+// ---- Dispatcher ----
+
+// Dispatcher processes outbound webhook callbacks on a worker pool so a
+// slow or hanging endpoint can't delay post creation. It also enforces the
+// loop / depth safeguards the plan calls out.
+type Dispatcher struct {
+	svc       *OutgoingService
+	posts     *posts.Service
+	teamOf    TeamResolver
+	logger    *slog.Logger
+
+	client  *http.Client
+	workers int
+	jobs    chan dispatchJob
+
+	// Per-hook+channel dedup window: we key on `hook_id|channel_id` and
+	// only dispatch if the last send for that key is older than 2s.
+	// Keeps a hot trigger (e.g. shared word) from thundering callbacks.
+	dedupMu sync.Mutex
+	dedup   map[string]time.Time
+
+	allowedHosts map[string]struct{}
+}
+
+// TeamResolver maps a channel id to the team id that owns it. The
+// dispatcher uses this to filter candidate outgoing hooks by team_id
+// without forcing this package to import `channels`.
+type TeamResolver func(ctx context.Context, channelID string) (teamID string, err error)
+
+type dispatchJob struct {
+	hook OutgoingHook
+	post *posts.Post
+	user string // post author username, pre-resolved
+}
+
+// NewDispatcher spins up the worker pool. workers<=0 defaults to 16.
+// `allowedHosts` optionally gates outbound requests to a hostname allow-list;
+// when nil, the dispatcher falls back to a safer default of blocking
+// private/link-local IPs.
+func NewDispatcher(svc *OutgoingService, postSvc *posts.Service, teamOf TeamResolver, logger *slog.Logger, workers int, allowedHosts []string) *Dispatcher {
+	if workers <= 0 {
+		workers = 16
+	}
+	allow := map[string]struct{}{}
+	for _, h := range allowedHosts {
+		allow[strings.ToLower(strings.TrimSpace(h))] = struct{}{}
+	}
+	d := &Dispatcher{
+		svc: svc, posts: postSvc, teamOf: teamOf, logger: logger,
+		client: &http.Client{
+			Timeout: 10 * time.Second,
+			Transport: &http.Transport{
+				MaxIdleConns:        100,
+				MaxIdleConnsPerHost: 4,
+				IdleConnTimeout:     30 * time.Second,
+			},
+		},
+		workers: workers,
+		jobs:    make(chan dispatchJob, 1024),
+		dedup:   map[string]time.Time{},
+		allowedHosts: allow,
+	}
+	for i := 0; i < workers; i++ {
+		go d.runWorker()
+	}
+	return d
+}
+
+// QueueDepth reports the current number of pending callback jobs in the
+// dispatcher's buffered channel. Non-blocking snapshot; useful as a
+// Prometheus gauge and for operators deciding when to scale workers.
+func (d *Dispatcher) QueueDepth() int { return len(d.jobs) }
+
+// Dispatch matches active outgoing hooks for a post and enqueues callback
+// jobs. Non-blocking — if the queue is full, we drop with a warn so the
+// caller (createPost) isn't stalled.
+func (d *Dispatcher) Dispatch(ctx context.Context, post *posts.Post, authorUsername string) {
+	if post == nil || post.Message == "" {
+		return
+	}
+	// Depth cap: refuse to run if this post is already webhook-originated
+	// and the chain is at max depth. Prevents accidental loops.
+	depth := 0
+	if v, ok := post.Props["webhook_depth"]; ok {
+		if f, ok := v.(float64); ok {
+			depth = int(f)
+		}
+	}
+	if depth >= 3 {
+		return
+	}
+	teamID, err := d.teamOf(ctx, post.ChannelID)
+	if err != nil || teamID == "" {
+		return
+	}
+	hooks, err := d.svc.candidatesFor(ctx, teamID, post.ChannelID)
+	if err != nil {
+		d.logger.Warn("outgoing candidate query failed", "err", err)
+		return
+	}
+	for _, h := range hooks {
+		if !matchTrigger(post.Message, h.TriggerWords, h.TriggerWhen) {
+			continue
+		}
+		if !d.dedupOK(h.ID, post.ChannelID) {
+			continue
+		}
+		select {
+		case d.jobs <- dispatchJob{hook: h, post: withDepth(post, depth+1), user: authorUsername}:
+		default:
+			d.logger.Warn("outgoing dispatch queue full; dropping", "hook", h.ID)
+		}
+	}
+}
+
+func (d *Dispatcher) dedupOK(hookID, channelID string) bool {
+	key := hookID + "|" + channelID
+	now := time.Now()
+	d.dedupMu.Lock()
+	defer d.dedupMu.Unlock()
+	if last, ok := d.dedup[key]; ok && now.Sub(last) < 2*time.Second {
+		return false
+	}
+	d.dedup[key] = now
+	// Opportunistic cleanup so the map doesn't grow forever.
+	if len(d.dedup) > 1024 {
+		cutoff := now.Add(-1 * time.Minute)
+		for k, t := range d.dedup {
+			if t.Before(cutoff) {
+				delete(d.dedup, k)
+			}
+		}
+	}
+	return true
+}
+
+func withDepth(p *posts.Post, depth int) *posts.Post {
+	cp := *p
+	if cp.Props == nil {
+		cp.Props = map[string]any{}
+	} else {
+		m := make(map[string]any, len(cp.Props)+1)
+		for k, v := range cp.Props {
+			m[k] = v
+		}
+		cp.Props = m
+	}
+	cp.Props["webhook_depth"] = depth
+	return &cp
+}
+
+func (d *Dispatcher) runWorker() {
+	for job := range d.jobs {
+		d.deliver(job)
+	}
+}
+
+func (d *Dispatcher) deliver(job dispatchJob) {
+	for _, cb := range job.hook.CallbackURLs {
+		if !d.hostAllowed(cb) {
+			d.logger.Warn("outgoing callback host blocked", "url", cb, "hook", job.hook.ID)
+			continue
+		}
+		body := outgoingPayload(job)
+		raw, _ := json.Marshal(body)
+		req, err := http.NewRequest(http.MethodPost, cb, bytes.NewReader(raw))
+		if err != nil {
+			d.logger.Warn("build outgoing request failed", "err", err)
+			continue
+		}
+		req.Header.Set("Content-Type", job.hook.ContentType)
+		req.Header.Set("User-Agent", "Moddle-Webhook/1.0")
+		resp, err := d.client.Do(req)
+		if err != nil {
+			d.logger.Info("outgoing dispatch error", "hook", job.hook.ID, "err", err)
+			continue
+		}
+		// Drain + close so the connection can be reused.
+		io.Copy(io.Discard, resp.Body)
+		resp.Body.Close()
+	}
+}
+
+// hostAllowed is the outbound request safety check.
+//   1. URL must parse + be http/https.
+//   2. If an allowlist is configured, host must be on it.
+//   3. Else, reject links to private / loopback / link-local addresses.
+func (d *Dispatcher) hostAllowed(raw string) bool {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return false
+	}
+	if u.Scheme != "http" && u.Scheme != "https" {
+		return false
+	}
+	host := u.Hostname()
+	if host == "" {
+		return false
+	}
+	if len(d.allowedHosts) > 0 {
+		_, ok := d.allowedHosts[strings.ToLower(host)]
+		return ok
+	}
+	// Resolve and check each address. We don't rebind the request to the
+	// resolved IP (TOCTOU-wise this is best-effort), but we do block the
+	// obvious footguns: 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16,
+	// 169.254.0.0/16, 127.0.0.0/8.
+	ips, err := net.LookupIP(host)
+	if err != nil {
+		return false
+	}
+	for _, ip := range ips {
+		if ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsUnspecified() {
+			return false
+		}
+	}
+	return true
+}
+
+// outgoingPayload mirrors Mattermost's classic JSON body so existing tools
+// that understand that shape work without adaptation.
+func outgoingPayload(job dispatchJob) map[string]any {
+	return map[string]any{
+		"token":         job.hook.Token,
+		"team_id":       job.hook.TeamID,
+		"channel_id":    job.post.ChannelID,
+		"timestamp":     job.post.CreateAt,
+		"user_id":       job.post.UserID,
+		"user_name":     job.user,
+		"post_id":       job.post.ID,
+		"text":          job.post.Message,
+		"trigger_word":  firstMatch(job.post.Message, job.hook.TriggerWords, job.hook.TriggerWhen),
+		"file_ids":      job.post.FileIDs,
+	}
+}
+
+// matchTrigger applies the Mattermost semantics:
+//   triggerWhen == 0 → first word of message equals a trigger
+//   triggerWhen == 1 → trigger appears anywhere (case-insensitive)
+// Empty trigger list = never match (don't accidentally broadcast every post).
+func matchTrigger(message string, triggers []string, when int) bool {
+	if len(triggers) == 0 {
+		return false
+	}
+	msg := strings.TrimSpace(message)
+	if msg == "" {
+		return false
+	}
+	first := firstWord(msg)
+	lower := strings.ToLower(msg)
+	for _, t := range triggers {
+		tt := strings.ToLower(strings.TrimSpace(t))
+		if tt == "" {
+			continue
+		}
+		if when == 0 {
+			if strings.EqualFold(first, tt) {
+				return true
+			}
+		} else {
+			if strings.Contains(lower, tt) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func firstMatch(message string, triggers []string, when int) string {
+	if len(triggers) == 0 {
+		return ""
+	}
+	msg := strings.TrimSpace(message)
+	first := firstWord(msg)
+	lower := strings.ToLower(msg)
+	for _, t := range triggers {
+		tt := strings.TrimSpace(t)
+		if tt == "" {
+			continue
+		}
+		if when == 0 {
+			if strings.EqualFold(first, tt) {
+				return tt
+			}
+		} else {
+			if strings.Contains(lower, strings.ToLower(tt)) {
+				return tt
+			}
+		}
+	}
+	return ""
+}
+
+func firstWord(s string) string {
+	for i, r := range s {
+		if r == ' ' || r == '\t' || r == '\n' {
+			return s[:i]
+		}
+	}
+	return s
+}
+
+// GetByToken is used by a future reply-back path (a callback responding
+// with { text: "..." } posts as the hook creator). Unused initially but
+// keeps the shape ready.
+func (s *OutgoingService) GetByToken(ctx context.Context, token string) (*OutgoingHook, error) {
+	var h OutgoingHook
+	var triggers, callbacks []byte
+	err := s.db.Pool.QueryRow(ctx, `
+		SELECT id, token, creator_id, team_id, COALESCE(channel_id,''), trigger_words, trigger_when, callback_urls,
+		       display_name, content_type, create_at, update_at, delete_at
+		FROM outgoing_webhooks WHERE token = $1 AND delete_at = 0
+	`, token).Scan(&h.ID, &h.Token, &h.CreatorID, &h.TeamID, &h.ChannelID, &triggers, &h.TriggerWhen,
+		&callbacks, &h.DisplayName, &h.ContentType, &h.CreateAt, &h.UpdateAt, &h.DeleteAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrHookNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	_ = json.Unmarshal(triggers, &h.TriggerWords)
+	_ = json.Unmarshal(callbacks, &h.CallbackURLs)
+	return &h, nil
+}

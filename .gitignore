@@ -1,0 +1,20 @@
+# Dependencies
+webapp/node_modules/
+
+# Build outputs
+webapp/dist/
+webapp/tsconfig.tsbuildinfo
+bin/*.exe
+
+# Local runtime data and caches
+.cache/
+data/files/
+.claude/settings.local.json
+
+# Local secrets
+.env
+.env.*
+
+# OS/editor noise
+.DS_Store
+Thumbs.db
