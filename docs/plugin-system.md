@@ -47,6 +47,18 @@ Behavioral hooks run in deterministic load order. `MessageWillBePosted` can
 modify the post JSON or reject the write. `MessageHasBeenPosted` is best-effort
 and logs errors because the post has already been persisted.
 
+Host invariants:
+
+- Plugin list output follows first registration order, even when a plugin is
+  replaced by a newer instance.
+- Only running plugins with a live client receive message and command hooks.
+- `MessageWillBePosted` threads the latest post JSON through each plugin and
+  stops immediately on rejection.
+- `ExecuteCommand` skips plugin RPC errors and stops at the first handled
+  reply.
+- Shutdown deactivates and closes plugin clients in registration order, then
+  removes them from the running set.
+
 ## Web Plugins
 
 Web plugins are loaded by `webapp/src/plugins/runtime.ts` and register through

@@ -17,7 +17,16 @@ type Plugin struct {
 	Manifest *Manifest
 	Dir      string
 	State    string // installed, running, failed
-	client   *rpcbridge.Client
+	client   pluginClient
+}
+
+type pluginClient interface {
+	OnActivate(context.Context) error
+	OnDeactivate(context.Context) error
+	Close() error
+	MessageWillBePosted(context.Context, rpcbridge.PostEvent) (*rpcbridge.Decision, error)
+	MessageHasBeenPosted(context.Context, rpcbridge.PostEvent) error
+	ExecuteCommand(context.Context, rpcbridge.CommandArgs) (*rpcbridge.CommandReply, error)
 }
 
 type Host struct {
@@ -189,16 +198,30 @@ func (h *Host) ExecuteCommand(ctx context.Context, trigger, arg, channelID, user
 }
 
 func (h *Host) Shutdown() {
-	h.mu.Lock()
-	defer h.mu.Unlock()
+	h.mu.RLock()
+	plugins := make([]*Plugin, 0, len(h.plugins))
 	for _, id := range h.order {
 		p := h.plugins[id]
-		if p == nil {
-			continue
+		if p != nil && p.client != nil {
+			plugins = append(plugins, p)
 		}
-		if p.client != nil {
-			_ = p.client.OnDeactivate(context.Background())
-			_ = p.client.Close()
+	}
+	h.mu.RUnlock()
+
+	for _, p := range plugins {
+		_ = p.client.OnDeactivate(context.Background())
+		_ = p.client.Close()
+	}
+
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	for _, p := range plugins {
+		current := h.plugins[p.Manifest.ID]
+		if current == p {
+			current.client = nil
+			if current.State == "running" {
+				current.State = "installed"
+			}
 		}
 	}
 }
