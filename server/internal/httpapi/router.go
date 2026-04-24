@@ -123,31 +123,31 @@ func New(cfg *config.Config, db *store.DB, hub *ws.Hub, host *pluginhost.Host, l
 	}()
 
 	h := &handlers{
-		cfg:       cfg,
-		auth:      authSvc,
-		teams:     teamSvc,
-		channels:  channelSvc,
-		posts:     postSvc,
-		reactions: reactionSvc,
-		files:     fileSvc,
-		status:    statusSvc,
-		audit:     auditSvc,
-		slash:     slashSvc,
-		bots:      botSvc,
-		incoming:  incomingSvc,
-		outgoing:  outgoingSvc,
-		outDisp:   outDispatcher,
-		emojis:    emojiSvc,
-		oauthReg:  oauthReg,
+		cfg:        cfg,
+		auth:       authSvc,
+		teams:      teamSvc,
+		channels:   channelSvc,
+		posts:      postSvc,
+		reactions:  reactionSvc,
+		files:      fileSvc,
+		status:     statusSvc,
+		audit:      auditSvc,
+		slash:      slashSvc,
+		bots:       botSvc,
+		incoming:   incomingSvc,
+		outgoing:   outgoingSvc,
+		outDisp:    outDispatcher,
+		emojis:     emojiSvc,
+		oauthReg:   oauthReg,
 		oauthIdent: oauthIdent,
-		invites:   inviteSvc,
-		saved:     savedSvc,
-		links:     linkSvc,
-		scheduled: scheduledSvc,
-		reminders: reminderSvc,
-		hub:       hub,
-		host:      host,
-		logger:    logger,
+		invites:    inviteSvc,
+		saved:      savedSvc,
+		links:      linkSvc,
+		scheduled:  scheduledSvc,
+		reminders:  reminderSvc,
+		hub:        hub,
+		host:       host,
+		logger:     logger,
 	}
 
 	// Auto-presence: drive the user's status from socket lifecycle, but
@@ -229,6 +229,8 @@ func New(cfg *config.Config, db *store.DB, hub *ws.Hub, host *pluginhost.Host, l
 
 	r.Route("/api/v4", func(r chi.Router) {
 		r.Get("/system/ping", h.ping)
+		r.Get("/config/client", h.getClientConfig)
+		r.Get("/license/client", h.getClientLicense)
 
 		// OAuth endpoints are public by design: /login kicks off the flow
 		// before we know who the user is, and /callback is reached via
@@ -282,6 +284,7 @@ func New(cfg *config.Config, db *store.DB, hub *ws.Hub, host *pluginhost.Host, l
 			r.Get("/users/{userID}/status", h.getUserStatus)
 			r.Post("/users/statuses/ids", h.getUserStatusesByIDs)
 			r.Put("/users/me/status", h.updateMyStatus)
+			r.Get("/system/timezones", h.getSupportedTimezones)
 			r.Post("/teams", h.createTeam)
 			r.Get("/users/me/teams", h.listTeams)
 			r.Post("/teams/{teamID}/posts/search", h.searchPosts)
@@ -389,6 +392,7 @@ func New(cfg *config.Config, db *store.DB, hub *ws.Hub, host *pluginhost.Host, l
 			// inventory.
 			r.Group(func(r chi.Router) {
 				r.Use(h.requireRole("system_admin"))
+				r.Get("/config/environment", h.getEnvironmentConfig)
 				r.Get("/plugins", h.listPlugins)
 				r.Get("/audit/logs", h.listAudit)
 

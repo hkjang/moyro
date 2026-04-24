@@ -12,6 +12,8 @@ set.
   contribution rules.
 - [Plugin System](plugin-system.md) documents the server and web plugin
   surfaces.
+- [Mattermost API Compatibility](mattermost-api-compatibility.md) tracks
+  official API coverage, gaps, and implementation order.
 - [Roadmap](roadmap.md) tracks product maturity and next improvement slices.
 - [OpenAPI v4 Draft](openapi-v4.yaml) is the current API sketch.
 

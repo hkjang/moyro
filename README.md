@@ -93,12 +93,20 @@ With a running server, smoke-test the API contract:
 bash scripts/contract-test.sh
 ```
 
+To audit Mattermost API route-shape compatibility against the official
+OpenAPI source:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\audit-mattermost-api.ps1 -OutputJson .cache\mattermost-api-audit.json
+```
+
 ## Documentation
 
 - [Documentation Index](docs/index.md)
 - [Architecture](docs/architecture.md)
 - [Development Guide](docs/development.md)
 - [Plugin System](docs/plugin-system.md)
+- [Mattermost API Compatibility](docs/mattermost-api-compatibility.md)
 - [Roadmap](docs/roadmap.md)
 
 The older [requirements.md](docs/requirements.md) file is a legacy planning

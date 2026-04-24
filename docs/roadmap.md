@@ -29,9 +29,12 @@ Status: active.
 - Slash commands
 - Bot accounts and PATs
 - Plugin manifests and RPC hooks
+- API route-shape audit against official Mattermost OpenAPI source
 
 Next polish:
 
+- Drive Mattermost API route-shape coverage upward from the measured baseline
+  in [Mattermost API Compatibility](mattermost-api-compatibility.md).
 - Add contract tests for webhooks, slash commands, PAT auth, and plugin hooks.
 - Document known API differences from Mattermost.
 - Add response-shape snapshots for common endpoints.
