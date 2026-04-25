@@ -3,6 +3,7 @@ package auth
 import (
 	"context"
 	"errors"
+	"strings"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
@@ -42,7 +43,7 @@ type User struct {
 	// import) or a server-relative path (set via self-upload). Empty ⇒
 	// UI falls back to initial-tile avatars. Kept as TEXT not URL so both
 	// forms pass through without validation fuss.
-	Picture  string `json:"picture"`
+	Picture string `json:"picture"`
 	// DeleteAt is zero for active users and a unix-millis timestamp for
 	// deactivated ones. Most lookups filter `delete_at = 0` on the DB
 	// side so the field stays zero; the admin `ListUsersIncludingDeleted`
@@ -73,12 +74,22 @@ func (s *Service) Register(ctx context.Context, username, email, password string
 }
 
 func (s *Service) Login(ctx context.Context, loginID, password string) (*User, string, error) {
+	return s.LoginWithDevice(ctx, loginID, password, "")
+}
+
+func (s *Service) LoginWithDevice(ctx context.Context, loginID, password, deviceID string) (*User, string, error) {
+	loginID = strings.TrimSpace(loginID)
+	deviceID = strings.TrimSpace(deviceID)
+	if loginID == "" || password == "" {
+		return nil, "", ErrInvalidCredentials
+	}
+
 	var u User
 	var hash string
 	var isBot bool
 	err := s.db.Pool.QueryRow(ctx, `
 		SELECT id, username, email, roles, COALESCE(picture,''), password_hash, COALESCE(is_bot, FALSE)
-		FROM users WHERE (username=$1 OR email=$1) AND delete_at=0
+		FROM users WHERE (LOWER(username)=LOWER($1) OR LOWER(email)=LOWER($1)) AND delete_at=0
 	`, loginID).Scan(&u.ID, &u.Username, &u.Email, &u.Roles, &u.Picture, &hash, &isBot)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, "", ErrInvalidCredentials
@@ -101,9 +112,9 @@ func (s *Service) Login(ctx context.Context, loginID, password string) (*User, s
 	}
 	now := time.Now()
 	_, err = s.db.Pool.Exec(ctx, `
-		INSERT INTO sessions (id, user_id, token, expires_at, create_at)
-		VALUES ($1,$2,$3,$4,$5)
-	`, uuid.NewString(), u.ID, tok, now.Add(s.ttl).UnixMilli(), now.UnixMilli())
+		INSERT INTO sessions (id, user_id, token, device_id, expires_at, create_at)
+		VALUES ($1,$2,$3,$4,$5,$6)
+	`, uuid.NewString(), u.ID, tok, deviceID, now.Add(s.ttl).UnixMilli(), now.UnixMilli())
 	if err != nil {
 		return nil, "", err
 	}

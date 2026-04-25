@@ -325,8 +325,17 @@ func (h *handlers) bootstrapMembership(ctx context.Context, userID string) error
 }
 
 type loginReq struct {
+	ID       string `json:"id"`
 	LoginID  string `json:"login_id"`
+	DeviceID string `json:"device_id"`
 	Password string `json:"password"`
+}
+
+func (r loginReq) identifier() string {
+	if id := strings.TrimSpace(r.LoginID); id != "" {
+		return id
+	}
+	return strings.TrimSpace(r.ID)
 }
 
 func (h *handlers) login(w http.ResponseWriter, r *http.Request) {
@@ -335,11 +344,20 @@ func (h *handlers) login(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 400, "api.user.login.invalid_body.app_error", err.Error())
 		return
 	}
-	u, tok, err := h.auth.Login(r.Context(), req.LoginID, req.Password)
+	loginID := req.identifier()
+	if loginID == "" {
+		writeError(w, 400, "api.user.login.missing_login_id.app_error", "login_id or id is required")
+		return
+	}
+	if req.Password == "" {
+		writeError(w, 400, "api.user.login.missing_password.app_error", "password is required")
+		return
+	}
+	u, tok, err := h.auth.LoginWithDevice(r.Context(), loginID, req.Password, req.DeviceID)
 	if err != nil {
 		if errors.Is(err, auth.ErrInvalidCredentials) {
 			if h.audit != nil {
-				h.audit.LogAsync("", audit.ActionUserLoginFailed, req.LoginID, map[string]any{
+				h.audit.LogAsync("", audit.ActionUserLoginFailed, loginID, map[string]any{
 					"ip": r.RemoteAddr,
 				})
 			}
@@ -356,7 +374,7 @@ func (h *handlers) login(w http.ResponseWriter, r *http.Request) {
 	}
 	// Mattermost returns token in Token header. Also include in body for convenience.
 	w.Header().Set("Token", tok)
-	writeJSON(w, 200, map[string]any{"token": tok, "user": u})
+	writeJSON(w, 201, map[string]any{"token": tok, "user": u})
 }
 
 func (h *handlers) logout(w http.ResponseWriter, r *http.Request) {
