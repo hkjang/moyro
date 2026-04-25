@@ -35,6 +35,7 @@ export function useWebsocket(
   const [reconnectSeq, setReconnectSeq] = useState(0);
 
   const wsRef = useRef<WebSocket | null>(null);
+  const openTimerRef = useRef<number | null>(null);
   const retryTimerRef = useRef<number | null>(null);
   const attemptsRef = useRef(0);
   const tokenRef = useRef<string | null>(null);
@@ -58,6 +59,13 @@ export function useWebsocket(
       if (retryTimerRef.current != null) {
         window.clearTimeout(retryTimerRef.current);
         retryTimerRef.current = null;
+      }
+    }
+
+    function clearOpenTimer() {
+      if (openTimerRef.current != null) {
+        window.clearTimeout(openTimerRef.current);
+        openTimerRef.current = null;
       }
     }
 
@@ -104,11 +112,15 @@ export function useWebsocket(
       });
     }
 
-    open();
+    openTimerRef.current = window.setTimeout(() => {
+      openTimerRef.current = null;
+      open();
+    }, 0) as unknown as number;
 
     return () => {
       closedByUserRef.current = true;
       clearRetry();
+      clearOpenTimer();
       const ws = wsRef.current;
       wsRef.current = null;
       if (ws) {

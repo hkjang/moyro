@@ -3,6 +3,7 @@ param(
     [switch]$SkipInfra,
     [switch]$NoServer,
     [switch]$NoWeb,
+    [int]$ServerPort = 8065,
     [int]$WebPort = 5173
 )
 
@@ -45,6 +46,75 @@ function Quote-PSString {
     return "'" + ($Value -replace "'", "''") + "'"
 }
 
+function Test-ContainsPath {
+    param(
+        [AllowNull()][string]$Text,
+        [Parameter(Mandatory = $true)][string]$Path
+    )
+
+    if ([string]::IsNullOrWhiteSpace($Text)) {
+        return $false
+    }
+
+    return $Text.IndexOf($Path, [StringComparison]::OrdinalIgnoreCase) -ge 0
+}
+
+function Get-ListeningProcess {
+    param([Parameter(Mandatory = $true)][int]$Port)
+
+    $conn = Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue |
+        Select-Object -First 1
+    if (-not $conn) {
+        return $null
+    }
+
+    return Get-CimInstance Win32_Process -Filter ("ProcessId = {0}" -f $conn.OwningProcess) -ErrorAction SilentlyContinue
+}
+
+function Get-ProcessById {
+    param([Parameter(Mandatory = $true)][int]$ProcessId)
+    return Get-CimInstance Win32_Process -Filter ("ProcessId = {0}" -f $ProcessId) -ErrorAction SilentlyContinue
+}
+
+function Test-GoRunModdleProcess {
+    param([Parameter(Mandatory = $true)]$Process)
+
+    $exeName = [IO.Path]::GetFileName($Process.ExecutablePath)
+    if ($exeName -ne "moddle.exe") {
+        return $false
+    }
+
+    $parent = Get-ProcessById -ProcessId $Process.ParentProcessId
+    if (-not $parent) {
+        return $false
+    }
+
+    return $parent.CommandLine -match 'go(\.exe)?"?\s+run\s+(\./|\.\\)?cmd[\\/]moddle'
+}
+
+function Clear-RepoOwnedPort {
+    param([Parameter(Mandatory = $true)][int]$Port)
+
+    $process = Get-ListeningProcess -Port $Port
+    if (-not $process) {
+        return
+    }
+
+    $rootPath = [IO.Path]::GetFullPath($Root).TrimEnd("\")
+    $isRepoProcess = (Test-ContainsPath -Text $process.ExecutablePath -Path $rootPath) -or
+        (Test-ContainsPath -Text $process.CommandLine -Path $rootPath) -or
+        (Test-GoRunModdleProcess -Process $process)
+
+    if (-not $isRepoProcess) {
+        $owner = if ($process.ExecutablePath) { $process.ExecutablePath } else { $process.CommandLine }
+        throw "Port $Port is already in use by PID $($process.ProcessId): $owner"
+    }
+
+    Write-Host "Stopping existing RelayChat process on port $Port (PID $($process.ProcessId))..."
+    Stop-Process -Id $process.ProcessId -Force
+    Start-Sleep -Milliseconds 700
+}
+
 function Start-DevWindow {
     param(
         [Parameter(Mandatory = $true)][string]$Title,
@@ -68,7 +138,9 @@ if (-not $SkipInfra) {
 }
 
 if (-not $NoServer) {
+    Clear-RepoOwnedPort -Port $ServerPort
     $serverCommand = @"
+`$env:MODDLE_LISTEN = $(Quote-PSString ":$ServerPort")
 `$env:MODDLE_PLUGIN_DIR = $(Quote-PSString $PluginDir)
 go run ./cmd/moddle
 "@
@@ -83,7 +155,7 @@ if (-not $NoWeb) {
 
 Write-Host ""
 Write-Host "Dev environment requested."
-Write-Host "Server: http://localhost:8065"
+Write-Host "Server: http://localhost:$ServerPort"
 Write-Host "Webapp: http://localhost:$WebPort"
 Write-Host "Dev login: webuser / P@ssw0rd1"
 Write-Host ""

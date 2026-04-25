@@ -148,11 +148,13 @@ func (s *Service) IssueSession(ctx context.Context, userID string) (string, erro
 }
 
 func (s *Service) issueToken(userID string) (string, error) {
+	now := time.Now()
 	claims := &Claims{
 		UserID: userID,
 		RegisteredClaims: jwt.RegisteredClaims{
-			ExpiresAt: jwt.NewNumericDate(time.Now().Add(s.ttl)),
-			IssuedAt:  jwt.NewNumericDate(time.Now()),
+			ID:        uuid.NewString(),
+			ExpiresAt: jwt.NewNumericDate(now.Add(s.ttl)),
+			IssuedAt:  jwt.NewNumericDate(now),
 			Issuer:    "moddle",
 		},
 	}

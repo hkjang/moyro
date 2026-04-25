@@ -29,7 +29,13 @@ Useful switches:
 - `-SkipInfra` when PostgreSQL, Redis, and MinIO are already running
 - `-NoServer` to start only infrastructure and the web app
 - `-NoWeb` to start only infrastructure and the server
+- `-ServerPort 8066` to move the API server to another port
 - `-WebPort 5174` to move Vite to another port
+
+Before opening the server window, the launcher checks whether the requested
+server port is already occupied by a process from this repo. If it finds one,
+it stops that process so a stale `bin\moddle.exe` build cannot keep serving old
+API routes while the web app is running fresh code.
 
 ## Local Services
 
@@ -129,6 +135,20 @@ With a server running:
 ```powershell
 bash scripts/contract-test.sh
 ```
+
+## Troubleshooting
+
+If the chat screen opens but the browser console shows 404s for routes that are
+present in `server/internal/httpapi/router.go`, check for a stale server process:
+
+```powershell
+Get-NetTCPConnection -LocalPort 8065 -State Listen |
+  Select-Object LocalAddress,LocalPort,OwningProcess
+```
+
+Older local binaries such as `bin\moddle.exe` can occupy port `8065` and make
+Vite proxy requests to outdated API code. Run `scripts\dev.ps1` again to clear a
+repo-owned stale process and start the current `go run ./cmd/moddle` server.
 
 ## Change Rules
 

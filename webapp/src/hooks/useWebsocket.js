@@ -19,6 +19,7 @@ export function useWebsocket(token, onMessage) {
     const [attempts, setAttempts] = useState(0);
     const [reconnectSeq, setReconnectSeq] = useState(0);
     const wsRef = useRef(null);
+    const openTimerRef = useRef(null);
     const retryTimerRef = useRef(null);
     const attemptsRef = useRef(0);
     const tokenRef = useRef(null);
@@ -39,6 +40,12 @@ export function useWebsocket(token, onMessage) {
             if (retryTimerRef.current != null) {
                 window.clearTimeout(retryTimerRef.current);
                 retryTimerRef.current = null;
+            }
+        }
+        function clearOpenTimer() {
+            if (openTimerRef.current != null) {
+                window.clearTimeout(openTimerRef.current);
+                openTimerRef.current = null;
             }
         }
         function open() {
@@ -87,10 +94,14 @@ export function useWebsocket(token, onMessage) {
                 // backoff so we don't double-schedule.
             });
         }
-        open();
+        openTimerRef.current = window.setTimeout(() => {
+            openTimerRef.current = null;
+            open();
+        }, 0);
         return () => {
             closedByUserRef.current = true;
             clearRetry();
+            clearOpenTimer();
             const ws = wsRef.current;
             wsRef.current = null;
             if (ws) {
