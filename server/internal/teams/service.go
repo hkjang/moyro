@@ -2,9 +2,11 @@ package teams
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/moddle/moddle/server/internal/store"
 )
 
@@ -212,6 +214,15 @@ type TeamMember struct {
 	DeleteAt int64  `json:"delete_at"`
 }
 
+func scanTeamMember(row pgx.Row) (*TeamMember, error) {
+	var m TeamMember
+	if err := row.Scan(&m.TeamID, &m.UserID, &m.Roles, &m.CreateAt); err != nil {
+		return nil, err
+	}
+	m.DeleteAt = 0
+	return &m, nil
+}
+
 // ListMembers returns paginated team_members for the given team. The
 // official endpoint accepts page/per_page and returns an array; we keep
 // the same shape so the official admin UI's pagination works unchanged.
@@ -244,6 +255,119 @@ func (s *Service) ListMembers(ctx context.Context, teamID string, page, perPage 
 		// for response-shape parity with the official endpoint.
 		m.DeleteAt = 0
 		out = append(out, m)
+	}
+	return out, rows.Err()
+}
+
+// GetMember returns one team_members row.
+func (s *Service) GetMember(ctx context.Context, teamID, userID string) (*TeamMember, error) {
+	return scanTeamMember(s.db.Pool.QueryRow(ctx, `
+		SELECT team_id, user_id, COALESCE(roles,''), create_at
+		FROM team_members
+		WHERE team_id=$1 AND user_id=$2
+	`, teamID, userID))
+}
+
+// ListMembershipsForUser returns every team_members row for a user across
+// active teams. This mirrors GET /api/v4/users/{user_id}/teams/members.
+func (s *Service) ListMembershipsForUser(ctx context.Context, userID string) ([]TeamMember, error) {
+	rows, err := s.db.Pool.Query(ctx, `
+		SELECT tm.team_id, tm.user_id, COALESCE(tm.roles,''), tm.create_at
+		FROM team_members tm
+		JOIN teams t ON t.id = tm.team_id
+		WHERE tm.user_id=$1 AND t.delete_at=0
+		ORDER BY tm.create_at ASC
+	`, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []TeamMember{}
+	for rows.Next() {
+		var m TeamMember
+		if err := rows.Scan(&m.TeamID, &m.UserID, &m.Roles, &m.CreateAt); err != nil {
+			return nil, err
+		}
+		m.DeleteAt = 0
+		out = append(out, m)
+	}
+	return out, rows.Err()
+}
+
+// MembersByIDs bulk-reads memberships inside a team. Missing user ids are
+// intentionally skipped, matching Mattermost's tolerant bulk-read contract.
+func (s *Service) MembersByIDs(ctx context.Context, teamID string, userIDs []string) ([]TeamMember, error) {
+	out := []TeamMember{}
+	if len(userIDs) == 0 {
+		return out, nil
+	}
+	rows, err := s.db.Pool.Query(ctx, `
+		SELECT team_id, user_id, COALESCE(roles,''), create_at
+		FROM team_members
+		WHERE team_id=$1 AND user_id = ANY($2)
+	`, teamID, userIDs)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var m TeamMember
+		if err := rows.Scan(&m.TeamID, &m.UserID, &m.Roles, &m.CreateAt); err != nil {
+			return nil, err
+		}
+		m.DeleteAt = 0
+		out = append(out, m)
+	}
+	return out, rows.Err()
+}
+
+func (s *Service) AddMember(ctx context.Context, teamID, userID string) (*TeamMember, error) {
+	if err := s.Join(ctx, teamID, userID); err != nil {
+		return nil, err
+	}
+	return s.GetMember(ctx, teamID, userID)
+}
+
+type TeamUnread struct {
+	TeamID       string `json:"team_id"`
+	MsgCount     int64  `json:"msg_count"`
+	MentionCount int64  `json:"mention_count"`
+}
+
+func (s *Service) GetUnread(ctx context.Context, userID, teamID string) (*TeamUnread, error) {
+	out := &TeamUnread{TeamID: teamID}
+	err := s.db.Pool.QueryRow(ctx, `
+		SELECT COALESCE(SUM(cm.msg_count),0), COALESCE(SUM(cm.mention_count),0)
+		FROM channel_members cm
+		JOIN channels c ON c.id = cm.channel_id
+		WHERE cm.user_id=$1 AND c.team_id=$2 AND c.delete_at=0
+	`, userID, teamID).Scan(&out.MsgCount, &out.MentionCount)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (s *Service) ListUnreadForUser(ctx context.Context, userID string) ([]TeamUnread, error) {
+	rows, err := s.db.Pool.Query(ctx, `
+		SELECT COALESCE(c.team_id,''), COALESCE(SUM(cm.msg_count),0), COALESCE(SUM(cm.mention_count),0)
+		FROM channel_members cm
+		JOIN channels c ON c.id = cm.channel_id
+		WHERE cm.user_id=$1 AND c.delete_at=0 AND c.team_id IS NOT NULL
+		GROUP BY c.team_id
+		ORDER BY c.team_id ASC
+	`, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []TeamUnread{}
+	for rows.Next() {
+		var u TeamUnread
+		if err := rows.Scan(&u.TeamID, &u.MsgCount, &u.MentionCount); err != nil {
+			return nil, err
+		}
+		out = append(out, u)
 	}
 	return out, rows.Err()
 }
@@ -293,6 +417,80 @@ func (s *Service) Exists(ctx context.Context, name string) (bool, error) {
 		SELECT EXISTS(SELECT 1 FROM teams WHERE name=$1 AND delete_at=0)
 	`, name).Scan(&exists)
 	return exists, err
+}
+
+// ---- Phase 24 — team patch / update / privacy ----
+
+// TeamPatch carries pointer-typed partial-update fields. nil = leave alone,
+// non-nil = set (including empty string to clear). Mirrors Mattermost's
+// `PATCH /teams/{id}/patch` body.
+type TeamPatch struct {
+	Name            *string
+	DisplayName     *string
+	Description     *string
+	CompanyName     *string
+	AllowedDomains  *string
+	AllowOpenInvite *bool
+}
+
+// Patch applies a partial team update. SQL uses CASE WHEN to keep the
+// UPDATE atomic — we never read-modify-write so two concurrent patches
+// don't trample each other's untouched fields.
+//
+// We don't have description / company_name / allowed_domains / allow_open_invite
+// columns yet — the first three are silently dropped (matching the official
+// shape so the handler can accept the payload without erroring), and
+// allow_open_invite would normally toggle invite-link visibility. We track
+// only what we have today; clients that send the rest get a no-op for those
+// fields rather than a 400. This keeps clients that round-trip the full
+// object happy without committing us to the broader schema.
+func (s *Service) Patch(ctx context.Context, teamID string, p TeamPatch) (*Team, error) {
+	name, hasName := derefStr(p.Name)
+	display, hasDisplay := derefStr(p.DisplayName)
+	now := time.Now().UnixMilli()
+	_, err := s.db.Pool.Exec(ctx, `
+		UPDATE teams
+		SET name         = CASE WHEN $2 THEN $3 ELSE name END,
+		    display_name = CASE WHEN $4 THEN $5 ELSE display_name END,
+		    update_at    = $6
+		WHERE id = $1 AND delete_at = 0
+	`, teamID,
+		hasName, name,
+		hasDisplay, display,
+		now)
+	if err != nil {
+		return nil, err
+	}
+	return s.Get(ctx, teamID)
+}
+
+// SetPrivacy flips team type between 'O' (open) and 'I' (invite-only). The
+// official endpoint accepts a `privacy` body field; we accept either form
+// for forward-compat.
+func (s *Service) SetPrivacy(ctx context.Context, teamID, privacy string) (*Team, error) {
+	switch privacy {
+	case "O", "I":
+	default:
+		return nil, errors.New("invalid privacy: must be O or I")
+	}
+	now := time.Now().UnixMilli()
+	tag, err := s.db.Pool.Exec(ctx, `
+		UPDATE teams SET type=$2, update_at=$3 WHERE id=$1 AND delete_at=0
+	`, teamID, privacy, now)
+	if err != nil {
+		return nil, err
+	}
+	if tag.RowsAffected() == 0 {
+		return nil, errors.New("team not found")
+	}
+	return s.Get(ctx, teamID)
+}
+
+func derefStr(p *string) (string, bool) {
+	if p == nil {
+		return "", false
+	}
+	return *p, true
 }
 
 func (s *Service) ListForUser(ctx context.Context, userID string) ([]Team, error) {

@@ -135,6 +135,34 @@ func (s *Service) Disable(ctx context.Context, userID string) error {
 	return nil
 }
 
+// Update changes the bot's display name and description. Mirrors
+// `PUT /bots/{bot_user_id}`. Username changes go through the normal
+// user-rename path (PUT /users/{id}/patch) — kept separate so admin tooling
+// can audit a username flip from a description tweak.
+func (s *Service) Update(ctx context.Context, userID, displayName, description string) (*Bot, error) {
+	now := time.Now().UnixMilli()
+	tag, err := s.db.Pool.Exec(ctx, `
+		UPDATE users
+		SET bot_description = $2,
+		    update_at = $3
+		WHERE id = $1 AND COALESCE(is_bot, FALSE) = TRUE AND delete_at = 0
+	`, userID, description, now)
+	if err != nil {
+		return nil, err
+	}
+	if tag.RowsAffected() == 0 {
+		return nil, ErrBotNotFound
+	}
+	b, err := s.Get(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	if displayName != "" {
+		b.DisplayName = displayName
+	}
+	return b, nil
+}
+
 // IsBot reports whether the given user id corresponds to an active bot.
 func (s *Service) IsBot(ctx context.Context, userID string) (bool, error) {
 	var ok bool

@@ -441,3 +441,37 @@ CREATE TABLE IF NOT EXISTS commands (
 CREATE UNIQUE INDEX IF NOT EXISTS commands_team_trigger_idx
     ON commands (team_id, LOWER(trigger_word)) WHERE delete_at = 0;
 CREATE INDEX IF NOT EXISTS commands_creator_idx ON commands (creator_id);
+
+-- Phase 24: thread membership / read state. The official Mattermost API exposes
+-- per-(user, team, root) following + last-read tracking. Following is implicit
+-- on reply (you posted in the thread) and explicit when the user clicks
+-- "Following"; read tracking lets the UI dim a thread once the user has caught
+-- up. team_id is denormalised so the global "mark all team threads read" query
+-- doesn't have to JOIN posts→channels→teams on every fan-out.
+CREATE TABLE IF NOT EXISTS thread_memberships (
+    user_id          TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    team_id          TEXT NOT NULL,
+    root_id          TEXT NOT NULL,
+    last_viewed_at   BIGINT NOT NULL DEFAULT 0,
+    last_updated_at  BIGINT NOT NULL DEFAULT 0,
+    unread_mentions  INTEGER NOT NULL DEFAULT 0,
+    unread_replies   INTEGER NOT NULL DEFAULT 0,
+    following        BOOLEAN NOT NULL DEFAULT TRUE,
+    PRIMARY KEY (user_id, root_id)
+);
+CREATE INDEX IF NOT EXISTS thread_memberships_team_idx
+    ON thread_memberships (user_id, team_id);
+
+-- Phase 24: custom status. Mattermost stores `{emoji, text, expires_at, duration}`
+-- as a single user-level JSONB blob. We piggyback on the existing user_statuses
+-- row instead of growing a new table — there's already one row per user there
+-- and the existing GetMany / Get path can hand the field out without an extra
+-- read. Empty {} ⇒ no custom status set; client renders the plain Online/Away.
+ALTER TABLE user_statuses ADD COLUMN IF NOT EXISTS custom_status JSONB NOT NULL DEFAULT '{}'::jsonb;
+
+-- Phase 24: device id for push notifications. Mattermost stores this on the
+-- session row so a logged-in user can have multiple devices, each with its
+-- own push token. We don't actually push (no APNS / FCM wiring yet) but the
+-- column lets official mobile clients register without a 404. The PUT route
+-- is fire-and-forget — write the token, never read it back.
+ALTER TABLE sessions ADD COLUMN IF NOT EXISTS device_id TEXT NOT NULL DEFAULT '';

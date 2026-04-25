@@ -93,6 +93,58 @@ func (s *OutgoingService) List(ctx context.Context) ([]OutgoingHook, error) {
 	return out, rows.Err()
 }
 
+// Get returns a single outgoing hook by id (active only). Used by handlers
+// that need to verify a hook exists / belongs to a creator before mutating.
+func (s *OutgoingService) Get(ctx context.Context, id string) (*OutgoingHook, error) {
+	var h OutgoingHook
+	var triggers, callbacks []byte
+	err := s.db.Pool.QueryRow(ctx, `
+		SELECT id, token, creator_id, team_id, COALESCE(channel_id,''), trigger_words, trigger_when, callback_urls,
+		       display_name, content_type, create_at, update_at, delete_at
+		FROM outgoing_webhooks WHERE id = $1 AND delete_at = 0
+	`, id).Scan(&h.ID, &h.Token, &h.CreatorID, &h.TeamID, &h.ChannelID, &triggers, &h.TriggerWhen,
+		&callbacks, &h.DisplayName, &h.ContentType, &h.CreateAt, &h.UpdateAt, &h.DeleteAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrHookNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	_ = json.Unmarshal(triggers, &h.TriggerWords)
+	_ = json.Unmarshal(callbacks, &h.CallbackURLs)
+	return &h, nil
+}
+
+// Update modifies the trigger / callback / display fields of an outgoing
+// hook. Token is immutable here (rotate via a separate flow if needed); the
+// id and creator are also immutable. Returns ErrHookNotFound if missing or
+// already deleted.
+func (s *OutgoingService) Update(ctx context.Context, id string, triggerWords, callbackURLs []string, triggerWhen int, displayName, contentType string) (*OutgoingHook, error) {
+	if contentType == "" {
+		contentType = "application/json"
+	}
+	now := time.Now().UnixMilli()
+	rawTriggers, _ := json.Marshal(triggerWords)
+	rawCallbacks, _ := json.Marshal(callbackURLs)
+	tag, err := s.db.Pool.Exec(ctx, `
+		UPDATE outgoing_webhooks
+		SET trigger_words = $2,
+		    callback_urls = $3,
+		    trigger_when  = $4,
+		    display_name  = $5,
+		    content_type  = $6,
+		    update_at     = $7
+		WHERE id = $1 AND delete_at = 0
+	`, id, rawTriggers, rawCallbacks, triggerWhen, displayName, contentType, now)
+	if err != nil {
+		return nil, err
+	}
+	if tag.RowsAffected() == 0 {
+		return nil, ErrHookNotFound
+	}
+	return s.Get(ctx, id)
+}
+
 func (s *OutgoingService) Delete(ctx context.Context, id string) error {
 	now := time.Now().UnixMilli()
 	tag, err := s.db.Pool.Exec(ctx, `

@@ -54,6 +54,20 @@ const (
 	ActionCommandDelete     = "command.delete"
 	ActionCommandRegen      = "command.regen"
 	ActionCommandMove       = "command.move"
+	// Phase 24
+	ActionTeamUpdate         = "team.update"
+	ActionTeamPrivacy        = "team.privacy"
+	ActionHookIncomingUpdate = "hook.incoming.update"
+	ActionHookOutgoingUpdate = "hook.outgoing.update"
+	ActionBotUpdate          = "bot.update"
+	ActionUserRolesSet       = "user.roles.set"
+	ActionUserPasswordReset  = "user.password.reset"
+	ActionThreadFollow       = "thread.follow"
+	ActionThreadRead         = "thread.read"
+	ActionThreadReadAll      = "thread.read.all"
+	ActionCustomStatusSet    = "user.custom_status.set"
+	ActionCustomStatusClear  = "user.custom_status.clear"
+	ActionPostSetUnread      = "post.set_unread"
 )
 
 type Entry struct {

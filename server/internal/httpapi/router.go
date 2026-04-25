@@ -34,6 +34,7 @@ import (
 	"github.com/moddle/moddle/server/internal/slashcmd"
 	"github.com/moddle/moddle/server/internal/store"
 	"github.com/moddle/moddle/server/internal/teams"
+	"github.com/moddle/moddle/server/internal/threads"
 	"github.com/moddle/moddle/server/internal/userstatus"
 	"github.com/moddle/moddle/server/internal/webhooks"
 	"github.com/moddle/moddle/server/internal/ws"
@@ -102,6 +103,9 @@ func New(cfg *config.Config, db *store.DB, hub *ws.Hub, host *pluginhost.Host, l
 	sidebarSvc := sidebar.New(db)
 	// Phase 23: custom slash-command CRUD and autocomplete.
 	commandSvc := commands.New(db)
+	// Phase 24: thread membership store. One row per (user, root); team_id
+	// denormalised so "mark all in team read" doesn't have to walk posts.
+	threadSvc := threads.New(db)
 	// Phase 18: link preview fetcher. Nil when disabled; handlers check
 	// for nil before kicking off the async fetch so a feature-flagged-off
 	// deploy skips the goroutine entirely.
@@ -158,6 +162,7 @@ func New(cfg *config.Config, db *store.DB, hub *ws.Hub, host *pluginhost.Host, l
 		prefs:      prefsSvc,
 		sidebar:    sidebarSvc,
 		commands:   commandSvc,
+		threads:    threadSvc,
 		hub:        hub,
 		host:       host,
 		logger:     logger,
@@ -301,6 +306,8 @@ func New(cfg *config.Config, db *store.DB, hub *ws.Hub, host *pluginhost.Host, l
 			// enforces the admin-or-self check. Reactivate is admin-only.
 			r.Delete("/users/{userID}", h.deactivateUser)
 			r.Get("/users/{userID}/status", h.getUserStatus)
+			r.Put("/users/{userID}/status", h.updateUserStatus)
+			r.Post("/users/status/ids", h.getUserStatusesByIDs)
 			r.Post("/users/statuses/ids", h.getUserStatusesByIDs)
 			r.Put("/users/me/status", h.updateMyStatus)
 			r.Get("/system/timezones", h.getSupportedTimezones)
@@ -309,6 +316,9 @@ func New(cfg *config.Config, db *store.DB, hub *ws.Hub, host *pluginhost.Host, l
 			r.Get("/teams/{teamID}", h.getTeam)
 			r.Get("/users/me/teams", h.listTeams)
 			r.Get("/users/{userID}/teams", h.listTeamsForUserParam)
+			r.Get("/users/{userID}/teams/members", h.listUserTeamMembers)
+			r.Get("/users/{userID}/teams/unread", h.listUserTeamsUnread)
+			r.Get("/users/{userID}/teams/{teamID}/unread", h.getUserTeamUnread)
 			r.Post("/teams/{teamID}/posts/search", h.searchPosts)
 
 			// Team invite CRUD. Handler performs the "caller must be
@@ -322,6 +332,8 @@ func New(cfg *config.Config, db *store.DB, hub *ws.Hub, host *pluginhost.Host, l
 			r.Get("/teams/{teamID}/channels", h.listChannels)
 			r.Get("/users/me/teams/{teamID}/channels", h.listChannels)
 			r.Get("/users/{userID}/teams/{teamID}/channels", h.listChannelsForUserParam)
+			r.Get("/users/{userID}/channels", h.listChannelsForUserParam)
+			r.Get("/users/{userID}/channels/{channelID}/unread", h.getChannelUnread)
 			r.Post("/channels/direct", h.createDirectChannel)
 			r.Get("/channels/{channelID}", h.getChannel)
 			r.Put("/channels/{channelID}", h.patchChannel)
@@ -403,6 +415,7 @@ func New(cfg *config.Config, db *store.DB, hub *ws.Hub, host *pluginhost.Host, l
 			r.Get("/channels/{channelID}/members/{targetUserID}", h.getChannelMember)
 			r.Post("/channels/{channelID}/members", h.addChannelMember)
 			r.Post("/channels/{channelID}/members/ids", h.channelMembersByUserIDs)
+			r.Post("/channels/members/{userID}/view", h.viewChannelForUser)
 			// Phase 18 — self-join for public channel discovery. Distinct
 			// from addChannelMember (which requires already being a member
 			// to add others) so outsiders can join public channels.
@@ -437,6 +450,10 @@ func New(cfg *config.Config, db *store.DB, hub *ws.Hub, host *pluginhost.Host, l
 			r.Get("/teams/name/{name}", h.getTeamByName)
 			r.Get("/teams/{teamID}/stats", h.getTeamStats)
 			r.Get("/teams/{teamID}/members", h.listTeamMembers)
+			r.Post("/teams/{teamID}/members", h.addTeamMember)
+			r.Post("/teams/{teamID}/members/batch", h.addTeamMembersBatch)
+			r.Post("/teams/{teamID}/members/ids", h.teamMembersByIDs)
+			r.Get("/teams/{teamID}/members/{userID}", h.getTeamMember)
 
 			// Channels compat: stats + name lookup + search + autocomplete.
 			r.Get("/channels/{channelID}/stats", h.getChannelStats)
@@ -481,6 +498,39 @@ func New(cfg *config.Config, db *store.DB, hub *ws.Hub, host *pluginhost.Host, l
 			r.Get("/users/{userID}/channel_members", h.listUserChannelMembers)
 			r.Post("/users/{userID}/channels/members", h.channelMembersByIDs)
 
+			// Phase 24 — Mattermost API v4 compatibility wave 4 (auth chain).
+			//
+			// Pillar A — Threads compat. The official desktop reads/writes
+			// thread membership state through these three; without them the
+			// "Threads" view degrades to client-only state that doesn't
+			// survive a relogin.
+			r.Put("/users/{userID}/teams/{teamID}/threads/{rootID}/following", h.putThreadFollowing)
+			r.Put("/users/{userID}/teams/{teamID}/threads/{rootID}/read/{timestamp}", h.putThreadRead)
+			r.Put("/users/{userID}/teams/{teamID}/threads/read", h.putAllThreadsRead)
+
+			// Pillar B — Teams CRUD. Caller must be team_admin (or
+			// system_admin); the handler enforces it directly.
+			r.Put("/teams/{teamID}", h.updateTeamFull)
+			r.Put("/teams/{teamID}/patch", h.patchTeam)
+			r.Put("/teams/{teamID}/privacy", h.updateTeamPrivacy)
+
+			// Pillar D — User admin (roles + password + device). The
+			// password handler dispatches admin-vs-self internally; roles
+			// and device are gated within the handler.
+			r.Put("/users/{userID}/roles", h.setUserRoles)
+			r.Put("/users/{userID}/password", h.adminSetPassword)
+			r.Put("/users/sessions/device", h.setDeviceID)
+			r.Put("/users/{userID}/sessions/device", h.setDeviceID)
+
+			// Pillar E — Custom status. Self-only (the param gate restricts
+			// non-admin to their own row).
+			r.Put("/users/{userID}/status/custom", h.setCustomStatus)
+			r.Delete("/users/{userID}/status/custom", h.clearCustomStatus)
+
+			// Pillar F — Set unread. Member-only (handler verifies before
+			// rewinding the read marker).
+			r.Post("/users/{userID}/posts/{postID}/set_unread", h.setPostUnread)
+
 			r.Post("/commands/execute", h.executeCommand)
 
 			// Personal access tokens — self-issue allowed. The handler
@@ -515,12 +565,18 @@ func New(cfg *config.Config, db *store.DB, hub *ws.Hub, host *pluginhost.Host, l
 				// mounted above).
 				r.Post("/hooks/incoming", h.createIncomingWebhook)
 				r.Get("/hooks/incoming", h.listIncomingWebhooks)
+				r.Put("/hooks/incoming/{hookID}", h.updateIncomingWebhook)
 				r.Delete("/hooks/incoming/{hookID}", h.deleteIncomingWebhook)
 
 				// Outgoing webhook CRUD
 				r.Post("/hooks/outgoing", h.createOutgoingWebhook)
 				r.Get("/hooks/outgoing", h.listOutgoingWebhooks)
+				r.Put("/hooks/outgoing/{hookID}", h.updateOutgoingWebhook)
 				r.Delete("/hooks/outgoing/{hookID}", h.deleteOutgoingWebhook)
+
+				// Bot update (admin-only). Bot create/disable/list already
+				// gated above; PUT /bots/{id} mirrors Mattermost's contract.
+				r.Put("/bots/{botID}", h.updateBot)
 
 				// Custom slash command CRUD.
 				r.Post("/commands", h.createCommand)

@@ -32,20 +32,20 @@ reports matched, missing, and extra route shapes.
 Using Mattermost `master` OpenAPI source:
 
 - Official API v4 endpoints: 539
-- Local routed endpoints: 163
-- Matched endpoint shapes: 118
-- Missing official endpoint shapes: 421
-- Local-only endpoint shapes: 45
-- Route-shape coverage: 21.89%
+- Local routed endpoints: 191
+- Matched endpoint shapes: 145
+- Missing official endpoint shapes: 394
+- Local-only endpoint shapes: 46
+- Route-shape coverage: 26.90%
 
 This is not perfect API compatibility yet. It is a measured compatibility
 baseline that can now improve continuously.
 
 Top missing areas by route count:
 
-- users: 72
-- teams: 32
-- channels: 31
+- users: 56
+- channels: 30
+- teams: 25
 - groups: 21
 - data_retention: 15
 - access_control_policies: 15
@@ -170,3 +170,16 @@ permission denial, and not-found behavior where applicable.
   - `GET /api/v4/posts/scheduled/team/{team_id}`
   - `GET|POST|PUT|DELETE /api/v4/commands`
   - `GET /api/v4/teams/{team_id}/commands/autocomplete`
+- Added auth-chain and read-state compatibility for Mattermost clients:
+  - `PUT /api/v4/users/{user_id}/status`
+  - `POST /api/v4/users/status/ids`
+  - `GET|POST /api/v4/teams/{team_id}/members`
+  - `GET /api/v4/teams/{team_id}/members/{user_id}`
+  - `POST /api/v4/teams/{team_id}/members/ids`
+  - `POST /api/v4/teams/{team_id}/members/batch`
+  - `GET /api/v4/users/{user_id}/teams/members`
+  - `GET /api/v4/users/{user_id}/teams/unread`
+  - `GET /api/v4/users/{user_id}/teams/{team_id}/unread`
+  - `GET /api/v4/users/{user_id}/channels`
+  - `GET /api/v4/users/{user_id}/channels/{channel_id}/unread`
+  - `POST /api/v4/channels/members/{user_id}/view`

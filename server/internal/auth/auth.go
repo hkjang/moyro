@@ -674,6 +674,79 @@ func (s *Service) UpdatePassword(ctx context.Context, userID, current, next stri
 	return err
 }
 
+// AdminSetPassword force-rotates a user's password without checking the
+// current value. Reserved for system_admin tooling — `PUT /users/{id}/password`
+// from a privileged actor. Returns ErrInvalidCredentials only when the user
+// is missing/deleted (so callers can surface a 404), nil on success.
+func (s *Service) AdminSetPassword(ctx context.Context, userID, next string) error {
+	if next == "" {
+		return errors.New("empty password")
+	}
+	newHash, err := bcrypt.GenerateFromPassword([]byte(next), bcrypt.DefaultCost)
+	if err != nil {
+		return err
+	}
+	tag, err := s.db.Pool.Exec(ctx, `UPDATE users SET password_hash=$1, update_at=$2 WHERE id=$3 AND delete_at=0`, string(newHash), time.Now().UnixMilli(), userID)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrInvalidCredentials
+	}
+	return nil
+}
+
+// SetRoles overwrites a user's role string. Mirrors Mattermost's
+// `PUT /users/{user_id}/roles` body `{roles: "system_user system_admin"}`.
+// Whitespace is normalised; duplicate tokens collapsed; empty string rejected
+// so we never strip a user out of the system_user baseline by accident.
+func (s *Service) SetRoles(ctx context.Context, userID, roles string) error {
+	tokens := splitRoles(roles)
+	if len(tokens) == 0 {
+		return errors.New("empty roles")
+	}
+	seen := map[string]bool{}
+	canon := make([]string, 0, len(tokens))
+	for _, t := range tokens {
+		if seen[t] {
+			continue
+		}
+		seen[t] = true
+		canon = append(canon, t)
+	}
+	tag, err := s.db.Pool.Exec(ctx, `UPDATE users SET roles=$1, update_at=$2 WHERE id=$3 AND delete_at=0`,
+		stringsJoinSpace(canon), time.Now().UnixMilli(), userID)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrInvalidCredentials
+	}
+	return nil
+}
+
+func stringsJoinSpace(parts []string) string {
+	out := ""
+	for i, p := range parts {
+		if i > 0 {
+			out += " "
+		}
+		out += p
+	}
+	return out
+}
+
+// SetSessionDeviceID stamps the device_id (e.g. APNS/FCM token) on the row
+// matching the given JWT. Used by the official mobile clients on launch so
+// future server-side push fanout can target the right device.
+func (s *Service) SetSessionDeviceID(ctx context.Context, token, deviceID string) (bool, error) {
+	tag, err := s.db.Pool.Exec(ctx, `UPDATE sessions SET device_id=$2 WHERE token=$1`, token, deviceID)
+	if err != nil {
+		return false, err
+	}
+	return tag.RowsAffected() > 0, nil
+}
+
 // HasRole reports whether the user carries a given role token. The roles
 // column is a Mattermost-style space-delimited string (e.g. "system_user
 // system_admin"), so we split and compare.

@@ -85,6 +85,34 @@ func (s *Service) ListForUser(ctx context.Context, userID, teamID string) ([]Cha
 	return out, rows.Err()
 }
 
+// ListAllForUserIncludingDeleted returns every channel a user belongs to
+// across all teams. It backs GET /api/v4/users/{user_id}/channels.
+func (s *Service) ListAllForUserIncludingDeleted(ctx context.Context, userID string, includeDeleted bool) ([]Channel, error) {
+	q := `
+		SELECT c.id, COALESCE(c.team_id,''), c.type, c.display_name, c.name, c.header, c.purpose, c.create_at, c.update_at, c.delete_at
+		FROM channels c
+		JOIN channel_members m ON m.channel_id = c.id
+		WHERE m.user_id = $1`
+	if !includeDeleted {
+		q += ` AND c.delete_at = 0`
+	}
+	q += ` ORDER BY COALESCE(c.team_id,''), c.create_at ASC`
+	rows, err := s.db.Pool.Query(ctx, q, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Channel
+	for rows.Next() {
+		var c Channel
+		if err := rows.Scan(&c.ID, &c.TeamID, &c.Type, &c.DisplayName, &c.Name, &c.Header, &c.Purpose, &c.CreateAt, &c.UpdateAt, &c.DeleteAt); err != nil {
+			return nil, err
+		}
+		out = append(out, c)
+	}
+	return out, rows.Err()
+}
+
 // EnsureDefault creates the "general" channel in the given team if missing.
 func (s *Service) EnsureDefault(ctx context.Context, teamID string) (*Channel, error) {
 	var c Channel
@@ -378,8 +406,8 @@ func (s *Service) MembersByChannel(ctx context.Context, channelID string, userID
 // allocating a new error per call.
 type constErr struct{ s string }
 
-func (e *constErr) Error() string         { return e.s }
-func newConstError(s string) *constErr    { return &constErr{s: s} }
+func (e *constErr) Error() string      { return e.s }
+func newConstError(s string) *constErr { return &constErr{s: s} }
 
 // EnsureDirect returns the D-type channel between two users, creating it
 // on first call. Direct channels carry no team and use a canonical name of
@@ -455,17 +483,59 @@ func (s *Service) MarkViewed(ctx context.Context, channelID, userID string) (int
 	return now, err
 }
 
+// MarkUnreadFromPost rewinds the user's read marker so the given post is the
+// first unread row. Mirrors Mattermost's `POST /users/{uid}/posts/{pid}/set_unread`.
+//
+// We set last_viewed_at to (post.create_at - 1) so the post itself surfaces
+// as unread; counters are rebuilt by counting posts on/after that boundary
+// (capped — a runaway count would be expensive). mention_count is recomputed
+// by counting posts whose `props.mention_user_ids` includes the caller.
+func (s *Service) MarkUnreadFromPost(ctx context.Context, channelID, userID string, postCreateAt int64) (int64, int64, int64, error) {
+	if postCreateAt <= 0 {
+		return 0, 0, 0, nil
+	}
+	boundary := postCreateAt - 1
+	// Recount visible posts at/after boundary (cap at 9999 so a deep history
+	// rewind doesn't tie up the connection).
+	var msgCount int64
+	if err := s.db.Pool.QueryRow(ctx, `
+		SELECT COUNT(*) FROM (
+		  SELECT 1 FROM posts WHERE channel_id=$1 AND delete_at=0 AND create_at > $2 LIMIT 9999
+		) t
+	`, channelID, boundary).Scan(&msgCount); err != nil {
+		return 0, 0, 0, err
+	}
+	// Mention recount uses the existing props->'mention_user_ids' JSONB array
+	// the post handler stamps on creation.
+	var mentionCount int64
+	_ = s.db.Pool.QueryRow(ctx, `
+		SELECT COUNT(*) FROM posts
+		WHERE channel_id=$1 AND delete_at=0 AND create_at > $2
+		  AND props ? 'mention_user_ids'
+		  AND props->'mention_user_ids' @> to_jsonb($3::text)
+	`, channelID, boundary, userID).Scan(&mentionCount)
+	_, err := s.db.Pool.Exec(ctx, `
+		UPDATE channel_members
+		SET last_viewed_at = $1, msg_count = $2, mention_count = $3
+		WHERE channel_id = $4 AND user_id = $5
+	`, boundary, msgCount, mentionCount, channelID, userID)
+	if err != nil {
+		return 0, 0, 0, err
+	}
+	return boundary, msgCount, mentionCount, nil
+}
+
 // MemberWithCounts is a channel_members row with unread counters and the
 // caller's notify props inlined. Returned by ListForUserWithCounts so the
 // webapp can restore sidebar badges on reconnect in one round-trip.
 type MemberWithCounts struct {
-	ChannelID     string         `json:"channel_id"`
-	UserID        string         `json:"user_id"`
-	Roles         string         `json:"roles"`
-	LastViewedAt  int64          `json:"last_viewed_at"`
-	MsgCount      int64          `json:"msg_count"`
-	MentionCount  int64          `json:"mention_count"`
-	NotifyProps   map[string]any `json:"notify_props"`
+	ChannelID    string         `json:"channel_id"`
+	UserID       string         `json:"user_id"`
+	Roles        string         `json:"roles"`
+	LastViewedAt int64          `json:"last_viewed_at"`
+	MsgCount     int64          `json:"msg_count"`
+	MentionCount int64          `json:"mention_count"`
+	NotifyProps  map[string]any `json:"notify_props"`
 }
 
 // ListForUserWithCounts returns every channel_members row the user owns
@@ -500,6 +570,38 @@ func (s *Service) ListForUserWithCounts(ctx context.Context, userID, teamID stri
 		out = append(out, m)
 	}
 	return out, rows.Err()
+}
+
+type ChannelUnread struct {
+	TeamID       string         `json:"team_id"`
+	ChannelID    string         `json:"channel_id"`
+	MsgCount     int64          `json:"msg_count"`
+	MentionCount int64          `json:"mention_count"`
+	NotifyProps  map[string]any `json:"notify_props"`
+}
+
+func (s *Service) GetUnread(ctx context.Context, userID, channelID string) (*ChannelUnread, error) {
+	var out ChannelUnread
+	var propsRaw []byte
+	err := s.db.Pool.QueryRow(ctx, `
+		SELECT COALESCE(c.team_id,''), cm.channel_id, cm.msg_count, cm.mention_count, cm.notify_props
+		FROM channel_members cm
+		JOIN channels c ON c.id = cm.channel_id
+		WHERE cm.user_id=$1 AND cm.channel_id=$2 AND c.delete_at=0
+	`, userID, channelID).Scan(&out.TeamID, &out.ChannelID, &out.MsgCount, &out.MentionCount, &propsRaw)
+	if err != nil {
+		return nil, err
+	}
+	out.NotifyProps = defaultNotifyProps()
+	if len(propsRaw) > 0 {
+		user := map[string]any{}
+		if jerr := json.Unmarshal(propsRaw, &user); jerr == nil {
+			for k, v := range user {
+				out.NotifyProps[k] = v
+			}
+		}
+	}
+	return &out, nil
 }
 
 // GetNotifyProps returns the caller's notification prefs for a channel,
@@ -540,8 +642,8 @@ func (s *Service) SetNotifyProps(ctx context.Context, channelID, userID string, 
 
 func defaultNotifyProps() map[string]any {
 	return map[string]any{
-		"desktop":     "all",     // all | mentions | none
-		"mark_unread": "all",     // all | mention (mention-only counts as muted)
+		"desktop":     "all", // all | mentions | none
+		"mark_unread": "all", // all | mention (mention-only counts as muted)
 	}
 }
 

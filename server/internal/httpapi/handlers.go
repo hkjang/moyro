@@ -35,6 +35,7 @@ import (
 	"github.com/moddle/moddle/server/internal/sidebar"
 	"github.com/moddle/moddle/server/internal/slashcmd"
 	"github.com/moddle/moddle/server/internal/teams"
+	"github.com/moddle/moddle/server/internal/threads"
 	"github.com/moddle/moddle/server/internal/userstatus"
 	"github.com/moddle/moddle/server/internal/webhooks"
 	"github.com/moddle/moddle/server/internal/ws"
@@ -66,6 +67,7 @@ type handlers struct {
 	prefs      *preferences.Service
 	sidebar    *sidebar.Service
 	commands   *commands.Service
+	threads    *threads.Service
 	hub        *ws.Hub
 	host       *pluginhost.Host
 	logger     *slog.Logger
@@ -859,9 +861,25 @@ type updateStatusReq struct {
 }
 
 func (h *handlers) updateMyStatus(w http.ResponseWriter, r *http.Request) {
+	h.writeStatusUpdate(w, r, userID(r))
+}
+
+func (h *handlers) updateUserStatus(w http.ResponseWriter, r *http.Request) {
+	uid, ok := h.requireUserParamAccess(w, r, "userID")
+	if !ok {
+		return
+	}
+	h.writeStatusUpdate(w, r, uid)
+}
+
+func (h *handlers) writeStatusUpdate(w http.ResponseWriter, r *http.Request, targetID string) {
 	var req updateStatusReq
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, 400, "api.user.status.update.invalid_body", err.Error())
+		return
+	}
+	if req.UserID != "" && req.UserID != targetID && req.UserID != "me" {
+		writeError(w, 400, "api.user.status.update.user_mismatch", "user_id does not match route")
 		return
 	}
 	switch req.Status {
@@ -870,7 +888,7 @@ func (h *handlers) updateMyStatus(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 400, "api.user.status.update.invalid_status", "status must be online|away|dnd|offline")
 		return
 	}
-	st, err := h.status.Set(r.Context(), userID(r), req.Status, req.Manual)
+	st, err := h.status.Set(r.Context(), targetID, req.Status, req.Manual)
 	if err != nil {
 		writeError(w, 500, "api.user.status.update.app_error", err.Error())
 		return
@@ -4774,4 +4792,515 @@ func (h *handlers) updateSchedulePost(w http.ResponseWriter, r *http.Request) {
 
 func (h *handlers) deleteSchedulePostAlias(w http.ResponseWriter, r *http.Request) {
 	h.deleteScheduledPost(w, r)
+}
+
+// ----------------------------------------------------------------------
+// Phase 24 — Mattermost API v4 compatibility wave 4
+//
+// 14 endpoints across six independent pillars, picked from the back of the
+// audit's missing-list to avoid file conflicts with Phase 23's user/channel
+// work. Pillars: thread membership writes, team patch/privacy, webhook+bot
+// updates, user admin (roles/password/device), custom status, set-unread.
+// ----------------------------------------------------------------------
+
+// --- Pillar A: Threads compat (3 endpoints) ----------------------------
+
+// PUT /users/{userID}/teams/{teamID}/threads/{rootID}/following
+// Body: {"following": bool}. Mattermost's "follow this thread" toggle.
+type threadFollowReq struct {
+	Following bool `json:"following"`
+}
+
+func (h *handlers) putThreadFollowing(w http.ResponseWriter, r *http.Request) {
+	uid, ok := h.requireUserParamAccess(w, r, "userID")
+	if !ok {
+		return
+	}
+	teamID := chi.URLParam(r, "teamID")
+	rootID := chi.URLParam(r, "rootID")
+	var req threadFollowReq
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, 400, "api.thread.follow.invalid_body", err.Error())
+		return
+	}
+	if err := h.threads.SetFollowing(r.Context(), uid, teamID, rootID, req.Following); err != nil {
+		writeError(w, 500, "api.thread.follow.app_error", err.Error())
+		return
+	}
+	h.audit.LogAsync(uid, audit.ActionThreadFollow, rootID, map[string]any{
+		"team_id": teamID, "following": req.Following,
+	})
+	h.hub.Broadcast(ws.Event{
+		Event:     "thread_follow_changed",
+		Data:      map[string]any{"root_id": rootID, "team_id": teamID, "following": req.Following},
+		Broadcast: ws.Broadcast{UserID: uid},
+	})
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// PUT /users/{userID}/teams/{teamID}/threads/{rootID}/read/{timestamp}
+// Stamps last_viewed_at on a single thread. Timestamp = ms since epoch.
+func (h *handlers) putThreadRead(w http.ResponseWriter, r *http.Request) {
+	uid, ok := h.requireUserParamAccess(w, r, "userID")
+	if !ok {
+		return
+	}
+	teamID := chi.URLParam(r, "teamID")
+	rootID := chi.URLParam(r, "rootID")
+	tsStr := chi.URLParam(r, "timestamp")
+	ts, _ := strconv.ParseInt(tsStr, 10, 64)
+	viewed, err := h.threads.MarkRead(r.Context(), uid, teamID, rootID, ts)
+	if err != nil {
+		writeError(w, 500, "api.thread.read.app_error", err.Error())
+		return
+	}
+	h.audit.LogAsync(uid, audit.ActionThreadRead, rootID, map[string]any{
+		"team_id": teamID, "viewed_at": viewed,
+	})
+	h.hub.Broadcast(ws.Event{
+		Event:     "thread_read_changed",
+		Data:      map[string]any{"root_id": rootID, "team_id": teamID, "last_viewed_at": viewed},
+		Broadcast: ws.Broadcast{UserID: uid},
+	})
+	writeJSON(w, 200, map[string]any{"last_viewed_at": viewed})
+}
+
+// PUT /users/{userID}/teams/{teamID}/threads/read
+// Marks every thread membership in (user, team) as read at now().
+func (h *handlers) putAllThreadsRead(w http.ResponseWriter, r *http.Request) {
+	uid, ok := h.requireUserParamAccess(w, r, "userID")
+	if !ok {
+		return
+	}
+	teamID := chi.URLParam(r, "teamID")
+	viewed, err := h.threads.MarkAllReadInTeam(r.Context(), uid, teamID)
+	if err != nil {
+		writeError(w, 500, "api.thread.read_all.app_error", err.Error())
+		return
+	}
+	h.audit.LogAsync(uid, audit.ActionThreadReadAll, teamID, nil)
+	h.hub.Broadcast(ws.Event{
+		Event:     "thread_read_changed_all",
+		Data:      map[string]any{"team_id": teamID, "last_viewed_at": viewed},
+		Broadcast: ws.Broadcast{UserID: uid},
+	})
+	writeJSON(w, 200, map[string]any{"last_viewed_at": viewed})
+}
+
+// --- Pillar B: Teams CRUD compat (3 endpoints) -------------------------
+
+// PUT /teams/{teamID}
+// Full update of mutable team fields. We accept the same body shape as the
+// official client and forward to the Patch path with all fields populated.
+type updateTeamReq struct {
+	DisplayName     *string `json:"display_name"`
+	Name            *string `json:"name"`
+	Description     *string `json:"description"`
+	CompanyName     *string `json:"company_name"`
+	AllowedDomains  *string `json:"allowed_domains"`
+	AllowOpenInvite *bool   `json:"allow_open_invite"`
+}
+
+func (h *handlers) updateTeamFull(w http.ResponseWriter, r *http.Request) {
+	teamID := chi.URLParam(r, "teamID")
+	uid := userID(r)
+	// Caller must be team_admin or system_admin to mutate the team row.
+	if !h.callerCanAdminTeam(r.Context(), teamID, uid) {
+		writeError(w, http.StatusForbidden, "api.context.permissions.app_error", "team admin required")
+		return
+	}
+	var req updateTeamReq
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, 400, "api.team.update.invalid_body", err.Error())
+		return
+	}
+	t, err := h.teams.Patch(r.Context(), teamID, teams.TeamPatch{
+		Name: req.Name, DisplayName: req.DisplayName, Description: req.Description,
+		CompanyName: req.CompanyName, AllowedDomains: req.AllowedDomains,
+		AllowOpenInvite: req.AllowOpenInvite,
+	})
+	if err != nil {
+		writeError(w, 500, "api.team.update.app_error", err.Error())
+		return
+	}
+	if t == nil {
+		writeError(w, 404, "api.team.update.not_found", "team not found")
+		return
+	}
+	h.audit.LogAsync(uid, audit.ActionTeamUpdate, teamID, map[string]any{"team": t})
+	h.hub.Broadcast(ws.Event{Event: "team_updated", Data: map[string]any{"team": t}})
+	writeJSON(w, 200, t)
+}
+
+// PUT /teams/{teamID}/patch — same body as PUT /teams/{teamID} but the official
+// contract is partial-update (any nil field is left untouched). Our Patch
+// already implements partial-update semantics via CASE WHEN, so the two
+// handlers share the same plumbing.
+func (h *handlers) patchTeam(w http.ResponseWriter, r *http.Request) {
+	h.updateTeamFull(w, r)
+}
+
+// PUT /teams/{teamID}/privacy — body {"privacy": "O" | "I"}.
+type teamPrivacyReq struct {
+	Privacy string `json:"privacy"`
+}
+
+func (h *handlers) updateTeamPrivacy(w http.ResponseWriter, r *http.Request) {
+	teamID := chi.URLParam(r, "teamID")
+	uid := userID(r)
+	if !h.callerCanAdminTeam(r.Context(), teamID, uid) {
+		writeError(w, http.StatusForbidden, "api.context.permissions.app_error", "team admin required")
+		return
+	}
+	var req teamPrivacyReq
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, 400, "api.team.privacy.invalid_body", err.Error())
+		return
+	}
+	if req.Privacy != "O" && req.Privacy != "I" {
+		writeError(w, 400, "api.team.privacy.invalid", "privacy must be O or I")
+		return
+	}
+	t, err := h.teams.SetPrivacy(r.Context(), teamID, req.Privacy)
+	if err != nil {
+		writeError(w, 500, "api.team.privacy.app_error", err.Error())
+		return
+	}
+	if t == nil {
+		writeError(w, 404, "api.team.privacy.not_found", "team not found")
+		return
+	}
+	h.audit.LogAsync(uid, audit.ActionTeamPrivacy, teamID, map[string]any{"privacy": req.Privacy})
+	h.hub.Broadcast(ws.Event{Event: "team_updated", Data: map[string]any{"team": t}})
+	writeJSON(w, 200, t)
+}
+
+// callerCanAdminTeam is a tiny helper that returns true if the caller is
+// system_admin OR team_admin for the given team.
+func (h *handlers) callerCanAdminTeam(ctx context.Context, teamID, uid string) bool {
+	if uid == "" {
+		return false
+	}
+	if ok, _ := h.auth.HasRole(ctx, uid, "system_admin"); ok {
+		return true
+	}
+	if ok, _ := h.teams.IsTeamAdmin(ctx, teamID, uid); ok {
+		return true
+	}
+	return false
+}
+
+// --- Pillar C: Webhooks + Bot updates (3 endpoints) --------------------
+
+// PUT /hooks/incoming/{hookID}
+type updateIncomingHookReq struct {
+	ChannelID     string `json:"channel_id"`
+	DisplayName   string `json:"display_name"`
+	Username      string `json:"username"`
+	IconURL       string `json:"icon_url"`
+	ChannelLocked bool   `json:"channel_locked"`
+}
+
+func (h *handlers) updateIncomingWebhook(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "hookID")
+	var req updateIncomingHookReq
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, 400, "api.hook.incoming.update.invalid_body", err.Error())
+		return
+	}
+	hook, err := h.incoming.Update(r.Context(), id, req.ChannelID, req.DisplayName, req.Username, req.IconURL, req.ChannelLocked)
+	if err != nil {
+		if errors.Is(err, webhooks.ErrHookNotFound) {
+			writeError(w, 404, "api.hook.incoming.update.not_found", err.Error())
+			return
+		}
+		writeError(w, 500, "api.hook.incoming.update.app_error", err.Error())
+		return
+	}
+	h.audit.LogAsync(userID(r), audit.ActionHookIncomingUpdate, id, nil)
+	writeJSON(w, 200, hook)
+}
+
+// PUT /hooks/outgoing/{hookID}
+type updateOutgoingHookReq struct {
+	TriggerWords []string `json:"trigger_words"`
+	CallbackURLs []string `json:"callback_urls"`
+	TriggerWhen  int      `json:"trigger_when"`
+	DisplayName  string   `json:"display_name"`
+	ContentType  string   `json:"content_type"`
+}
+
+func (h *handlers) updateOutgoingWebhook(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "hookID")
+	var req updateOutgoingHookReq
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, 400, "api.hook.outgoing.update.invalid_body", err.Error())
+		return
+	}
+	hook, err := h.outgoing.Update(r.Context(), id, req.TriggerWords, req.CallbackURLs, req.TriggerWhen, req.DisplayName, req.ContentType)
+	if err != nil {
+		if errors.Is(err, webhooks.ErrHookNotFound) {
+			writeError(w, 404, "api.hook.outgoing.update.not_found", err.Error())
+			return
+		}
+		writeError(w, 500, "api.hook.outgoing.update.app_error", err.Error())
+		return
+	}
+	h.audit.LogAsync(userID(r), audit.ActionHookOutgoingUpdate, id, nil)
+	writeJSON(w, 200, hook)
+}
+
+// PUT /bots/{botUserID}
+type updateBotReq struct {
+	DisplayName string `json:"display_name"`
+	Description string `json:"description"`
+}
+
+func (h *handlers) updateBot(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "botID")
+	var req updateBotReq
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, 400, "api.bot.update.invalid_body", err.Error())
+		return
+	}
+	b, err := h.bots.Update(r.Context(), id, req.DisplayName, req.Description)
+	if err != nil {
+		if errors.Is(err, bots.ErrBotNotFound) {
+			writeError(w, 404, "api.bot.update.not_found", err.Error())
+			return
+		}
+		writeError(w, 500, "api.bot.update.app_error", err.Error())
+		return
+	}
+	h.audit.LogAsync(userID(r), audit.ActionBotUpdate, id, nil)
+	writeJSON(w, 200, b)
+}
+
+// --- Pillar D: User admin ops (3 endpoints) ----------------------------
+
+// PUT /users/{userID}/roles — body {"roles": "system_user system_admin"}.
+// Admin-only (not self) per Mattermost's contract.
+type setRolesReq struct {
+	Roles string `json:"roles"`
+}
+
+func (h *handlers) setUserRoles(w http.ResponseWriter, r *http.Request) {
+	target := chi.URLParam(r, "userID")
+	uid := userID(r)
+	if uid == target {
+		// Mattermost forbids self role assignment to prevent privilege
+		// hairpins (an admin demoting themselves into a footgun).
+		writeError(w, http.StatusForbidden, "api.user.roles.self", "cannot change own roles")
+		return
+	}
+	var req setRolesReq
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, 400, "api.user.roles.invalid_body", err.Error())
+		return
+	}
+	if err := h.auth.SetRoles(r.Context(), target, req.Roles); err != nil {
+		if errors.Is(err, auth.ErrInvalidCredentials) {
+			writeError(w, 404, "api.user.roles.not_found", "user not found")
+			return
+		}
+		writeError(w, 500, "api.user.roles.app_error", err.Error())
+		return
+	}
+	h.audit.LogAsync(uid, audit.ActionUserRolesSet, target, map[string]any{"roles": req.Roles})
+	h.hub.Broadcast(ws.Event{Event: "user_role_updated", Data: map[string]any{"user_id": target, "roles": req.Roles}, Broadcast: ws.Broadcast{UserID: target}})
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// PUT /users/{userID}/password — admin path. Distinct from the existing
+// PUT /users/me/password (which is the self-rotate path requiring the
+// current password). When called as self, falls through to UpdatePassword
+// so the contract isn't an admin-only privilege.
+type adminSetPasswordReq struct {
+	CurrentPassword string `json:"current_password"`
+	NewPassword     string `json:"new_password"`
+}
+
+func (h *handlers) adminSetPassword(w http.ResponseWriter, r *http.Request) {
+	target := chi.URLParam(r, "userID")
+	uid := userID(r)
+	var req adminSetPasswordReq
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, 400, "api.user.password.invalid_body", err.Error())
+		return
+	}
+	if req.NewPassword == "" {
+		writeError(w, 400, "api.user.password.empty", "new_password required")
+		return
+	}
+	// Self path: must verify current password.
+	if target == uid || target == "me" {
+		if err := h.auth.UpdatePassword(r.Context(), uid, req.CurrentPassword, req.NewPassword); err != nil {
+			if errors.Is(err, auth.ErrInvalidCredentials) {
+				writeError(w, 400, "api.user.password.invalid_current", "current password incorrect")
+				return
+			}
+			writeError(w, 500, "api.user.password.app_error", err.Error())
+			return
+		}
+		h.audit.LogAsync(uid, audit.ActionUserPasswordChg, uid, nil)
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	// Admin path: caller must hold system_admin.
+	if ok, _ := h.auth.HasRole(r.Context(), uid, "system_admin"); !ok {
+		writeError(w, http.StatusForbidden, "api.context.permissions.app_error", "admin required")
+		return
+	}
+	if err := h.auth.AdminSetPassword(r.Context(), target, req.NewPassword); err != nil {
+		if errors.Is(err, auth.ErrInvalidCredentials) {
+			writeError(w, 404, "api.user.password.not_found", "user not found")
+			return
+		}
+		writeError(w, 500, "api.user.password.app_error", err.Error())
+		return
+	}
+	h.audit.LogAsync(uid, audit.ActionUserPasswordReset, target, nil)
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// PUT /users/{userID}/sessions/device — body {"device_id": "..."}. Stamps
+// the device id on the row matching the request's bearer token. We don't
+// actually do APNS/FCM push fanout yet; this just lets the official mobile
+// clients call this on launch without 404'ing.
+type setDeviceReq struct {
+	DeviceID string `json:"device_id"`
+}
+
+func (h *handlers) setDeviceID(w http.ResponseWriter, r *http.Request) {
+	uid, ok := h.requireUserParamAccess(w, r, "userID")
+	if !ok {
+		return
+	}
+	var req setDeviceReq
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, 400, "api.user.device.invalid_body", err.Error())
+		return
+	}
+	tok := extractBearer(r)
+	if tok == "" {
+		writeError(w, http.StatusUnauthorized, "api.context.session_expired.app_error", "missing token")
+		return
+	}
+	updated, err := h.auth.SetSessionDeviceID(r.Context(), tok, req.DeviceID)
+	if err != nil {
+		writeError(w, 500, "api.user.device.app_error", err.Error())
+		return
+	}
+	if !updated {
+		// PAT-authenticated requests don't have a sessions row; return 200
+		// instead of 404 so the official mobile client doesn't bail.
+		writeJSON(w, 200, map[string]any{"status": "OK"})
+		return
+	}
+	_ = uid // referenced for permission gate; not stamped onto the row
+	writeJSON(w, 200, map[string]any{"status": "OK"})
+}
+
+// --- Pillar E: Custom status (1 endpoint) ------------------------------
+
+// PUT /users/{userID}/status/custom — body {emoji, text, duration?, expires_at?}.
+type setCustomStatusReq struct {
+	Emoji     string `json:"emoji"`
+	Text      string `json:"text"`
+	Duration  string `json:"duration,omitempty"`
+	ExpiresAt string `json:"expires_at,omitempty"`
+}
+
+func (h *handlers) setCustomStatus(w http.ResponseWriter, r *http.Request) {
+	uid, ok := h.requireUserParamAccess(w, r, "userID")
+	if !ok {
+		return
+	}
+	var req setCustomStatusReq
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, 400, "api.user.custom_status.invalid_body", err.Error())
+		return
+	}
+	cs := userstatus.CustomStatus{
+		Emoji: req.Emoji, Text: req.Text,
+		Duration: req.Duration, ExpiresAt: req.ExpiresAt,
+	}
+	if err := h.status.SetCustomStatus(r.Context(), uid, cs); err != nil {
+		writeError(w, 500, "api.user.custom_status.app_error", err.Error())
+		return
+	}
+	h.audit.LogAsync(uid, audit.ActionCustomStatusSet, uid, map[string]any{"emoji": cs.Emoji, "text": cs.Text})
+	h.hub.Broadcast(ws.Event{
+		Event: "custom_status_changed",
+		Data:  map[string]any{"user_id": uid, "custom_status": cs},
+	})
+	writeJSON(w, 200, cs)
+}
+
+// DELETE /users/{userID}/status/custom — companion clear endpoint.
+func (h *handlers) clearCustomStatus(w http.ResponseWriter, r *http.Request) {
+	uid, ok := h.requireUserParamAccess(w, r, "userID")
+	if !ok {
+		return
+	}
+	if err := h.status.ClearCustomStatus(r.Context(), uid); err != nil {
+		writeError(w, 500, "api.user.custom_status.app_error", err.Error())
+		return
+	}
+	h.audit.LogAsync(uid, audit.ActionCustomStatusClear, uid, nil)
+	h.hub.Broadcast(ws.Event{
+		Event: "custom_status_changed",
+		Data:  map[string]any{"user_id": uid, "custom_status": userstatus.CustomStatus{}},
+	})
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// --- Pillar F: Set unread (1 endpoint) ---------------------------------
+
+// POST /users/{userID}/posts/{postID}/set_unread — rewinds last_viewed_at on
+// the channel so the given post becomes the first unread row.
+func (h *handlers) setPostUnread(w http.ResponseWriter, r *http.Request) {
+	uid, ok := h.requireUserParamAccess(w, r, "userID")
+	if !ok {
+		return
+	}
+	postID := chi.URLParam(r, "postID")
+	post, err := h.posts.Get(r.Context(), postID)
+	if err != nil || post == nil {
+		writeError(w, 404, "api.post.set_unread.not_found", "post not found")
+		return
+	}
+	// Caller must be a member of the channel — set_unread is a member-only
+	// operation; non-members shouldn't even be able to probe channel posts.
+	isMember, _ := h.channels.IsMember(r.Context(), post.ChannelID, uid)
+	if !isMember {
+		writeError(w, http.StatusForbidden, "api.context.permissions.app_error", "not a channel member")
+		return
+	}
+	viewed, msgCount, mentionCount, err := h.channels.MarkUnreadFromPost(r.Context(), post.ChannelID, uid, post.CreateAt)
+	if err != nil {
+		writeError(w, 500, "api.post.set_unread.app_error", err.Error())
+		return
+	}
+	h.audit.LogAsync(uid, audit.ActionPostSetUnread, postID, map[string]any{
+		"channel_id": post.ChannelID, "boundary": viewed,
+	})
+	h.hub.Broadcast(ws.Event{
+		Event: "channel_unread_updated",
+		Data: map[string]any{
+			"channel_id":     post.ChannelID,
+			"user_id":        uid,
+			"last_viewed_at": viewed,
+			"msg_count":      msgCount,
+			"mention_count":  mentionCount,
+		},
+		Broadcast: ws.Broadcast{UserID: uid},
+	})
+	writeJSON(w, 200, map[string]any{
+		"channel_id":     post.ChannelID,
+		"user_id":        uid,
+		"last_viewed_at": viewed,
+		"msg_count":      msgCount,
+		"mention_count":  mentionCount,
+	})
 }

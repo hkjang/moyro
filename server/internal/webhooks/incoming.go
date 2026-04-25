@@ -120,6 +120,31 @@ func (s *IncomingService) List(ctx context.Context) ([]IncomingHook, error) {
 	return out, rows.Err()
 }
 
+// Update modifies the human-facing fields of an incoming hook. The id and
+// creator are immutable; the channel can be changed (admin tools sometimes
+// retarget an old hook rather than rotate the URL). Returns ErrHookNotFound
+// if the hook is missing or already deleted.
+func (s *IncomingService) Update(ctx context.Context, id, channelID, displayName, username, iconURL string, channelLocked bool) (*IncomingHook, error) {
+	now := time.Now().UnixMilli()
+	tag, err := s.db.Pool.Exec(ctx, `
+		UPDATE incoming_webhooks
+		SET channel_id = $2,
+		    display_name = $3,
+		    username = $4,
+		    icon_url = $5,
+		    channel_locked = $6,
+		    update_at = $7
+		WHERE id = $1 AND delete_at = 0
+	`, id, channelID, displayName, username, iconURL, channelLocked, now)
+	if err != nil {
+		return nil, err
+	}
+	if tag.RowsAffected() == 0 {
+		return nil, ErrHookNotFound
+	}
+	return s.Get(ctx, id)
+}
+
 func (s *IncomingService) Delete(ctx context.Context, id string) error {
 	now := time.Now().UnixMilli()
 	tag, err := s.db.Pool.Exec(ctx, `
