@@ -367,3 +367,65 @@ export function openWebSocket(token) {
     const url = `${scheme}://${window.location.host}/api/v4/websocket?access_token=${encodeURIComponent(token)}`;
     return new WebSocket(url);
 }
+export const prefsApi = {
+    list: (token, userId = "me") => request(token, `/users/${encodeURIComponent(userId)}/preferences`),
+    listCategory: (token, category, userId = "me") => request(token, `/users/${encodeURIComponent(userId)}/preferences/${encodeURIComponent(category)}`),
+    getOne: (token, category, name, userId = "me") => request(token, `/users/${encodeURIComponent(userId)}/preferences/${encodeURIComponent(category)}/name/${encodeURIComponent(name)}`),
+    upsert: (token, prefs, userId = "me") => request(token, `/users/${encodeURIComponent(userId)}/preferences`, {
+        method: "PUT",
+        body: prefs,
+    }),
+    remove: (token, prefs, userId = "me") => request(token, `/users/${encodeURIComponent(userId)}/preferences/delete`, { method: "POST", body: prefs }),
+};
+export const compatApi = {
+    // Users
+    autocompleteUsers: (token, name, limit = 25) => request(token, `/users/autocomplete?name=${encodeURIComponent(name)}&limit=${limit}`),
+    usersByIds: (token, ids) => request(token, `/users/ids`, { method: "POST", body: ids }),
+    usersByUsernames: (token, names) => request(token, `/users/usernames`, { method: "POST", body: names }),
+    userByEmail: (token, email) => request(token, `/users/email/${encodeURIComponent(email)}`),
+    // Teams
+    teamByName: (token, name) => request(token, `/teams/name/${encodeURIComponent(name)}`),
+    teamStats: (token, teamId) => request(token, `/teams/${encodeURIComponent(teamId)}/stats`),
+    teamMembers: (token, teamId, page = 0, perPage = 60) => request(token, `/teams/${encodeURIComponent(teamId)}/members?page=${page}&per_page=${perPage}`),
+    // Channels
+    channelStats: (token, channelId) => request(token, `/channels/${encodeURIComponent(channelId)}/stats`),
+    channelByName: (token, teamId, channelName) => request(token, `/teams/${encodeURIComponent(teamId)}/channels/name/${encodeURIComponent(channelName)}`),
+    searchChannels: (token, teamId, term) => request(token, `/teams/${encodeURIComponent(teamId)}/channels/search`, {
+        method: "POST",
+        body: { term },
+    }),
+    autocompleteChannels: (token, teamId, name) => request(token, `/teams/${encodeURIComponent(teamId)}/channels/autocomplete?name=${encodeURIComponent(name)}`),
+    // Posts
+    postsByIds: (token, ids) => request(token, `/posts/ids`, { method: "POST", body: ids }),
+    patchPost: (token, postId, patch) => request(token, `/posts/${encodeURIComponent(postId)}/patch`, {
+        method: "PUT",
+        body: patch,
+    }),
+    // Phase 22 — Mattermost API v4 compatibility wave 2.
+    searchTeams: (token, term, page = 0, perPage = 25) => request(token, `/teams/search`, {
+        method: "POST",
+        body: { term, page, per_page: perPage },
+    }),
+    teamNameExists: (token, name) => request(token, `/teams/name/${encodeURIComponent(name)}/exists`),
+    listUserChannelMembers: (token, userId = "me") => request(token, `/users/${encodeURIComponent(userId)}/channel_members`),
+    channelMembersByIds: (token, channelIds, userId = "me") => request(token, `/users/${encodeURIComponent(userId)}/channels/members`, { method: "POST", body: { channel_ids: channelIds } }),
+    // Cursor-mode listPosts variants. Mattermost uses these for incremental
+    // sync; the regular paged path remains available via api.listPosts.
+    listPostsSince: (token, channelId, since, perPage = 60) => request(token, `/channels/${encodeURIComponent(channelId)}/posts?since=${since}&per_page=${perPage}`),
+    listPostsBefore: (token, channelId, postId, perPage = 60) => request(token, `/channels/${encodeURIComponent(channelId)}/posts?before=${encodeURIComponent(postId)}&per_page=${perPage}`),
+    listPostsAfter: (token, channelId, postId, perPage = 60) => request(token, `/channels/${encodeURIComponent(channelId)}/posts?after=${encodeURIComponent(postId)}&per_page=${perPage}`),
+};
+export const sidebarApi = {
+    list: (token, teamId, userId = "me") => request(token, `/users/${encodeURIComponent(userId)}/teams/${encodeURIComponent(teamId)}/channels/categories`),
+    order: (token, teamId, userId = "me") => request(token, `/users/${encodeURIComponent(userId)}/teams/${encodeURIComponent(teamId)}/channels/categories/order`),
+    updateOrder: (token, teamId, order, userId = "me") => request(token, `/users/${encodeURIComponent(userId)}/teams/${encodeURIComponent(teamId)}/channels/categories/order`, { method: "PUT", body: order }),
+    get: (token, teamId, categoryId, userId = "me") => request(token, `/users/${encodeURIComponent(userId)}/teams/${encodeURIComponent(teamId)}/channels/categories/${encodeURIComponent(categoryId)}`),
+    create: (token, teamId, body, userId = "me") => request(token, `/users/${encodeURIComponent(userId)}/teams/${encodeURIComponent(teamId)}/channels/categories`, { method: "POST", body }),
+    update: (token, teamId, category, userId = "me") => request(token, `/users/${encodeURIComponent(userId)}/teams/${encodeURIComponent(teamId)}/channels/categories/${encodeURIComponent(category.id)}`, { method: "PUT", body: category }),
+    updateBulk: (token, teamId, categories, userId = "me") => request(token, `/users/${encodeURIComponent(userId)}/teams/${encodeURIComponent(teamId)}/channels/categories`, { method: "PUT", body: categories }),
+    remove: (token, teamId, categoryId, userId = "me") => request(token, `/users/${encodeURIComponent(userId)}/teams/${encodeURIComponent(teamId)}/channels/categories/${encodeURIComponent(categoryId)}`, { method: "DELETE" }),
+};
+export const notifyApi = {
+    get: (token, userId = "me") => request(token, `/users/${encodeURIComponent(userId)}/notify_props`),
+    put: (token, props, userId = "me") => request(token, `/users/${encodeURIComponent(userId)}/notify_props`, { method: "PUT", body: props }),
+};

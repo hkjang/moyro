@@ -32,22 +32,21 @@ reports matched, missing, and extra route shapes.
 Using Mattermost `master` OpenAPI source:
 
 - Official API v4 endpoints: 539
-- Local routed endpoints: 109
-- Matched endpoint shapes: 67
-- Missing official endpoint shapes: 472
-- Local-only endpoint shapes: 42
-- Route-shape coverage: 12.43%
+- Local routed endpoints: 163
+- Matched endpoint shapes: 118
+- Missing official endpoint shapes: 421
+- Local-only endpoint shapes: 45
+- Route-shape coverage: 21.89%
 
 This is not perfect API compatibility yet. It is a measured compatibility
 baseline that can now improve continuously.
 
 Top missing areas by route count:
 
-- users: 99
-- teams: 44
-- channels: 38
+- users: 72
+- teams: 32
+- channels: 31
 - groups: 21
-- posts: 16
 - data_retention: 15
 - access_control_policies: 15
 - cloud: 14
@@ -55,7 +54,6 @@ Top missing areas by route count:
 - ldap: 13
 - content_flagging: 12
 - plugins: 11
-- saml: 10
 - remotecluster: 10
 
 ## Compatibility Strategy
@@ -146,3 +144,29 @@ permission denial, and not-found behavior where applicable.
   - `GET /api/v4/users/{user_id}/sessions`
   - `GET /api/v4/channels/{channel_id}/members/{user_id}`
   - `GET /api/v4/posts/{post_id}`
+- Added Mattermost preference and sidebar category surfaces:
+  - `GET|PUT /api/v4/users/{user_id}/preferences`
+  - `GET /api/v4/users/{user_id}/preferences/{category}`
+  - `GET /api/v4/users/{user_id}/preferences/{category}/name/{name}`
+  - `POST /api/v4/users/{user_id}/preferences/delete`
+  - `GET|POST|PUT /api/v4/users/{user_id}/teams/{team_id}/channels/categories`
+  - `GET|PUT /api/v4/users/{user_id}/teams/{team_id}/channels/categories/order`
+- Added high-traffic users, teams, channels, posts, and command route shapes:
+  - `GET /api/v4/users/autocomplete`
+  - `POST /api/v4/users/ids`
+  - `POST /api/v4/users/usernames`
+  - `GET /api/v4/users/email/{email}`
+  - `GET /api/v4/users/stats`
+  - `GET /api/v4/teams/name/{name}`
+  - `GET /api/v4/teams/name/{name}/exists`
+  - `GET /api/v4/teams/{team_id}/stats`
+  - `GET /api/v4/teams/{team_id}/members`
+  - `POST /api/v4/teams/search`
+  - `GET /api/v4/channels/{channel_id}/stats`
+  - `POST /api/v4/channels/{channel_id}/members/ids`
+  - `POST /api/v4/channels/search`
+  - `POST /api/v4/posts/ids`
+  - `POST|PUT|DELETE /api/v4/posts/schedule`
+  - `GET /api/v4/posts/scheduled/team/{team_id}`
+  - `GET|POST|PUT|DELETE /api/v4/commands`
+  - `GET /api/v4/teams/{team_id}/commands/autocomplete`

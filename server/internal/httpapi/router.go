@@ -13,6 +13,7 @@ import (
 	"github.com/moddle/moddle/server/internal/auth"
 	"github.com/moddle/moddle/server/internal/bots"
 	"github.com/moddle/moddle/server/internal/channels"
+	"github.com/moddle/moddle/server/internal/commands"
 	"github.com/moddle/moddle/server/internal/config"
 	"github.com/moddle/moddle/server/internal/emojis"
 	"github.com/moddle/moddle/server/internal/files"
@@ -23,11 +24,13 @@ import (
 	"github.com/moddle/moddle/server/internal/pat"
 	"github.com/moddle/moddle/server/internal/pluginhost"
 	"github.com/moddle/moddle/server/internal/posts"
+	"github.com/moddle/moddle/server/internal/preferences"
 	"github.com/moddle/moddle/server/internal/ratelimit"
 	"github.com/moddle/moddle/server/internal/reactions"
 	"github.com/moddle/moddle/server/internal/reminders"
 	"github.com/moddle/moddle/server/internal/savedposts"
 	"github.com/moddle/moddle/server/internal/scheduled"
+	"github.com/moddle/moddle/server/internal/sidebar"
 	"github.com/moddle/moddle/server/internal/slashcmd"
 	"github.com/moddle/moddle/server/internal/store"
 	"github.com/moddle/moddle/server/internal/teams"
@@ -92,6 +95,13 @@ func New(cfg *config.Config, db *store.DB, hub *ws.Hub, host *pluginhost.Host, l
 	// the process, not with the HTTP router.
 	scheduledSvc := scheduled.New(db)
 	reminderSvc := reminders.New(db)
+	// Phase 21: Mattermost-shaped preferences. Pure DB CRUD; no worker.
+	prefsSvc := preferences.New(db)
+	// Phase 22: channel sidebar categories. Auto-bootstraps three defaults
+	// (favorites/channels/direct_messages) per (user, team) on first list.
+	sidebarSvc := sidebar.New(db)
+	// Phase 23: custom slash-command CRUD and autocomplete.
+	commandSvc := commands.New(db)
 	// Phase 18: link preview fetcher. Nil when disabled; handlers check
 	// for nil before kicking off the async fetch so a feature-flagged-off
 	// deploy skips the goroutine entirely.
@@ -145,6 +155,9 @@ func New(cfg *config.Config, db *store.DB, hub *ws.Hub, host *pluginhost.Host, l
 		links:      linkSvc,
 		scheduled:  scheduledSvc,
 		reminders:  reminderSvc,
+		prefs:      prefsSvc,
+		sidebar:    sidebarSvc,
+		commands:   commandSvc,
 		hub:        hub,
 		host:       host,
 		logger:     logger,
@@ -274,7 +287,12 @@ func New(cfg *config.Config, db *store.DB, hub *ws.Hub, host *pluginhost.Host, l
 			r.Delete("/users/me/sessions", h.revokeMyOtherSessions)
 			r.Get("/users", h.listUsers)
 			r.Post("/users/search", h.searchUsers)
+			r.Get("/users/stats", h.getUserStats)
 			r.Get("/users/{userID}", h.getUser)
+			r.Put("/users/{userID}", h.updateUserFull)
+			r.Put("/users/{userID}/patch", h.patchUser)
+			r.Put("/users/{userID}/active", h.setUserActive)
+			r.Delete("/users/{userID}/image", h.deleteUserImage)
 			r.Get("/users/username/{username}", h.getUserByUsername)
 			r.Get("/users/{userID}/image", h.getUserImage)
 			r.Get("/users/{userID}/sessions", h.listUserSessions)
@@ -307,6 +325,8 @@ func New(cfg *config.Config, db *store.DB, hub *ws.Hub, host *pluginhost.Host, l
 			r.Post("/channels/direct", h.createDirectChannel)
 			r.Get("/channels/{channelID}", h.getChannel)
 			r.Put("/channels/{channelID}", h.patchChannel)
+			r.Put("/channels/{channelID}/patch", h.patchChannelExtended)
+			r.Put("/channels/{channelID}/privacy", h.updateChannelPrivacy)
 			r.Post("/channels/{channelID}/view", h.viewChannel)
 
 			r.Post("/posts", h.createPost)
@@ -337,6 +357,10 @@ func New(cfg *config.Config, db *store.DB, hub *ws.Hub, host *pluginhost.Host, l
 			r.Post("/scheduled_posts", h.createScheduledPost)
 			r.Get("/users/me/scheduled_posts", h.listMyScheduledPosts)
 			r.Delete("/scheduled_posts/{scheduledID}", h.deleteScheduledPost)
+			r.Post("/posts/schedule", h.createSchedulePostAlias)
+			r.Get("/posts/scheduled/team/{teamID}", h.listScheduledPostsForTeam)
+			r.Put("/posts/schedule/{scheduledID}", h.updateSchedulePost)
+			r.Delete("/posts/schedule/{scheduledID}", h.deleteSchedulePostAlias)
 
 			// Phase 19 — post reminders.
 			r.Post("/posts/{postID}/remind_me", h.createPostReminder)
@@ -378,6 +402,7 @@ func New(cfg *config.Config, db *store.DB, hub *ws.Hub, host *pluginhost.Host, l
 			r.Get("/channels/{channelID}/members/autocomplete", h.channelMembersAutocomplete)
 			r.Get("/channels/{channelID}/members/{targetUserID}", h.getChannelMember)
 			r.Post("/channels/{channelID}/members", h.addChannelMember)
+			r.Post("/channels/{channelID}/members/ids", h.channelMembersByUserIDs)
 			// Phase 18 — self-join for public channel discovery. Distinct
 			// from addChannelMember (which requires already being a member
 			// to add others) so outsiders can join public channels.
@@ -387,6 +412,74 @@ func New(cfg *config.Config, db *store.DB, hub *ws.Hub, host *pluginhost.Host, l
 			r.Put("/channels/{channelID}/members/me/notify_props", h.putMyNotifyProps)
 			r.Get("/users/me/teams/{teamID}/channels/members", h.listMyChannelMembers)
 			r.Get("/users/{userID}/teams/{teamID}/channels/members", h.listChannelMembersForUserParam)
+
+			// Phase 21 — Mattermost API v4 compatibility wave 1.
+			//
+			// Preferences (5 endpoints): the canonical contract official
+			// clients use to sync theme, sidebar, favorites, tutorial steps.
+			r.Get("/users/{userID}/preferences", h.listAllPreferences)
+			r.Put("/users/{userID}/preferences", h.upsertPreferences)
+			r.Post("/users/{userID}/preferences/delete", h.deletePreferences)
+			r.Get("/users/{userID}/preferences/{category}", h.listPreferencesInCategory)
+			r.Get("/users/{userID}/preferences/{category}/name/{name}", h.getPreferenceByName)
+
+			// Users compat: autocomplete + bulk hydrate + email lookup.
+			// `/users/autocomplete` MUST be registered BEFORE `/users/{userID}`
+			// in chi's tree to win the match — chi orders specific paths
+			// before parameterized ones automatically, but we keep this
+			// block adjacent for clarity.
+			r.Get("/users/autocomplete", h.autocompleteUsers)
+			r.Post("/users/ids", h.usersByIDs)
+			r.Post("/users/usernames", h.usersByUsernames)
+			r.Get("/users/email/{email}", h.getUserByEmail)
+
+			// Teams compat: stats + name lookup + members.
+			r.Get("/teams/name/{name}", h.getTeamByName)
+			r.Get("/teams/{teamID}/stats", h.getTeamStats)
+			r.Get("/teams/{teamID}/members", h.listTeamMembers)
+
+			// Channels compat: stats + name lookup + search + autocomplete.
+			r.Get("/channels/{channelID}/stats", h.getChannelStats)
+			r.Get("/teams/{teamID}/channels/name/{channelName}", h.getChannelByName)
+			r.Post("/teams/{teamID}/channels/search", h.searchChannelsInTeam)
+			r.Get("/teams/{teamID}/channels/autocomplete", h.autocompleteChannelsInTeam)
+			r.Get("/teams/{teamID}/commands/autocomplete", h.autocompleteCommandsForTeam)
+
+			// Posts compat: bulk-by-ids + patch alias.
+			r.Post("/posts/ids", h.postsByIDs)
+			r.Put("/posts/{postID}/patch", h.patchPost)
+
+			// Phase 22 — Mattermost API v4 compatibility wave 2.
+			//
+			// Channel sidebar categories (8 endpoints). The official desktop
+			// and webapp clients drive the sidebar through these — without
+			// them the channel list defaults to a single ungrouped column
+			// and starring/dragging silently fails.
+			r.Get("/users/{userID}/teams/{teamID}/channels/categories", h.listSidebarCategories)
+			r.Post("/users/{userID}/teams/{teamID}/channels/categories", h.createSidebarCategory)
+			r.Put("/users/{userID}/teams/{teamID}/channels/categories", h.updateSidebarCategoriesBulk)
+			r.Get("/users/{userID}/teams/{teamID}/channels/categories/order", h.listSidebarCategoryOrder)
+			r.Put("/users/{userID}/teams/{teamID}/channels/categories/order", h.updateSidebarCategoryOrder)
+			r.Get("/users/{userID}/teams/{teamID}/channels/categories/{categoryID}", h.getSidebarCategory)
+			r.Put("/users/{userID}/teams/{teamID}/channels/categories/{categoryID}", h.updateSidebarCategory)
+			r.Delete("/users/{userID}/teams/{teamID}/channels/categories/{categoryID}", h.deleteSidebarCategory)
+
+			// User notify_props (top-level, distinct from per-channel
+			// notify_props). Mattermost stores email/desktop/push/first_name
+			// flags here; the webapp's notification panel writes through
+			// these endpoints.
+			r.Get("/users/{userID}/notify_props", h.getUserNotifyProps)
+			r.Put("/users/{userID}/notify_props", h.putUserNotifyProps)
+
+			// Team search + name-exists probe. `exists` is used by signup
+			// forms to validate the slug client-side before submitting.
+			r.Post("/teams/search", h.searchTeams)
+			r.Get("/teams/name/{name}/exists", h.teamNameExists)
+
+			// User channel_members hydration — bulk-read every channel
+			// membership for one user in a single round-trip.
+			r.Get("/users/{userID}/channel_members", h.listUserChannelMembers)
+			r.Post("/users/{userID}/channels/members", h.channelMembersByIDs)
 
 			r.Post("/commands/execute", h.executeCommand)
 
@@ -409,6 +502,8 @@ func New(cfg *config.Config, db *store.DB, hub *ws.Hub, host *pluginhost.Host, l
 				r.Post("/users/{userID}/reactivate", h.reactivateUser)
 				r.Post("/channels/{channelID}/archive", h.archiveChannel)
 				r.Post("/channels/{channelID}/restore", h.restoreChannel)
+				r.Delete("/channels/{channelID}", h.deleteChannel)
+				r.Post("/channels/search", h.searchChannelsAll)
 
 				// Bot CRUD
 				r.Post("/bots", h.createBot)
@@ -426,6 +521,15 @@ func New(cfg *config.Config, db *store.DB, hub *ws.Hub, host *pluginhost.Host, l
 				r.Post("/hooks/outgoing", h.createOutgoingWebhook)
 				r.Get("/hooks/outgoing", h.listOutgoingWebhooks)
 				r.Delete("/hooks/outgoing/{hookID}", h.deleteOutgoingWebhook)
+
+				// Custom slash command CRUD.
+				r.Post("/commands", h.createCommand)
+				r.Get("/commands", h.listCommandsForTeam)
+				r.Get("/commands/{commandID}", h.getCommand)
+				r.Put("/commands/{commandID}", h.updateCommand)
+				r.Delete("/commands/{commandID}", h.deleteCommand)
+				r.Put("/commands/{commandID}/regen_token", h.regenCommandToken)
+				r.Put("/commands/{commandID}/move", h.moveCommand)
 			})
 		})
 	})

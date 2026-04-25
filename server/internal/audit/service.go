@@ -43,6 +43,17 @@ const (
 	ActionSessionRevoke     = "user.session.revoke"
 	ActionChannelArchive    = "channel.archive"
 	ActionChannelRestore    = "channel.restore"
+	// Phase 23
+	ActionUserPatch         = "user.patch"
+	ActionUserActiveSet     = "user.active.set"
+	ActionUserImageDelete   = "user.image.delete"
+	ActionChannelPrivacy    = "channel.privacy"
+	ActionChannelDelete     = "channel.delete"
+	ActionCommandCreate     = "command.create"
+	ActionCommandUpdate     = "command.update"
+	ActionCommandDelete     = "command.delete"
+	ActionCommandRegen      = "command.regen"
+	ActionCommandMove       = "command.move"
 )
 
 type Entry struct {

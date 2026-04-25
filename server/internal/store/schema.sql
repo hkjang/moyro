@@ -346,3 +346,98 @@ CREATE TABLE IF NOT EXISTS post_reminders (
 
 CREATE INDEX IF NOT EXISTS post_reminders_due_idx ON post_reminders (remind_at) WHERE delivered_at = 0;
 CREATE INDEX IF NOT EXISTS post_reminders_user_idx ON post_reminders (user_id, remind_at);
+
+-- Phase 21: Mattermost-shaped preferences. Each row is a (user, category, name)
+-- triplet whose value is an opaque string the client interprets. Common Mattermost
+-- categories: "display_settings" (theme, message_display), "sidebar_settings",
+-- "favorite_channel" (name=channel_id, value="true"), "direct_channel_show",
+-- "advanced_settings", "tutorial_step". Keeping value as TEXT (rather than JSONB)
+-- matches the v4 OpenAPI contract so official clients deserialize without coaxing.
+CREATE TABLE IF NOT EXISTS preferences (
+    user_id   TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    category  TEXT NOT NULL,
+    name      TEXT NOT NULL,
+    value     TEXT NOT NULL DEFAULT '',
+    update_at BIGINT NOT NULL,
+    PRIMARY KEY (user_id, category, name)
+);
+
+CREATE INDEX IF NOT EXISTS preferences_user_category_idx ON preferences (user_id, category);
+
+-- Phase 22: Mattermost-shaped sidebar categories. Each user has 1..N categories
+-- per team that drive the channel sidebar's grouping/ordering. The four canonical
+-- type values are favorites|channels|direct_messages|custom — favorites/channels/
+-- direct_messages are auto-created on first list (one of each per team). `custom`
+-- categories are user-defined and may have any display_name. `sort_order` is the
+-- position of the category itself within the sidebar; `sorting` is the in-category
+-- sort mode ("alpha"|"recent"|"manual"). Channel membership is a separate join
+-- table because a channel may live in only one category at a time per user/team.
+CREATE TABLE IF NOT EXISTS sidebar_categories (
+    id             TEXT PRIMARY KEY,
+    user_id        TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    team_id        TEXT NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
+    type           TEXT NOT NULL,
+    display_name   TEXT NOT NULL DEFAULT '',
+    sort_order     INTEGER NOT NULL DEFAULT 0,
+    sorting        TEXT NOT NULL DEFAULT 'alpha',
+    muted          BOOLEAN NOT NULL DEFAULT FALSE,
+    collapsed      BOOLEAN NOT NULL DEFAULT FALSE,
+    create_at      BIGINT NOT NULL,
+    update_at      BIGINT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS sidebar_categories_user_team_idx ON sidebar_categories (user_id, team_id, sort_order);
+
+CREATE TABLE IF NOT EXISTS sidebar_category_channels (
+    category_id   TEXT NOT NULL REFERENCES sidebar_categories(id) ON DELETE CASCADE,
+    channel_id    TEXT NOT NULL REFERENCES channels(id) ON DELETE CASCADE,
+    sort_order    INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (category_id, channel_id)
+);
+
+CREATE INDEX IF NOT EXISTS sidebar_category_channels_category_idx ON sidebar_category_channels (category_id, sort_order);
+
+-- Phase 22: user-level notify_props (separate from per-channel notify_props on
+-- channel_members). JSONB encoding mirrors Mattermost's contract: a free-form map
+-- of strings (e.g. "email": "true"|"false", "desktop": "all"|"mention"|"none",
+-- "push": "...", "first_name": "true"|"false"). Stored as text values for byte-
+-- for-byte API compatibility.
+ALTER TABLE users ADD COLUMN IF NOT EXISTS notify_props JSONB NOT NULL DEFAULT '{}'::jsonb;
+
+-- Phase 23: profile fields surfaced via PUT /users/{id} and PUT /users/{id}/patch.
+-- Mattermost's user object has these as first-class fields. We treat all four as
+-- TEXT (never NULL) so SELECT ... COALESCE goes away. Empty string ⇒ "not set".
+ALTER TABLE users ADD COLUMN IF NOT EXISTS first_name TEXT NOT NULL DEFAULT '';
+ALTER TABLE users ADD COLUMN IF NOT EXISTS last_name  TEXT NOT NULL DEFAULT '';
+ALTER TABLE users ADD COLUMN IF NOT EXISTS nickname   TEXT NOT NULL DEFAULT '';
+ALTER TABLE users ADD COLUMN IF NOT EXISTS position   TEXT NOT NULL DEFAULT '';
+
+-- Phase 23: custom slash commands. Mirrors Mattermost's `commands` table layout
+-- but trimmed to the fields we can faithfully implement today. `trigger` is the
+-- token after the slash (e.g. "weather"); unique per (team, trigger) so two teams
+-- can register the same name independently. `token` is a regenerable random
+-- string sent to the callback URL so receivers can verify. `auto_complete*` drive
+-- the typeahead surface; if auto_complete=false the command stays hidden.
+CREATE TABLE IF NOT EXISTS commands (
+    id                  TEXT PRIMARY KEY,
+    team_id             TEXT NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
+    creator_id          TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    trigger_word        TEXT NOT NULL,
+    method              TEXT NOT NULL DEFAULT 'P', -- 'P' POST | 'G' GET
+    url                 TEXT NOT NULL DEFAULT '',
+    username            TEXT NOT NULL DEFAULT '',
+    icon_url            TEXT NOT NULL DEFAULT '',
+    auto_complete       BOOLEAN NOT NULL DEFAULT TRUE,
+    auto_complete_desc  TEXT NOT NULL DEFAULT '',
+    auto_complete_hint  TEXT NOT NULL DEFAULT '',
+    display_name        TEXT NOT NULL DEFAULT '',
+    description         TEXT NOT NULL DEFAULT '',
+    token               TEXT NOT NULL,
+    create_at           BIGINT NOT NULL,
+    update_at           BIGINT NOT NULL,
+    delete_at           BIGINT NOT NULL DEFAULT 0
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS commands_team_trigger_idx
+    ON commands (team_id, LOWER(trigger_word)) WHERE delete_at = 0;
+CREATE INDEX IF NOT EXISTS commands_creator_idx ON commands (creator_id);

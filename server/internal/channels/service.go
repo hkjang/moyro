@@ -154,6 +154,62 @@ func (s *Service) ListMembers(ctx context.Context, channelID string) ([]Member, 
 	return out, rows.Err()
 }
 
+// ListMembershipsForUser returns every channel_members row for the given user.
+// Mirrors `GET /api/v4/users/{user_id}/channel_members` so official clients can
+// hydrate channel-scoped state in one round-trip on launch instead of fanning
+// out per-channel calls. Includes ALL teams' channels because the official
+// client groups by team locally.
+func (s *Service) ListMembershipsForUser(ctx context.Context, userID string) ([]Member, error) {
+	rows, err := s.db.Pool.Query(ctx, `
+		SELECT cm.channel_id, cm.user_id, cm.roles, cm.last_viewed_at, cm.create_at
+		FROM channel_members cm
+		JOIN channels c ON c.id = cm.channel_id
+		WHERE cm.user_id = $1 AND c.delete_at = 0
+		ORDER BY cm.create_at ASC
+	`, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []Member{}
+	for rows.Next() {
+		var m Member
+		if err := rows.Scan(&m.ChannelID, &m.UserID, &m.Roles, &m.LastViewedAt, &m.CreateAt); err != nil {
+			return nil, err
+		}
+		out = append(out, m)
+	}
+	return out, rows.Err()
+}
+
+// MembersByIDs hydrates a batch of channel memberships by channel id for a
+// single user. Used by Mattermost's `POST /channels/members/ids` family for
+// efficient bulk reads. Caps input slice client-side at 200; SQL caps don't
+// matter because ANY($1) is unbounded.
+func (s *Service) MembersByIDs(ctx context.Context, userID string, channelIDs []string) ([]Member, error) {
+	out := []Member{}
+	if len(channelIDs) == 0 {
+		return out, nil
+	}
+	rows, err := s.db.Pool.Query(ctx, `
+		SELECT channel_id, user_id, roles, last_viewed_at, create_at
+		FROM channel_members
+		WHERE user_id = $1 AND channel_id = ANY($2)
+	`, userID, channelIDs)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var m Member
+		if err := rows.Scan(&m.ChannelID, &m.UserID, &m.Roles, &m.LastViewedAt, &m.CreateAt); err != nil {
+			return nil, err
+		}
+		out = append(out, m)
+	}
+	return out, rows.Err()
+}
+
 // Remove deletes a channel membership row.
 func (s *Service) Remove(ctx context.Context, channelID, userID string) error {
 	_, err := s.db.Pool.Exec(ctx, `
@@ -196,6 +252,134 @@ func (s *Service) Patch(ctx context.Context, channelID, displayName, header, pur
 	}
 	return s.Get(ctx, channelID)
 }
+
+// PatchExtended is the Phase 23 superset of Patch that also lets the caller
+// rename the URL slug. nil pointers leave the field alone; non-nil pointers
+// (including empty strings for header/purpose) overwrite. `name` is gated:
+// empty string => skip; non-empty => overwrite. We don't validate slug
+// charset here — the handler does the [a-z0-9_-] check before calling.
+func (s *Service) PatchExtended(ctx context.Context, channelID string, name *string, displayName *string, header *string, purpose *string) (*Channel, error) {
+	now := time.Now().UnixMilli()
+	nameVal, nameSet := derefStringPtr(name)
+	dnVal, dnSet := derefStringPtr(displayName)
+	headerVal, headerSet := derefStringPtr(header)
+	purposeVal, purposeSet := derefStringPtr(purpose)
+	_, err := s.db.Pool.Exec(ctx, `
+		UPDATE channels SET
+			name         = CASE WHEN $2  THEN $3  ELSE name END,
+			display_name = CASE WHEN $4  THEN $5  ELSE display_name END,
+			header       = CASE WHEN $6  THEN $7  ELSE header END,
+			purpose      = CASE WHEN $8  THEN $9  ELSE purpose END,
+			update_at    = $10
+		WHERE id=$1 AND delete_at=0
+	`, channelID,
+		nameSet, nameVal,
+		dnSet, dnVal,
+		headerSet, headerVal,
+		purposeSet, purposeVal,
+		now)
+	if err != nil {
+		return nil, err
+	}
+	return s.Get(ctx, channelID)
+}
+
+func derefStringPtr(p *string) (string, bool) {
+	if p == nil {
+		return "", false
+	}
+	return *p, true
+}
+
+// SetPrivacy flips the channel between public ('O') and private ('P'). DM
+// and group channels are rejected at the handler layer because changing
+// type for D/G doesn't make sense — there's no existing membership semantic
+// to fall back on. Returns the refreshed channel so the caller can echo it
+// over WS.
+func (s *Service) SetPrivacy(ctx context.Context, channelID, privacy string) (*Channel, error) {
+	if privacy != "O" && privacy != "P" {
+		return nil, errInvalidPrivacy
+	}
+	_, err := s.db.Pool.Exec(ctx, `
+		UPDATE channels SET type=$2, update_at=$3
+		WHERE id=$1 AND delete_at=0 AND type IN ('O','P')
+	`, channelID, privacy, time.Now().UnixMilli())
+	if err != nil {
+		return nil, err
+	}
+	return s.Get(ctx, channelID)
+}
+
+// errInvalidPrivacy is exported via SetPrivacy's return value so handlers
+// can surface a 400 with a well-known error id.
+var errInvalidPrivacy = newConstError("api.channel.privacy.invalid")
+
+// SearchAll matches channels across the entire instance by name + display_name.
+// Mirrors `POST /channels/search`. Membership is NOT enforced — this endpoint
+// is admin-scoped at the handler layer. Excludes archived. Cap 100/page.
+func (s *Service) SearchAll(ctx context.Context, term string, limit int) ([]Channel, error) {
+	if limit <= 0 || limit > 100 {
+		limit = 25
+	}
+	like := "%" + strings.TrimSpace(term) + "%"
+	rows, err := s.db.Pool.Query(ctx, `
+		SELECT c.id, COALESCE(c.team_id,''), c.type, c.display_name, c.name, c.header, c.purpose, c.create_at, c.update_at, c.delete_at
+		FROM channels c
+		WHERE c.delete_at = 0
+		  AND (c.display_name ILIKE $1 OR c.name ILIKE $1)
+		ORDER BY c.display_name ASC
+		LIMIT $2
+	`, like, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []Channel{}
+	for rows.Next() {
+		var c Channel
+		if err := rows.Scan(&c.ID, &c.TeamID, &c.Type, &c.DisplayName, &c.Name, &c.Header, &c.Purpose, &c.CreateAt, &c.UpdateAt, &c.DeleteAt); err != nil {
+			return nil, err
+		}
+		out = append(out, c)
+	}
+	return out, rows.Err()
+}
+
+// MembersByChannel returns the channel_members rows for the given channel
+// filtered by the supplied user_ids. Mirrors Mattermost's
+// `POST /channels/{id}/members/ids` for bulk hydrate. Caller-supplied id
+// list is capped at 200 client-side; SQL doesn't enforce.
+func (s *Service) MembersByChannel(ctx context.Context, channelID string, userIDs []string) ([]Member, error) {
+	out := []Member{}
+	if len(userIDs) == 0 {
+		return out, nil
+	}
+	rows, err := s.db.Pool.Query(ctx, `
+		SELECT channel_id, user_id, roles, last_viewed_at, create_at
+		FROM channel_members
+		WHERE channel_id = $1 AND user_id = ANY($2)
+	`, channelID, userIDs)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var m Member
+		if err := rows.Scan(&m.ChannelID, &m.UserID, &m.Roles, &m.LastViewedAt, &m.CreateAt); err != nil {
+			return nil, err
+		}
+		out = append(out, m)
+	}
+	return out, rows.Err()
+}
+
+// constErr is an unexported sentinel error type for service-level error
+// constants (see errInvalidPrivacy). Lets us use errors.Is without
+// allocating a new error per call.
+type constErr struct{ s string }
+
+func (e *constErr) Error() string         { return e.s }
+func newConstError(s string) *constErr    { return &constErr{s: s} }
 
 // EnsureDirect returns the D-type channel between two users, creating it
 // on first call. Direct channels carry no team and use a canonical name of
@@ -537,6 +721,132 @@ func (s *Service) IsMember(ctx context.Context, channelID, userID string) (bool,
 		SELECT EXISTS(SELECT 1 FROM channel_members WHERE channel_id=$1 AND user_id=$2)
 	`, channelID, userID).Scan(&exists)
 	return exists, err
+}
+
+// GetByName resolves a channel by its team-scoped name. Mirrors
+// `GET /api/v4/teams/{team_id}/channels/name/{channel_name}` for clients
+// that route by URL slug rather than UUID.
+func (s *Service) GetByName(ctx context.Context, teamID, name string) (*Channel, error) {
+	var c Channel
+	var tid *string
+	err := s.db.Pool.QueryRow(ctx, `
+		SELECT id, team_id, type, display_name, name, header, purpose, create_at, update_at, delete_at
+		FROM channels WHERE team_id=$1 AND name=$2
+	`, teamID, name).Scan(&c.ID, &tid, &c.Type, &c.DisplayName, &c.Name, &c.Header, &c.Purpose, &c.CreateAt, &c.UpdateAt, &c.DeleteAt)
+	if err != nil {
+		return nil, err
+	}
+	if tid != nil {
+		c.TeamID = *tid
+	}
+	return &c, nil
+}
+
+// Stats returns the Mattermost-shaped channel stats payload. Member counts
+// are split into total + guest + pinned-post counts so dashboards can show
+// each independently. We don't track guest accounts yet, so guest_count is
+// always zero — the field is kept so the response shape exactly matches
+// the official contract.
+type Stats struct {
+	ChannelID       string `json:"channel_id"`
+	MemberCount     int64  `json:"member_count"`
+	GuestCount      int64  `json:"guest_count"`
+	PinnedPostCount int64  `json:"pinnedpost_count"`
+	FilesCount      int64  `json:"files_count"`
+}
+
+func (s *Service) Stats(ctx context.Context, channelID string) (*Stats, error) {
+	out := &Stats{ChannelID: channelID}
+	if err := s.db.Pool.QueryRow(ctx, `
+		SELECT COUNT(*) FROM channel_members WHERE channel_id=$1
+	`, channelID).Scan(&out.MemberCount); err != nil {
+		return nil, err
+	}
+	if err := s.db.Pool.QueryRow(ctx, `
+		SELECT COUNT(*) FROM posts WHERE channel_id=$1 AND delete_at=0 AND is_pinned=TRUE
+	`, channelID).Scan(&out.PinnedPostCount); err != nil {
+		return nil, err
+	}
+	if err := s.db.Pool.QueryRow(ctx, `
+		SELECT COUNT(*) FROM file_infos WHERE post_id IN (SELECT id FROM posts WHERE channel_id=$1 AND delete_at=0)
+	`, channelID).Scan(&out.FilesCount); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// SearchInTeam does a name/display_name ILIKE match within a team. Includes
+// channels the caller has joined plus public-and-not-yet-joined ones, so
+// the Cmd+K Quick Switcher can surface anything reachable. Excludes archived.
+func (s *Service) SearchInTeam(ctx context.Context, teamID, userID, term string, limit int) ([]Channel, error) {
+	if limit <= 0 || limit > 100 {
+		limit = 25
+	}
+	like := "%" + strings.TrimSpace(term) + "%"
+	rows, err := s.db.Pool.Query(ctx, `
+		SELECT c.id, COALESCE(c.team_id,''), c.type, c.display_name, c.name, c.header, c.purpose, c.create_at, c.update_at, c.delete_at
+		FROM channels c
+		WHERE c.team_id = $1
+		  AND c.delete_at = 0
+		  AND (c.display_name ILIKE $2 OR c.name ILIKE $2)
+		  AND (
+		    c.type = 'O'
+		    OR EXISTS (SELECT 1 FROM channel_members m WHERE m.channel_id=c.id AND m.user_id=$3)
+		  )
+		ORDER BY (c.display_name ILIKE $4) DESC, c.display_name ASC
+		LIMIT $5
+	`, teamID, like, userID, strings.TrimSpace(term)+"%", limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []Channel{}
+	for rows.Next() {
+		var c Channel
+		if err := rows.Scan(&c.ID, &c.TeamID, &c.Type, &c.DisplayName, &c.Name, &c.Header, &c.Purpose, &c.CreateAt, &c.UpdateAt, &c.DeleteAt); err != nil {
+			return nil, err
+		}
+		out = append(out, c)
+	}
+	return out, rows.Err()
+}
+
+// AutocompleteInTeam is the GET-style channel search used by official
+// Mattermost clients for inline @-channel mentions and the channel switcher.
+// Restricted to channels the caller can see (member or public).
+func (s *Service) AutocompleteInTeam(ctx context.Context, teamID, userID, term string, limit int) ([]Channel, error) {
+	if limit <= 0 || limit > 50 {
+		limit = 20
+	}
+	prefix := strings.TrimSpace(term) + "%"
+	contains := "%" + strings.TrimSpace(term) + "%"
+	rows, err := s.db.Pool.Query(ctx, `
+		SELECT c.id, COALESCE(c.team_id,''), c.type, c.display_name, c.name, c.header, c.purpose, c.create_at, c.update_at, c.delete_at
+		FROM channels c
+		WHERE c.team_id = $1
+		  AND c.delete_at = 0
+		  AND c.type IN ('O','P')
+		  AND (c.name ILIKE $2 OR c.display_name ILIKE $3)
+		  AND (
+		    c.type = 'O'
+		    OR EXISTS (SELECT 1 FROM channel_members m WHERE m.channel_id=c.id AND m.user_id=$4)
+		  )
+		ORDER BY (c.name ILIKE $2) DESC, c.display_name ASC
+		LIMIT $5
+	`, teamID, prefix, contains, userID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []Channel{}
+	for rows.Next() {
+		var c Channel
+		if err := rows.Scan(&c.ID, &c.TeamID, &c.Type, &c.DisplayName, &c.Name, &c.Header, &c.Purpose, &c.CreateAt, &c.UpdateAt, &c.DeleteAt); err != nil {
+			return nil, err
+		}
+		out = append(out, c)
+	}
+	return out, rows.Err()
 }
 
 // ListPublicDiscoverable returns public (O-type) channels in the given team

@@ -159,6 +159,142 @@ func splitRoles(s string) []string {
 	return out
 }
 
+// GetByName resolves a team by its URL-slug name. Mirrors
+// `GET /api/v4/teams/name/{name}` so official clients can route by slug.
+func (s *Service) GetByName(ctx context.Context, name string) (*Team, error) {
+	var t Team
+	err := s.db.Pool.QueryRow(ctx, `
+		SELECT id, name, display_name, type, create_at, update_at, delete_at
+		FROM teams WHERE name=$1
+	`, name).Scan(&t.ID, &t.Name, &t.DisplayName, &t.Type, &t.CreateAt, &t.UpdateAt, &t.DeleteAt)
+	if err != nil {
+		return nil, err
+	}
+	return &t, nil
+}
+
+// TeamStats matches Mattermost's team stats response shape exactly. Active
+// = total minus deactivated. Total includes deactivated for parity with the
+// official endpoint (regular admins use the field for accurate license seat
+// reporting; the discrepancy between Total/Active is the deactivated count).
+type TeamStats struct {
+	TeamID            string `json:"team_id"`
+	TotalMemberCount  int64  `json:"total_member_count"`
+	ActiveMemberCount int64  `json:"active_member_count"`
+}
+
+func (s *Service) Stats(ctx context.Context, teamID string) (*TeamStats, error) {
+	out := &TeamStats{TeamID: teamID}
+	if err := s.db.Pool.QueryRow(ctx, `
+		SELECT COUNT(*) FROM team_members WHERE team_id=$1
+	`, teamID).Scan(&out.TotalMemberCount); err != nil {
+		return nil, err
+	}
+	if err := s.db.Pool.QueryRow(ctx, `
+		SELECT COUNT(*) FROM team_members tm
+		JOIN users u ON u.id = tm.user_id
+		WHERE tm.team_id=$1 AND u.delete_at=0
+	`, teamID).Scan(&out.ActiveMemberCount); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// TeamMember matches Mattermost's `TeamMember` shape — subset of fields
+// the official clients actually consume (id, roles, scheme flags). We omit
+// scheme_user/scheme_admin because we don't model team schemes; the role
+// string covers both team_user and team_admin.
+type TeamMember struct {
+	TeamID   string `json:"team_id"`
+	UserID   string `json:"user_id"`
+	Roles    string `json:"roles"`
+	CreateAt int64  `json:"create_at"`
+	DeleteAt int64  `json:"delete_at"`
+}
+
+// ListMembers returns paginated team_members for the given team. The
+// official endpoint accepts page/per_page and returns an array; we keep
+// the same shape so the official admin UI's pagination works unchanged.
+func (s *Service) ListMembers(ctx context.Context, teamID string, page, perPage int) ([]TeamMember, error) {
+	if perPage <= 0 || perPage > 200 {
+		perPage = 60
+	}
+	if page < 0 {
+		page = 0
+	}
+	rows, err := s.db.Pool.Query(ctx, `
+		SELECT team_id, user_id, COALESCE(roles,''), create_at
+		FROM team_members
+		WHERE team_id=$1
+		ORDER BY create_at ASC
+		LIMIT $2 OFFSET $3
+	`, teamID, perPage, page*perPage)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []TeamMember{}
+	for rows.Next() {
+		var m TeamMember
+		if err := rows.Scan(&m.TeamID, &m.UserID, &m.Roles, &m.CreateAt); err != nil {
+			return nil, err
+		}
+		// We don't track team-level membership soft-deletes (the user-level
+		// delete_at flag is the source of truth). Field stays in the JSON
+		// for response-shape parity with the official endpoint.
+		m.DeleteAt = 0
+		out = append(out, m)
+	}
+	return out, rows.Err()
+}
+
+// Search runs a name+display_name ILIKE match for the team picker. Mirrors
+// `POST /api/v4/teams/search` body `{term}`. Only public ('O') teams are
+// returned; private teams (we don't model these yet, but the filter is in
+// place for forward-compat) require membership before they show up. Caps
+// hard at 100 hits because the official client paginates client-side.
+func (s *Service) Search(ctx context.Context, term string, page, perPage int) ([]Team, error) {
+	if perPage <= 0 || perPage > 100 {
+		perPage = 25
+	}
+	if page < 0 {
+		page = 0
+	}
+	like := "%" + term + "%"
+	rows, err := s.db.Pool.Query(ctx, `
+		SELECT id, name, display_name, type, create_at, update_at, delete_at
+		FROM teams
+		WHERE delete_at = 0 AND type='O'
+		  AND (name ILIKE $1 OR display_name ILIKE $1)
+		ORDER BY display_name ASC
+		LIMIT $2 OFFSET $3
+	`, like, perPage, page*perPage)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []Team{}
+	for rows.Next() {
+		var t Team
+		if err := rows.Scan(&t.ID, &t.Name, &t.DisplayName, &t.Type, &t.CreateAt, &t.UpdateAt, &t.DeleteAt); err != nil {
+			return nil, err
+		}
+		out = append(out, t)
+	}
+	return out, rows.Err()
+}
+
+// Exists reports whether a team with the given name slug already exists. Used
+// by `GET /teams/name/{name}/exists` so signup forms can validate name
+// uniqueness without leaking the team's existence to a non-member.
+func (s *Service) Exists(ctx context.Context, name string) (bool, error) {
+	var exists bool
+	err := s.db.Pool.QueryRow(ctx, `
+		SELECT EXISTS(SELECT 1 FROM teams WHERE name=$1 AND delete_at=0)
+	`, name).Scan(&exists)
+	return exists, err
+}
+
 func (s *Service) ListForUser(ctx context.Context, userID string) ([]Team, error) {
 	rows, err := s.db.Pool.Query(ctx, `
 		SELECT t.id, t.name, t.display_name, t.type, t.create_at, t.update_at, t.delete_at

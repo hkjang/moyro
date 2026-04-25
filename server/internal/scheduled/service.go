@@ -94,6 +94,32 @@ func (s *Service) ListPending(ctx context.Context, userID string) ([]*ScheduledP
 	return out, rows.Err()
 }
 
+// ListPendingForTeam returns the caller's pending scheduled posts scoped to
+// channels in one team. Mirrors Mattermost's GET /posts/scheduled/team/{id}.
+func (s *Service) ListPendingForTeam(ctx context.Context, userID, teamID string) ([]*ScheduledPost, error) {
+	rows, err := s.db.Pool.Query(ctx, `
+		SELECT sp.id, sp.user_id, sp.channel_id, sp.root_id, sp.message, sp.file_ids, sp.props,
+		       sp.send_at, sp.create_at, sp.sent_at, sp.error_text
+		FROM scheduled_posts sp
+		JOIN channels c ON c.id = sp.channel_id
+		WHERE sp.user_id=$1 AND c.team_id=$2 AND sp.sent_at <= 0
+		ORDER BY sp.send_at ASC
+	`, userID, teamID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []*ScheduledPost{}
+	for rows.Next() {
+		sp, err := scanScheduled(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, sp)
+	}
+	return out, rows.Err()
+}
+
 // Delete owner-scoped; returns true if a row was removed (for the handler
 // to decide between 200 and 404). Only pending rows are deletable; once
 // sent_at > 0 the post has already gone out, so the row is immutable.

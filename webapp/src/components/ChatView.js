@@ -2,7 +2,7 @@ import { jsx as _jsx, jsxs as _jsxs, Fragment as _Fragment } from "react/jsx-run
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useDispatch, useSelector } from "react-redux";
 import { clearAuth, setAuth } from "@/store/authSlice";
-import { api, } from "@/api/client";
+import { api, compatApi, notifyApi, prefsApi, sidebarApi, } from "@/api/client";
 import { IntegrationsPanel } from "@/components/IntegrationsPanel";
 import { EmojiPicker, customEmojiByName } from "@/components/EmojiPicker";
 import { Lightbox } from "@/components/Lightbox";
@@ -101,6 +101,180 @@ export function ChatView() {
     // auto-dismissed by a per-id timer but can also be clicked to jump.
     const [reminderForPostId, setReminderForPostId] = useState(null);
     const [reminderToasts, setReminderToasts] = useState([]);
+    const [theme, setThemeState] = useState(() => {
+        // Hydrate from localStorage so first paint matches the user's last
+        // saved theme — the prefs API call later in the mount cycle reconciles
+        // if the server has a different value.
+        const cached = (typeof window !== "undefined" && window.localStorage.getItem("moddle:theme")) || "";
+        return cached === "light" || cached === "dark" || cached === "system" ? cached : "system";
+    });
+    // Apply the theme to <html data-theme=…> so CSS variables can branch.
+    useEffect(() => {
+        const root = document.documentElement;
+        const apply = () => {
+            let resolved = "light";
+            if (theme === "system") {
+                resolved = window.matchMedia?.("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+            }
+            else {
+                resolved = theme;
+            }
+            root.setAttribute("data-theme", resolved);
+        };
+        apply();
+        if (theme === "system" && window.matchMedia) {
+            const mq = window.matchMedia("(prefers-color-scheme: dark)");
+            mq.addEventListener("change", apply);
+            return () => mq.removeEventListener("change", apply);
+        }
+        return undefined;
+    }, [theme]);
+    // Cache the choice locally so the next first-paint is correct without
+    // waiting on the network. Server is still source-of-truth.
+    useEffect(() => {
+        try {
+            window.localStorage.setItem("moddle:theme", theme);
+        }
+        catch { /* ignore */ }
+    }, [theme]);
+    // Pull the canonical theme from preferences once at login.
+    useEffect(() => {
+        if (!token || !user?.id)
+            return;
+        let cancelled = false;
+        prefsApi
+            .listCategory(token, "display_settings", user.id)
+            .then((prefs) => {
+            if (cancelled)
+                return;
+            const t = prefs.find((p) => p.name === "theme")?.value;
+            if (t === "light" || t === "dark" || t === "system")
+                setThemeState(t);
+        })
+            .catch(() => { });
+        return () => { cancelled = true; };
+    }, [token, user?.id]);
+    const setTheme = useCallback(async (next) => {
+        setThemeState(next);
+        if (!token || !user?.id)
+            return;
+        const pref = {
+            user_id: user.id,
+            category: "display_settings",
+            name: "theme",
+            value: next,
+        };
+        try {
+            await prefsApi.upsert(token, [pref], user.id);
+        }
+        catch { /* keep local choice */ }
+    }, [token, user?.id]);
+    // Phase 21 — Quick Switcher (Cmd+K / Ctrl+K). Mattermost's keyboard-first
+    // navigation surface. Combines channel autocomplete + user autocomplete so
+    // a user can jump to a channel or open a DM in one shortcut.
+    const [showQuickSwitcher, setShowQuickSwitcher] = useState(false);
+    useEffect(() => {
+        const onKey = (e) => {
+            const mod = e.metaKey || e.ctrlKey;
+            if (mod && (e.key === "k" || e.key === "K")) {
+                // Skip if the user is mid-text-input ⇢ we'd kidnap their typing.
+                // …no, actually the whole point is to grab focus from anywhere.
+                e.preventDefault();
+                setShowQuickSwitcher(true);
+            }
+        };
+        window.addEventListener("keydown", onKey);
+        return () => window.removeEventListener("keydown", onKey);
+    }, []);
+    // Phase 21 — channel stats (member/pinned/files counts). Fetched lazily
+    // when the active channel changes; a ChannelStats object is cached per id
+    // so back-and-forth navigation doesn't re-fetch. The chip in the header
+    // renders only when the count is known.
+    const [channelStatsByID, setChannelStatsByID] = useState({});
+    useEffect(() => {
+        if (!token || !currentChannelId)
+            return;
+        if (channelStatsByID[currentChannelId])
+            return;
+        let cancelled = false;
+        compatApi
+            .channelStats(token, currentChannelId)
+            .then((s) => {
+            if (cancelled)
+                return;
+            setChannelStatsByID((prev) => ({ ...prev, [currentChannelId]: s }));
+        })
+            .catch(() => { });
+        return () => { cancelled = true; };
+        // channelStatsByID intentionally not in deps: cache lookup is the guard.
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [token, currentChannelId]);
+    // Phase 22 — Mattermost sidebar categories. Loaded per (user, team) and
+    // refreshed on team switch + WS-driven reload events. The categories
+    // drive sidebar grouping (즐겨찾기/채널/DM/사용자 정의) and ordering. We
+    // never fall back to the flat-render path while categories are loading —
+    // the sidebar just shows a skeleton row to avoid a sort flicker.
+    const [sidebarCats, setSidebarCats] = useState(null);
+    const [showNotifyPrefs, setShowNotifyPrefs] = useState(false);
+    // Reload categories whenever the team changes. Server auto-bootstraps the
+    // three defaults on first call, so a freshly-joined team renders correctly
+    // without any client-side seeding.
+    useEffect(() => {
+        if (!token || !currentTeamId) {
+            setSidebarCats(null);
+            return;
+        }
+        let cancelled = false;
+        sidebarApi
+            .list(token, currentTeamId)
+            .then((res) => { if (!cancelled)
+            setSidebarCats(res); })
+            .catch(() => { if (!cancelled)
+            setSidebarCats(null); });
+        return () => { cancelled = true; };
+    }, [token, currentTeamId]);
+    // Channel-id → favorite? lookup, derived from the favorites category. The
+    // memo lets the sidebar render in O(1) per channel during the map phase.
+    const favoriteChannelIds = useMemo(() => {
+        const set = new Set();
+        if (!sidebarCats)
+            return set;
+        const fav = sidebarCats.categories.find((c) => c.type === "favorites");
+        if (fav)
+            for (const id of fav.channel_ids)
+                set.add(id);
+        return set;
+    }, [sidebarCats]);
+    // Toggle favorite: adds/removes the channel from the favorites category.
+    // We optimistically patch sidebarCats then call the bulk-update endpoint;
+    // a failed call rolls back via the next list reload.
+    const onToggleFavorite = useCallback(async (channelId) => {
+        if (!token || !currentTeamId || !sidebarCats)
+            return;
+        const fav = sidebarCats.categories.find((c) => c.type === "favorites");
+        if (!fav)
+            return;
+        const isFav = fav.channel_ids.includes(channelId);
+        const nextFavIds = isFav
+            ? fav.channel_ids.filter((id) => id !== channelId)
+            : [...fav.channel_ids, channelId];
+        const patched = { ...fav, channel_ids: nextFavIds };
+        setSidebarCats({
+            ...sidebarCats,
+            categories: sidebarCats.categories.map((c) => c.id === fav.id ? patched : c),
+        });
+        try {
+            await sidebarApi.update(token, currentTeamId, patched);
+        }
+        catch {
+            // Re-fetch on error so the UI doesn't drift from the server.
+            try {
+                const reloaded = await sidebarApi.list(token, currentTeamId);
+                setSidebarCats(reloaded);
+            }
+            catch { /* swallowed — leave optimistic state */ }
+        }
+    }, [token, currentTeamId, sidebarCats]);
     // Phase 18 — search filters lifted out of the free-form terms. The
     // search input still accepts `from:` / `in:` / `before:` / `after:` /
     // `has:file` / `has:link`; we parse them into this state, re-emit the
@@ -618,6 +792,12 @@ export function ChatView() {
     const currentChannel = useMemo(() => channels.find((c) => c.id === currentChannelId) ?? null, [channels, currentChannelId]);
     const publicChannels = useMemo(() => channels.filter((c) => c.type !== "D"), [channels]);
     const dmChannels = useMemo(() => channels.filter((c) => c.type === "D"), [channels]);
+    // Phase 22 — favorites cross both public and DM lists. Channels in the
+    // favorites category get hoisted into a top section so they're a single
+    // click away even when the user has dozens of channels.
+    const favoriteChannels = useMemo(() => channels.filter((c) => favoriteChannelIds.has(c.id)), [channels, favoriteChannelIds]);
+    const nonFavoritePublic = useMemo(() => publicChannels.filter((c) => !favoriteChannelIds.has(c.id)), [publicChannels, favoriteChannelIds]);
+    const nonFavoriteDM = useMemo(() => dmChannels.filter((c) => !favoriteChannelIds.has(c.id)), [dmChannels, favoriteChannelIds]);
     // ---- Actions ----
     async function onCreateTeam() {
         if (!token)
@@ -1277,11 +1457,23 @@ export function ChatView() {
         }
     }
     // ---- Render ----
-    return (_jsxs("div", { className: "chat-shell", children: [_jsxs("aside", { className: "chat-side", children: [_jsxs("div", { className: "login-brand", style: { marginBottom: 16 }, children: [_jsx("div", { className: "login-logo", "aria-hidden": true, children: "M" }), _jsx("strong", { children: "Moddle" })] }), _jsx(SectionTitle, { children: "\uD300" }), _jsxs("div", { className: "item-list", children: [teams.map((t) => (_jsxs("button", { className: `item ${t.id === currentTeamId ? "item-active" : ""}`, onClick: () => setCurrentTeamId(t.id), children: [_jsx("span", { className: "item-badge", style: { background: color(t.id) }, children: t.display_name[0]?.toUpperCase() ?? "?" }), t.display_name] }, t.id))), _jsx("button", { className: "item item-muted", onClick: onCreateTeam, children: "\uFF0B \uC0C8 \uD300" })] }), currentTeamId && (_jsxs(_Fragment, { children: [_jsxs("div", { className: "item-list", style: { marginBottom: 4 }, children: [_jsx("button", { type: "button", className: `item ${savedView ? "item-active" : ""}`, onClick: openSavedView, title: "\uBD81\uB9C8\uD06C\uD55C \uBA54\uC2DC\uC9C0 \uBAA8\uC544\uBCF4\uAE30", children: "\u2B50 \uC800\uC7A5\uB428" }), _jsxs("button", { type: "button", className: `item ${scheduledView ? "item-active" : ""}`, onClick: openScheduledView, title: "\uC608\uC57D\uB41C \uBA54\uC2DC\uC9C0", style: { display: "flex", alignItems: "center", gap: 6 }, children: [_jsx("span", { style: { flex: 1 }, children: "\uD83D\uDD50 \uC608\uC57D\uB428" }), scheduledList.length > 0 && (_jsx("span", { className: "unread-badge", "aria-label": `예약 ${scheduledList.length}건`, children: scheduledList.length }))] })] }), _jsx(SectionTitle, { children: "\uCC44\uB110" }), _jsxs("div", { className: "item-list", children: [publicChannels.map((c) => (_jsx(ChannelRow, { channel: c, active: !savedView && !scheduledView && c.id === currentChannelId, unread: unread[c.id] ?? { msg: 0, mention: 0 }, onClick: () => { setSavedView(false); setScheduledView(false); setCurrentChannelId(c.id); } }, c.id))), _jsx("button", { className: "item item-muted", onClick: onCreateChannel, children: "\uFF0B \uC0C8 \uCC44\uB110" }), _jsx("button", { className: "item item-muted", onClick: () => setShowDiscover(true), title: "\uAC00\uC785 \uAC00\uB2A5\uD55C \uACF5\uAC1C \uCC44\uB110 \uCC3E\uC544\uBCF4\uAE30", children: "\uD83D\uDD0D \uCC44\uB110 \uD0D0\uC0C9" }), _jsx("button", { className: "item item-muted", onClick: () => setShowArchived((v) => !v), title: "\uBCF4\uAD00\uB41C \uCC44\uB110 \uD45C\uC2DC/\uC228\uAE40", children: showArchived ? "▴ 보관된 채널 숨기기" : "▾ 보관된 채널 보기" }), showArchived && archivedChannels.map((c) => (_jsxs("div", { className: "item", style: { opacity: 0.55, display: "flex", alignItems: "center", gap: 6 }, children: [_jsxs("span", { style: { flex: 1, fontStyle: "italic" }, children: ["# ", c.display_name] }), isAdmin && (_jsx("button", { type: "button", className: "action-btn", title: "\uBCF5\uC6D0", onClick: () => onRestoreChannel(c.id), children: "\u21BA" }))] }, c.id))), showArchived && archivedChannels.length === 0 && (_jsx("div", { className: "item item-muted", style: { fontSize: 12 }, children: "\uBCF4\uAD00\uB41C \uCC44\uB110\uC774 \uC5C6\uC2B5\uB2C8\uB2E4." }))] }), _jsx(SectionTitle, { children: "\uB2E4\uC774\uB809\uD2B8 \uBA54\uC2DC\uC9C0" }), _jsxs("div", { className: "item-list", children: [dmChannels.map((c) => {
+    return (_jsxs("div", { className: "chat-shell", children: [_jsxs("aside", { className: "chat-side", children: [_jsxs("div", { className: "login-brand", style: { marginBottom: 16 }, children: [_jsx("div", { className: "login-logo", "aria-hidden": true, children: "M" }), _jsx("strong", { children: "Moddle" })] }), _jsx(SectionTitle, { children: "\uD300" }), _jsxs("div", { className: "item-list", children: [teams.map((t) => (_jsxs("button", { className: `item ${t.id === currentTeamId ? "item-active" : ""}`, onClick: () => setCurrentTeamId(t.id), children: [_jsx("span", { className: "item-badge", style: { background: color(t.id) }, children: t.display_name[0]?.toUpperCase() ?? "?" }), t.display_name] }, t.id))), _jsx("button", { className: "item item-muted", onClick: onCreateTeam, children: "\uFF0B \uC0C8 \uD300" })] }), currentTeamId && (_jsxs(_Fragment, { children: [_jsxs("div", { className: "item-list", style: { marginBottom: 4 }, children: [_jsx("button", { type: "button", className: `item ${savedView ? "item-active" : ""}`, onClick: openSavedView, title: "\uBD81\uB9C8\uD06C\uD55C \uBA54\uC2DC\uC9C0 \uBAA8\uC544\uBCF4\uAE30", children: "\u2B50 \uC800\uC7A5\uB428" }), _jsxs("button", { type: "button", className: `item ${scheduledView ? "item-active" : ""}`, onClick: openScheduledView, title: "\uC608\uC57D\uB41C \uBA54\uC2DC\uC9C0", style: { display: "flex", alignItems: "center", gap: 6 }, children: [_jsx("span", { style: { flex: 1 }, children: "\uD83D\uDD50 \uC608\uC57D\uB428" }), scheduledList.length > 0 && (_jsx("span", { className: "unread-badge", "aria-label": `예약 ${scheduledList.length}건`, children: scheduledList.length }))] })] }), favoriteChannels.length > 0 && (_jsxs(_Fragment, { children: [_jsx(SectionTitle, { children: "\u2B50 \uC990\uACA8\uCC3E\uAE30" }), _jsx("div", { className: "item-list", children: favoriteChannels.map((c) => {
+                                            if (c.type === "D") {
+                                                const otherId = dmCounterpart(c.name, user?.id ?? "");
+                                                const u = users[otherId];
+                                                const ue = unread[c.id] ?? { msg: 0, mention: 0 };
+                                                return (_jsxs("button", { className: `item ${!savedView && !scheduledView && c.id === currentChannelId ? "item-active" : ""}`, onClick: () => { setSavedView(false); setScheduledView(false); setCurrentChannelId(c.id); }, children: [_jsx(Avatar, { id: otherId, name: u?.username ?? otherId.slice(0, 8), status: statuses[otherId], size: 22, picture: u?.picture, updateAt: u?.update_at }), _jsx("span", { style: { marginLeft: 2, flex: 1, textAlign: "left" }, children: u?.username ?? otherId.slice(0, 8) }), _jsx("span", { role: "button", className: "channel-fav is-fav", title: "\uC990\uACA8\uCC3E\uAE30 \uD574\uC81C", onClick: (e) => { e.stopPropagation(); onToggleFavorite(c.id); }, onMouseDown: (e) => e.stopPropagation(), children: "\u2605" }), ue.mention > 0
+                                                            ? _jsx("span", { className: "mention-badge", children: ue.mention })
+                                                            : ue.msg > 0
+                                                                ? _jsx("span", { className: "unread", children: ue.msg })
+                                                                : null] }, c.id));
+                                            }
+                                            return (_jsx(ChannelRow, { channel: c, active: !savedView && !scheduledView && c.id === currentChannelId, unread: unread[c.id] ?? { msg: 0, mention: 0 }, onClick: () => { setSavedView(false); setScheduledView(false); setCurrentChannelId(c.id); }, isFavorite: true, onToggleFavorite: onToggleFavorite }, c.id));
+                                        }) })] })), _jsx(SectionTitle, { children: "\uCC44\uB110" }), _jsxs("div", { className: "item-list", children: [nonFavoritePublic.map((c) => (_jsx(ChannelRow, { channel: c, active: !savedView && !scheduledView && c.id === currentChannelId, unread: unread[c.id] ?? { msg: 0, mention: 0 }, onClick: () => { setSavedView(false); setScheduledView(false); setCurrentChannelId(c.id); }, isFavorite: false, onToggleFavorite: onToggleFavorite }, c.id))), _jsx("button", { className: "item item-muted", onClick: onCreateChannel, children: "\uFF0B \uC0C8 \uCC44\uB110" }), _jsx("button", { className: "item item-muted", onClick: () => setShowDiscover(true), title: "\uAC00\uC785 \uAC00\uB2A5\uD55C \uACF5\uAC1C \uCC44\uB110 \uCC3E\uC544\uBCF4\uAE30", children: "\uD83D\uDD0D \uCC44\uB110 \uD0D0\uC0C9" }), _jsx("button", { className: "item item-muted", onClick: () => setShowArchived((v) => !v), title: "\uBCF4\uAD00\uB41C \uCC44\uB110 \uD45C\uC2DC/\uC228\uAE40", children: showArchived ? "▴ 보관된 채널 숨기기" : "▾ 보관된 채널 보기" }), showArchived && archivedChannels.map((c) => (_jsxs("div", { className: "item", style: { opacity: 0.55, display: "flex", alignItems: "center", gap: 6 }, children: [_jsxs("span", { style: { flex: 1, fontStyle: "italic" }, children: ["# ", c.display_name] }), isAdmin && (_jsx("button", { type: "button", className: "action-btn", title: "\uBCF5\uC6D0", onClick: () => onRestoreChannel(c.id), children: "\u21BA" }))] }, c.id))), showArchived && archivedChannels.length === 0 && (_jsx("div", { className: "item item-muted", style: { fontSize: 12 }, children: "\uBCF4\uAD00\uB41C \uCC44\uB110\uC774 \uC5C6\uC2B5\uB2C8\uB2E4." }))] }), _jsx(SectionTitle, { children: "\uB2E4\uC774\uB809\uD2B8 \uBA54\uC2DC\uC9C0" }), _jsxs("div", { className: "item-list", children: [nonFavoriteDM.map((c) => {
                                         const otherId = dmCounterpart(c.name, user?.id ?? "");
                                         const u = users[otherId];
                                         const ue = unread[c.id] ?? { msg: 0, mention: 0 };
-                                        return (_jsxs("button", { className: `item ${!savedView && !scheduledView && c.id === currentChannelId ? "item-active" : ""}`, onClick: () => { setSavedView(false); setScheduledView(false); setCurrentChannelId(c.id); }, children: [_jsx(Avatar, { id: otherId, name: u?.username ?? otherId.slice(0, 8), status: statuses[otherId], size: 22, picture: u?.picture, updateAt: u?.update_at }), _jsx("span", { style: { marginLeft: 2 }, children: u?.username ?? otherId.slice(0, 8) }), ue.mention > 0
+                                        return (_jsxs("button", { className: `item ${!savedView && !scheduledView && c.id === currentChannelId ? "item-active" : ""}`, onClick: () => { setSavedView(false); setScheduledView(false); setCurrentChannelId(c.id); }, children: [_jsx(Avatar, { id: otherId, name: u?.username ?? otherId.slice(0, 8), status: statuses[otherId], size: 22, picture: u?.picture, updateAt: u?.update_at }), _jsx("span", { style: { marginLeft: 2, flex: 1, textAlign: "left" }, children: u?.username ?? otherId.slice(0, 8) }), _jsx("span", { role: "button", className: "channel-fav", title: "\uC990\uACA8\uCC3E\uAE30\uC5D0 \uCD94\uAC00", onClick: (e) => { e.stopPropagation(); onToggleFavorite(c.id); }, onMouseDown: (e) => e.stopPropagation(), children: "\u2606" }), ue.mention > 0
                                                     ? _jsx("span", { className: "mention-badge", children: ue.mention })
                                                     : ue.msg > 0
                                                         ? _jsx("span", { className: "unread", children: ue.msg })
@@ -1317,7 +1509,7 @@ export function ChatView() {
                                                 setDigestEnabled(prev);
                                                 setError(err.message || "이메일 설정 저장 실패");
                                             }
-                                        } }), "\uC774\uBA54\uC77C \uC54C\uB9BC \uC218\uC2E0"] }), _jsx("button", { type: "button", className: "btn-ghost", style: { marginTop: 8 }, onClick: openSessionModal, title: "\uC774 \uACC4\uC815\uC758 \uB85C\uADF8\uC778 \uC138\uC158 \uBAA9\uB85D", children: "\uD83D\uDD10 \uC138\uC158 \uAD00\uB9AC" }), _jsx("button", { type: "button", className: "btn-ghost", style: { marginTop: 8 }, onClick: async () => {
+                                        } }), "\uC774\uBA54\uC77C \uC54C\uB9BC \uC218\uC2E0"] }), _jsxs("label", { className: "theme-picker", style: { marginTop: 8, display: "flex", alignItems: "center", gap: 6, fontSize: 13 }, title: "\uD14C\uB9C8\uB294 \uBAA8\uB4E0 \uAE30\uAE30\uC5D0\uC11C \uB3D9\uAE30\uD654\uB429\uB2C8\uB2E4", children: [_jsx("span", { children: "\uD83C\uDFA8 \uD14C\uB9C8" }), _jsxs("select", { value: theme, onChange: (e) => setTheme(e.target.value), style: { flex: 1, height: 28, borderRadius: 6 }, children: [_jsx("option", { value: "system", children: "\uC2DC\uC2A4\uD15C \uC124\uC815 \uB530\uB974\uAE30" }), _jsx("option", { value: "light", children: "\uBC1D\uAC8C" }), _jsx("option", { value: "dark", children: "\uC5B4\uB461\uAC8C" })] })] }), _jsx("button", { type: "button", className: "btn-ghost", style: { marginTop: 8 }, onClick: () => setShowQuickSwitcher(true), title: "\uCC44\uB110 / \uC0AC\uC6A9\uC790 \uBE60\uB978 \uC774\uB3D9 (Ctrl+K)", children: "\uD83D\uDD0E \uBE60\uB978 \uC774\uB3D9 (Ctrl+K)" }), _jsx("button", { type: "button", className: "btn-ghost", style: { marginTop: 8 }, onClick: () => setShowNotifyPrefs(true), title: "\uC774\uBA54\uC77C / \uB370\uC2A4\uD06C\uD1B1 / \uBA58\uC158 \uAE30\uBCF8 \uC124\uC815", children: "\uD83D\uDD14 \uC54C\uB9BC \uC124\uC815" }), _jsx("button", { type: "button", className: "btn-ghost", style: { marginTop: 8 }, onClick: openSessionModal, title: "\uC774 \uACC4\uC815\uC758 \uB85C\uADF8\uC778 \uC138\uC158 \uBAA9\uB85D", children: "\uD83D\uDD10 \uC138\uC158 \uAD00\uB9AC" }), _jsx("button", { type: "button", className: "btn-ghost", style: { marginTop: 8 }, onClick: async () => {
                                     if (token) {
                                         try {
                                             await api.logout(token);
@@ -1325,7 +1517,7 @@ export function ChatView() {
                                         catch { /* best-effort */ }
                                     }
                                     dispatch(clearAuth());
-                                }, children: "\uB85C\uADF8\uC544\uC6C3" })] })] }), _jsxs("main", { className: "chat-main", children: [wsStatus === "reconnecting" && (_jsxs("div", { className: "ws-reconnect-banner", role: "status", children: ["\uC7AC\uC5F0\uACB0 \uC911\u2026 (\uC2DC\uB3C4 ", wsAttempts, "\uD68C)"] })), savedView ? (_jsx(SavedPostsView, { posts: savedPosts, users: users, statuses: statuses, reactionsByPost: reactionsByPost, filesByID: filesByID, currentUserId: user?.id ?? "", token: token ?? "", channels: channels, loading: savedLoading, onClose: closeSavedView, onReload: loadSavedPosts, onToggleReaction: onToggleReaction, onEdit: onEditPost, onDelete: onDeletePost, onOpenThread: openThread, isSaved: (postId) => savedIds.has(postId), onToggleSaved: onToggleSaved, onJumpToChannel: (chId) => { setSavedView(false); setCurrentChannelId(chId); } })) : scheduledView ? (_jsx(ScheduledPostsView, { items: scheduledList, channels: channels, loading: scheduledLoading, onClose: closeScheduledView, onReload: loadScheduledList, onCancel: onCancelScheduled, onJumpToChannel: (chId) => { setScheduledView(false); setCurrentChannelId(chId); } })) : currentChannel ? (_jsxs(_Fragment, { children: [_jsxs("header", { className: "chat-header", children: [_jsxs("div", { className: "chat-header-left", children: [_jsx("div", { className: "chat-header-team", children: currentTeam?.display_name }), _jsxs("h2", { className: "chat-header-title", children: [currentChannel.type === "D" ? (_jsxs(_Fragment, { children: [_jsx(Avatar, { id: dmCounterpart(currentChannel.name, user?.id ?? ""), name: "", status: statuses[dmCounterpart(currentChannel.name, user?.id ?? "")], size: 22, picture: users[dmCounterpart(currentChannel.name, user?.id ?? "")]?.picture, updateAt: users[dmCounterpart(currentChannel.name, user?.id ?? "")]?.update_at }), " ", users[dmCounterpart(currentChannel.name, user?.id ?? "")]?.username ?? "다이렉트 메시지"] })) : (_jsxs(_Fragment, { children: [_jsx("span", { className: "channel-hash", children: "#" }), currentChannel.display_name] })), _jsx(ChannelSettingsMenu, { props: channelNotify[currentChannel.id] ?? { desktop: "all", mark_unread: "all" }, onChange: (patch) => onChangeNotify(currentChannel.id, patch) }), isAdmin && currentChannel.type !== "D" && currentChannel.type !== "G" && (_jsx("button", { type: "button", className: "action-btn", title: "\uCC44\uB110 \uBCF4\uAD00", style: { marginLeft: 6 }, onClick: () => onArchiveChannel(currentChannel.id), children: "\uD83D\uDDC4\uFE0F" }))] })] }), _jsxs("form", { className: "search-form", onSubmit: (e) => { e.preventDefault(); onSearch(0); }, children: [_jsx("input", { className: "search-input", placeholder: "\uBA54\uC2DC\uC9C0 \uAC80\uC0C9  (\uC608: \uBC30\uD3EC from:alice in:general has:link)", value: searchTerm, onChange: (e) => setSearchTerm(e.target.value), title: "from:username, in:channel, before:YYYY-MM-DD, after:YYYY-MM-DD, has:file, has:link" }), searchResults && (_jsx("button", { type: "button", className: "btn-ghost", style: { width: "auto", padding: "0 10px", height: 32, marginLeft: 6 }, onClick: () => { setSearchResults(null); setSearchTerm(""); setSearchFilters({}); setSearchTotal(0); setSearchPage(0); }, children: "\uB2EB\uAE30" }))] })] }), searchResults ? (_jsxs("div", { className: "chat-messages", children: [_jsxs("div", { className: "search-filter-bar", children: [_jsxs("div", { children: ["\"", searchTerm, "\" \uAC80\uC0C9\uACB0\uACFC ", " ", _jsx("strong", { children: searchTotal }), "\uAC74 (\uD398\uC774\uC9C0 ", searchPage + 1, ")"] }), _jsxs("div", { className: "search-filter-chips", children: [searchFilters.from_user_id && (_jsxs("span", { className: "search-chip", children: ["from: ", users[searchFilters.from_user_id]?.username ?? searchFilters.from_user_id.slice(0, 6)] })), searchFilters.in_channel_id && (_jsxs("span", { className: "search-chip", children: ["in: ", channels.find((c) => c.id === searchFilters.in_channel_id)?.display_name ?? searchFilters.in_channel_id.slice(0, 6)] })), searchFilters.after && (_jsxs("span", { className: "search-chip", children: ["after: ", new Date(searchFilters.after).toISOString().slice(0, 10)] })), searchFilters.before && (_jsxs("span", { className: "search-chip", children: ["before: ", new Date(searchFilters.before - 1).toISOString().slice(0, 10)] })), searchFilters.has_file && _jsx("span", { className: "search-chip", children: "has:file" }), searchFilters.has_link && _jsx("span", { className: "search-chip", children: "has:link" })] })] }), searchResults.map((p) => (_jsx(MessageRow, { post: p, isMe: p.user_id === user?.id, author: users[p.user_id], status: statuses[p.user_id], reactions: reactionsByPost[p.id] ?? [], currentUserId: user?.id ?? "", files: (p.file_ids ?? []).map((id) => filesByID[id]).filter(Boolean), token: token ?? "", onToggleReaction: (emoji) => onToggleReaction(p, emoji), onEdit: onEditPost, onDelete: onDeletePost, onOpenThread: openThread, isSaved: savedIds.has(p.id), onToggleSaved: () => onToggleSaved(p), compact: true, channelLabel: channels.find((c) => c.id === p.channel_id)?.display_name, onJumpToChannel: () => setCurrentChannelId(p.channel_id) }, p.id))), searchTotal > searchResults.length + searchPage * 20 && (_jsx("div", { style: { display: "flex", justifyContent: "center", padding: 10 }, children: _jsx("button", { type: "button", className: "btn-ghost", style: { width: "auto", padding: "0 14px", height: 32 }, onClick: () => onSearch(searchPage + 1), children: "\uB2E4\uC74C \uD398\uC774\uC9C0" }) }))] })) : (_jsx("div", { className: "chat-messages", children: loadingPosts ? (_jsx("div", { className: "chat-empty", children: "\uBD88\uB7EC\uC624\uB294 \uC911\u2026" })) : posts.length === 0 ? (_jsx("div", { className: "chat-empty", children: "\uCCAB \uBA54\uC2DC\uC9C0\uB97C \uB0A8\uACA8\uBCF4\uC138\uC694." })) : (posts.map((p) => (_jsx(MessageRow, { post: p, isMe: p.user_id === user?.id, author: users[p.user_id], status: statuses[p.user_id], reactions: reactionsByPost[p.id] ?? [], currentUserId: user?.id ?? "", files: (p.file_ids ?? []).map((id) => filesByID[id]).filter(Boolean), token: token ?? "", isSaved: savedIds.has(p.id), onToggleSaved: () => onToggleSaved(p), onToggleReaction: (emoji) => onToggleReaction(p, emoji), onEdit: onEditPost, onDelete: onDeletePost, onOpenThread: openThread, onRemindMe: () => setReminderForPostId(p.id) }, p.id)))) })), !searchResults && (_jsxs(_Fragment, { children: [cmdNotice && (_jsxs("div", { className: "cmd-notice", children: [_jsx("span", { children: cmdNotice }), _jsx("button", { type: "button", className: "action-btn", onClick: () => setCmdNotice(null), children: "\u2715" })] })), _jsx(TypingIndicator, { typingUsers: Object.keys(typingUsers).filter((uid) => uid !== user?.id), users: users }), _jsx(Composer, { token: token ?? "", channelID: currentChannelId, onSend: onSendPost, onTyping: sendTyping, onUpload: onUploadFiles, onSchedule: onOpenScheduleModal, userId: user?.id, rootId: null, resetSeq: rootComposerResetSeq })] }))] })) : (_jsx("div", { className: "chat-empty", style: { paddingTop: 80 }, children: currentTeam ? "채널을 만들어 시작하세요." : "먼저 팀을 만들어주세요." })), error && _jsx("div", { className: "login-error", style: { margin: 12 }, children: error })] }), threadRootId && (_jsx(ThreadPanel, { rootId: threadRootId, posts: threadPosts, loading: threadLoading, users: users, statuses: statuses, reactionsByPost: reactionsByPost, filesByID: filesByID, currentUserId: user?.id ?? "", token: token ?? "", onToggleReaction: onToggleReaction, onEdit: onEditPost, onDelete: onDeletePost, onReply: onReplyInThread, onUpload: onUploadFiles, onSchedule: onOpenScheduleModalFromThread(threadRootId), composerResetSeq: threadComposerResetSeq, onClose: closeThread })), showStartDM && token && user && (_jsx(StartDirectModal, { token: token, currentUserId: user.id, onClose: () => setShowStartDM(false), onPick: onStartDirect })), showIntegrations && isAdmin && (_jsx(IntegrationsPanel, { channels: channels, currentTeamId: currentTeamId, onClose: () => setShowIntegrations(false) })), showSessions && (_jsx(SessionManagerModal, { sessions: sessions, loading: sessionsLoading, onRevoke: onRevokeOneSession, onRevokeOthers: onRevokeOtherSessions, onClose: () => setShowSessions(false) })), showDiscover && currentTeamId && token && (_jsx(ChannelDiscoverModal, { token: token, teamId: currentTeamId, onClose: () => setShowDiscover(false), onJoined: (chId) => {
+                                }, children: "\uB85C\uADF8\uC544\uC6C3" })] })] }), _jsxs("main", { className: "chat-main", children: [wsStatus === "reconnecting" && (_jsxs("div", { className: "ws-reconnect-banner", role: "status", children: ["\uC7AC\uC5F0\uACB0 \uC911\u2026 (\uC2DC\uB3C4 ", wsAttempts, "\uD68C)"] })), savedView ? (_jsx(SavedPostsView, { posts: savedPosts, users: users, statuses: statuses, reactionsByPost: reactionsByPost, filesByID: filesByID, currentUserId: user?.id ?? "", token: token ?? "", channels: channels, loading: savedLoading, onClose: closeSavedView, onReload: loadSavedPosts, onToggleReaction: onToggleReaction, onEdit: onEditPost, onDelete: onDeletePost, onOpenThread: openThread, isSaved: (postId) => savedIds.has(postId), onToggleSaved: onToggleSaved, onJumpToChannel: (chId) => { setSavedView(false); setCurrentChannelId(chId); } })) : scheduledView ? (_jsx(ScheduledPostsView, { items: scheduledList, channels: channels, loading: scheduledLoading, onClose: closeScheduledView, onReload: loadScheduledList, onCancel: onCancelScheduled, onJumpToChannel: (chId) => { setScheduledView(false); setCurrentChannelId(chId); } })) : currentChannel ? (_jsxs(_Fragment, { children: [_jsxs("header", { className: "chat-header", children: [_jsxs("div", { className: "chat-header-left", children: [_jsx("div", { className: "chat-header-team", children: currentTeam?.display_name }), _jsxs("h2", { className: "chat-header-title", children: [currentChannel.type === "D" ? (_jsxs(_Fragment, { children: [_jsx(Avatar, { id: dmCounterpart(currentChannel.name, user?.id ?? ""), name: "", status: statuses[dmCounterpart(currentChannel.name, user?.id ?? "")], size: 22, picture: users[dmCounterpart(currentChannel.name, user?.id ?? "")]?.picture, updateAt: users[dmCounterpart(currentChannel.name, user?.id ?? "")]?.update_at }), " ", users[dmCounterpart(currentChannel.name, user?.id ?? "")]?.username ?? "다이렉트 메시지"] })) : (_jsxs(_Fragment, { children: [_jsx("span", { className: "channel-hash", children: "#" }), currentChannel.display_name] })), currentChannel.type !== "D" && channelStatsByID[currentChannel.id] && (_jsxs("span", { className: "channel-stats-chip", title: `멤버 ${channelStatsByID[currentChannel.id].member_count}명 · 고정 ${channelStatsByID[currentChannel.id].pinnedpost_count}개 · 파일 ${channelStatsByID[currentChannel.id].files_count}개`, children: ["\uD83D\uDC65 ", channelStatsByID[currentChannel.id].member_count] })), _jsx(ChannelSettingsMenu, { props: channelNotify[currentChannel.id] ?? { desktop: "all", mark_unread: "all" }, onChange: (patch) => onChangeNotify(currentChannel.id, patch) }), isAdmin && currentChannel.type !== "D" && currentChannel.type !== "G" && (_jsx("button", { type: "button", className: "action-btn", title: "\uCC44\uB110 \uBCF4\uAD00", style: { marginLeft: 6 }, onClick: () => onArchiveChannel(currentChannel.id), children: "\uD83D\uDDC4\uFE0F" }))] })] }), _jsxs("form", { className: "search-form", onSubmit: (e) => { e.preventDefault(); onSearch(0); }, children: [_jsx("input", { className: "search-input", placeholder: "\uBA54\uC2DC\uC9C0 \uAC80\uC0C9  (\uC608: \uBC30\uD3EC from:alice in:general has:link)", value: searchTerm, onChange: (e) => setSearchTerm(e.target.value), title: "from:username, in:channel, before:YYYY-MM-DD, after:YYYY-MM-DD, has:file, has:link" }), searchResults && (_jsx("button", { type: "button", className: "btn-ghost", style: { width: "auto", padding: "0 10px", height: 32, marginLeft: 6 }, onClick: () => { setSearchResults(null); setSearchTerm(""); setSearchFilters({}); setSearchTotal(0); setSearchPage(0); }, children: "\uB2EB\uAE30" }))] })] }), searchResults ? (_jsxs("div", { className: "chat-messages", children: [_jsxs("div", { className: "search-filter-bar", children: [_jsxs("div", { children: ["\"", searchTerm, "\" \uAC80\uC0C9\uACB0\uACFC ", " ", _jsx("strong", { children: searchTotal }), "\uAC74 (\uD398\uC774\uC9C0 ", searchPage + 1, ")"] }), _jsxs("div", { className: "search-filter-chips", children: [searchFilters.from_user_id && (_jsxs("span", { className: "search-chip", children: ["from: ", users[searchFilters.from_user_id]?.username ?? searchFilters.from_user_id.slice(0, 6)] })), searchFilters.in_channel_id && (_jsxs("span", { className: "search-chip", children: ["in: ", channels.find((c) => c.id === searchFilters.in_channel_id)?.display_name ?? searchFilters.in_channel_id.slice(0, 6)] })), searchFilters.after && (_jsxs("span", { className: "search-chip", children: ["after: ", new Date(searchFilters.after).toISOString().slice(0, 10)] })), searchFilters.before && (_jsxs("span", { className: "search-chip", children: ["before: ", new Date(searchFilters.before - 1).toISOString().slice(0, 10)] })), searchFilters.has_file && _jsx("span", { className: "search-chip", children: "has:file" }), searchFilters.has_link && _jsx("span", { className: "search-chip", children: "has:link" })] })] }), searchResults.map((p) => (_jsx(MessageRow, { post: p, isMe: p.user_id === user?.id, author: users[p.user_id], status: statuses[p.user_id], reactions: reactionsByPost[p.id] ?? [], currentUserId: user?.id ?? "", files: (p.file_ids ?? []).map((id) => filesByID[id]).filter(Boolean), token: token ?? "", onToggleReaction: (emoji) => onToggleReaction(p, emoji), onEdit: onEditPost, onDelete: onDeletePost, onOpenThread: openThread, isSaved: savedIds.has(p.id), onToggleSaved: () => onToggleSaved(p), compact: true, channelLabel: channels.find((c) => c.id === p.channel_id)?.display_name, onJumpToChannel: () => setCurrentChannelId(p.channel_id) }, p.id))), searchTotal > searchResults.length + searchPage * 20 && (_jsx("div", { style: { display: "flex", justifyContent: "center", padding: 10 }, children: _jsx("button", { type: "button", className: "btn-ghost", style: { width: "auto", padding: "0 14px", height: 32 }, onClick: () => onSearch(searchPage + 1), children: "\uB2E4\uC74C \uD398\uC774\uC9C0" }) }))] })) : (_jsx("div", { className: "chat-messages", children: loadingPosts ? (_jsx("div", { className: "chat-empty", children: "\uBD88\uB7EC\uC624\uB294 \uC911\u2026" })) : posts.length === 0 ? (_jsx("div", { className: "chat-empty", children: "\uCCAB \uBA54\uC2DC\uC9C0\uB97C \uB0A8\uACA8\uBCF4\uC138\uC694." })) : (posts.map((p) => (_jsx(MessageRow, { post: p, isMe: p.user_id === user?.id, author: users[p.user_id], status: statuses[p.user_id], reactions: reactionsByPost[p.id] ?? [], currentUserId: user?.id ?? "", files: (p.file_ids ?? []).map((id) => filesByID[id]).filter(Boolean), token: token ?? "", isSaved: savedIds.has(p.id), onToggleSaved: () => onToggleSaved(p), onToggleReaction: (emoji) => onToggleReaction(p, emoji), onEdit: onEditPost, onDelete: onDeletePost, onOpenThread: openThread, onRemindMe: () => setReminderForPostId(p.id) }, p.id)))) })), !searchResults && (_jsxs(_Fragment, { children: [cmdNotice && (_jsxs("div", { className: "cmd-notice", children: [_jsx("span", { children: cmdNotice }), _jsx("button", { type: "button", className: "action-btn", onClick: () => setCmdNotice(null), children: "\u2715" })] })), _jsx(TypingIndicator, { typingUsers: Object.keys(typingUsers).filter((uid) => uid !== user?.id), users: users }), _jsx(Composer, { token: token ?? "", channelID: currentChannelId, onSend: onSendPost, onTyping: sendTyping, onUpload: onUploadFiles, onSchedule: onOpenScheduleModal, userId: user?.id, rootId: null, resetSeq: rootComposerResetSeq })] }))] })) : (_jsx("div", { className: "chat-empty", style: { paddingTop: 80 }, children: currentTeam ? "채널을 만들어 시작하세요." : "먼저 팀을 만들어주세요." })), error && _jsx("div", { className: "login-error", style: { margin: 12 }, children: error })] }), threadRootId && (_jsx(ThreadPanel, { rootId: threadRootId, posts: threadPosts, loading: threadLoading, users: users, statuses: statuses, reactionsByPost: reactionsByPost, filesByID: filesByID, currentUserId: user?.id ?? "", token: token ?? "", onToggleReaction: onToggleReaction, onEdit: onEditPost, onDelete: onDeletePost, onReply: onReplyInThread, onUpload: onUploadFiles, onSchedule: onOpenScheduleModalFromThread(threadRootId), composerResetSeq: threadComposerResetSeq, onClose: closeThread })), showStartDM && token && user && (_jsx(StartDirectModal, { token: token, currentUserId: user.id, onClose: () => setShowStartDM(false), onPick: onStartDirect })), showIntegrations && isAdmin && (_jsx(IntegrationsPanel, { channels: channels, currentTeamId: currentTeamId, onClose: () => setShowIntegrations(false) })), showSessions && (_jsx(SessionManagerModal, { sessions: sessions, loading: sessionsLoading, onRevoke: onRevokeOneSession, onRevokeOthers: onRevokeOtherSessions, onClose: () => setShowSessions(false) })), showDiscover && currentTeamId && token && (_jsx(ChannelDiscoverModal, { token: token, teamId: currentTeamId, onClose: () => setShowDiscover(false), onJoined: (chId) => {
                     // Re-pull so we have the full Channel record + membership
                     // roles correct. If the fetch fails the user will still see
                     // the channel after their next reconnect-driven refresh.
@@ -1335,14 +1527,34 @@ export function ChatView() {
                 } })), scheduleModalFor && (_jsx(ScheduleModal, { channelName: channels.find((c) => c.id === scheduleModalFor.channelId)?.display_name ?? "", messagePreview: scheduleModalFor.message, onCancel: () => setScheduleModalFor(null), onConfirm: onConfirmSchedule })), reminderForPostId && (_jsx(ReminderPopover, { postId: reminderForPostId, onCancel: () => setReminderForPostId(null), onConfirm: onCreateReminder })), reminderToasts.length > 0 && (_jsx("div", { className: "reminder-toast-stack", children: reminderToasts.map((t) => (_jsxs("div", { className: "reminder-toast", children: [_jsx("div", { className: "reminder-toast-title", children: "\uD83D\uDD14 \uB9AC\uB9C8\uC778\uB354" }), t.excerpt && (_jsx("div", { className: "reminder-toast-body", children: t.excerpt })), _jsxs("div", { className: "reminder-toast-actions", children: [_jsx("button", { type: "button", className: "btn-primary", style: { width: "auto", padding: "0 12px", height: 28 }, onClick: () => {
                                         onJumpFromReminder(t.channelId);
                                         setReminderToasts((prev) => prev.filter((x) => x.id !== t.id));
-                                    }, children: "\uC774\uB3D9" }), _jsx("button", { type: "button", className: "btn-ghost", style: { width: "auto", padding: "0 10px", height: 28 }, onClick: () => setReminderToasts((prev) => prev.filter((x) => x.id !== t.id)), children: "\uB2EB\uAE30" })] })] }, t.id))) })), confirmer.render()] }));
+                                    }, children: "\uC774\uB3D9" }), _jsx("button", { type: "button", className: "btn-ghost", style: { width: "auto", padding: "0 10px", height: 28 }, onClick: () => setReminderToasts((prev) => prev.filter((x) => x.id !== t.id)), children: "\uB2EB\uAE30" })] })] }, t.id))) })), showQuickSwitcher && token && (_jsx(QuickSwitcherModal, { token: token, teamId: currentTeamId, channels: channels, users: users, meId: user?.id ?? "", onClose: () => setShowQuickSwitcher(false), onPickChannel: (chId) => {
+                    setCurrentChannelId(chId);
+                    setSavedView(false);
+                    setScheduledView(false);
+                    setShowQuickSwitcher(false);
+                }, onPickUser: async (peer) => {
+                    setShowQuickSwitcher(false);
+                    if (!token || !peer.id || peer.id === user?.id)
+                        return;
+                    try {
+                        const ch = await api.createDirectChannel(token, [peer.id]);
+                        setUsers((prev) => ({ ...prev, [peer.id]: peer }));
+                        await loadChannels();
+                        setCurrentChannelId(ch.id);
+                        setSavedView(false);
+                        setScheduledView(false);
+                    }
+                    catch (err) {
+                        setError(err.message || "DM 열기 실패");
+                    }
+                } })), showNotifyPrefs && token && (_jsx(NotifyPrefsModal, { token: token, onClose: () => setShowNotifyPrefs(false) })), confirmer.render()] }));
 }
 // ---- Subcomponents ----
 function SectionTitle({ children }) {
     return _jsx("div", { className: "section-title", children: children });
 }
-function ChannelRow({ channel, active, unread, onClick, }) {
-    return (_jsxs("button", { className: `item ${active ? "item-active" : ""}`, onClick: onClick, children: [_jsx("span", { className: "channel-hash", children: "#" }), _jsx("span", { style: { flex: 1, textAlign: "left" }, children: channel.display_name }), unread.mention > 0
+function ChannelRow({ channel, active, unread, onClick, isFavorite, onToggleFavorite, }) {
+    return (_jsxs("button", { className: `item ${active ? "item-active" : ""}`, onClick: onClick, children: [_jsx("span", { className: "channel-hash", children: "#" }), _jsx("span", { style: { flex: 1, textAlign: "left" }, children: channel.display_name }), onToggleFavorite && (_jsx("span", { role: "button", "aria-label": isFavorite ? "즐겨찾기 해제" : "즐겨찾기", title: isFavorite ? "즐겨찾기 해제" : "즐겨찾기에 추가", className: `channel-fav ${isFavorite ? "is-fav" : ""}`, onClick: (e) => { e.stopPropagation(); onToggleFavorite(channel.id); }, onMouseDown: (e) => e.stopPropagation(), children: isFavorite ? "★" : "☆" })), unread.mention > 0
                 ? _jsx("span", { className: "mention-badge", children: unread.mention })
                 : unread.msg > 0
                     ? _jsx("span", { className: "unread", children: unread.msg })
@@ -1926,4 +2138,136 @@ function SessionManagerModal({ sessions, loading, onRevoke, onRevokeOthers, onCl
     useEscClose(true, onClose);
     const others = sessions.filter((s) => !s.is_current).length;
     return (_jsx("div", { className: "modal-backdrop", onClick: onClose, children: _jsxs("div", { className: "modal-card", onClick: (e) => e.stopPropagation(), style: { maxWidth: 520 }, children: [_jsxs("header", { className: "integrations-header", children: [_jsx("h3", { style: { margin: 0 }, children: "\uC138\uC158 \uAD00\uB9AC" }), _jsx("button", { type: "button", className: "action-btn", onClick: onClose, title: "\uB2EB\uAE30", children: "\u2715" })] }), _jsx("div", { style: { padding: "4px 0 10px", color: "var(--muted)", fontSize: 12 }, children: "\uC774 \uACC4\uC815\uC73C\uB85C \uB85C\uADF8\uC778\uD55C \uBAA8\uB4E0 \uAE30\uAE30\uC758 \uC138\uC158\uC785\uB2C8\uB2E4. \uC758\uC2EC\uC2A4\uB7EC\uC6B4 \uC138\uC158\uC774 \uC788\uB2E4\uBA74 \uC989\uC2DC \uC885\uB8CC\uD558\uC138\uC694." }), loading ? (_jsx("div", { className: "chat-empty", style: { padding: 14 }, children: "\uBD88\uB7EC\uC624\uB294 \uC911\u2026" })) : sessions.length === 0 ? (_jsx("div", { className: "chat-empty", style: { padding: 14 }, children: "\uD65C\uC131 \uC138\uC158\uC774 \uC5C6\uC2B5\uB2C8\uB2E4." })) : (_jsx("ul", { className: "integrations-list", children: sessions.map((s) => (_jsxs("li", { className: "integrations-row", children: [_jsxs("div", { style: { flex: 1, minWidth: 0 }, children: [_jsx("div", { style: { fontWeight: 600 }, children: s.is_current ? "이 기기" : (s.device_id || "알 수 없는 기기") }), _jsxs("div", { style: { color: "var(--muted)", fontSize: 12 }, children: ["\uC0DD\uC131 ", new Date(s.create_at).toLocaleString(), " · 만료 ", new Date(s.expires_at).toLocaleString()] })] }), _jsx("button", { type: "button", className: "btn-ghost", style: { width: "auto", padding: "0 10px", height: 30, color: "var(--danger)" }, onClick: () => onRevoke(s.id), children: "\uC885\uB8CC" })] }, s.id))) })), _jsx("div", { style: { marginTop: 12, display: "flex", justifyContent: "flex-end" }, children: _jsxs("button", { type: "button", className: "btn-ghost", style: { width: "auto", padding: "0 14px", height: 36, color: "var(--danger)" }, onClick: onRevokeOthers, disabled: others === 0, title: others === 0 ? "다른 기기 세션이 없습니다" : "", children: ["\uB2E4\uB978 \uBAA8\uB4E0 \uAE30\uAE30 \uB85C\uADF8\uC544\uC6C3", others > 0 ? ` (${others})` : ""] }) })] }) }));
+}
+function QuickSwitcherModal({ token, teamId, channels, users, meId, onClose, onPickChannel, onPickUser, }) {
+    useEscClose(true, onClose);
+    const [query, setQuery] = useState("");
+    const [channelHits, setChannelHits] = useState([]);
+    const [userHits, setUserHits] = useState([]);
+    const [activeIdx, setActiveIdx] = useState(0);
+    const inputRef = useRef(null);
+    const reqSeqRef = useRef(0);
+    // Initial focus + initial channel suggestions (recent joined channels).
+    useEffect(() => {
+        inputRef.current?.focus();
+    }, []);
+    // Debounced fetch. Empty query falls back to the local channel list so
+    // the modal isn't blank on open.
+    useEffect(() => {
+        const term = query.trim();
+        if (!term) {
+            // Up to 8 most recent channels the user belongs to.
+            setChannelHits(channels.slice(0, 8));
+            setUserHits([]);
+            setActiveIdx(0);
+            return;
+        }
+        const seq = ++reqSeqRef.current;
+        const handle = setTimeout(async () => {
+            try {
+                const [chs, ures] = await Promise.all([
+                    teamId ? compatApi.autocompleteChannels(token, teamId, term).catch(() => []) : Promise.resolve([]),
+                    compatApi.autocompleteUsers(token, term, 10).catch(() => ({ users: [], out_of_channel: [] })),
+                ]);
+                if (reqSeqRef.current !== seq)
+                    return;
+                setChannelHits(chs);
+                setUserHits(ures.users.filter((u) => u.id !== meId));
+                setActiveIdx(0);
+            }
+            catch {
+                if (reqSeqRef.current !== seq)
+                    return;
+                setChannelHits([]);
+                setUserHits([]);
+            }
+        }, 120);
+        return () => clearTimeout(handle);
+    }, [query, token, teamId, channels, meId]);
+    const entries = useMemo(() => {
+        return [
+            ...channelHits.map((c) => ({ kind: "channel", channel: c })),
+            ...userHits.map((u) => ({ kind: "user", user: u })),
+        ];
+    }, [channelHits, userHits]);
+    // Clamp the cursor whenever the result list shrinks under it.
+    useEffect(() => {
+        if (activeIdx >= entries.length)
+            setActiveIdx(Math.max(0, entries.length - 1));
+    }, [entries.length, activeIdx]);
+    const choose = useCallback((e) => {
+        if (e.kind === "channel")
+            onPickChannel(e.channel.id);
+        else
+            onPickUser(e.user);
+    }, [onPickChannel, onPickUser]);
+    return (_jsx("div", { className: "modal-backdrop", onClick: onClose, children: _jsxs("div", { className: "modal-card quick-switcher", onClick: (e) => e.stopPropagation(), role: "dialog", "aria-modal": "true", "aria-label": "\uBE60\uB978 \uC774\uB3D9", children: [_jsx("input", { ref: inputRef, className: "quick-switcher-input", type: "text", placeholder: "\uCC44\uB110\uC774\uB098 \uC0AC\uC6A9\uC790\uB97C \uC785\uB825\uD558\uC138\uC694\u2026", value: query, onChange: (e) => setQuery(e.target.value), onKeyDown: (e) => {
+                        if (e.key === "ArrowDown") {
+                            e.preventDefault();
+                            setActiveIdx((i) => Math.min(entries.length - 1, i + 1));
+                        }
+                        else if (e.key === "ArrowUp") {
+                            e.preventDefault();
+                            setActiveIdx((i) => Math.max(0, i - 1));
+                        }
+                        else if (e.key === "Enter") {
+                            e.preventDefault();
+                            const entry = entries[activeIdx];
+                            if (entry)
+                                choose(entry);
+                        }
+                    } }), _jsxs("ul", { className: "quick-switcher-list", role: "listbox", children: [entries.length === 0 && (_jsx("li", { className: "quick-switcher-empty", children: "\uACB0\uACFC \uC5C6\uC74C" })), entries.map((entry, idx) => {
+                            const active = idx === activeIdx;
+                            if (entry.kind === "channel") {
+                                const c = entry.channel;
+                                const symbol = c.type === "P" ? "🔒" : c.type === "D" ? "👤" : c.type === "G" ? "👥" : "#";
+                                return (_jsxs("li", { className: "quick-switcher-row" + (active ? " active" : ""), role: "option", "aria-selected": active, onMouseEnter: () => setActiveIdx(idx), onMouseDown: (ev) => { ev.preventDefault(); choose(entry); }, children: [_jsx("span", { className: "quick-switcher-icon", children: symbol }), _jsx("span", { className: "quick-switcher-name", children: c.display_name || c.name }), _jsx("span", { className: "quick-switcher-sub", children: "\uCC44\uB110" })] }, "ch-" + c.id));
+                            }
+                            const u = entry.user;
+                            const cached = users[u.id];
+                            const display = u.username + (cached?.username && cached.username !== u.username ? ` (${cached.username})` : "");
+                            return (_jsxs("li", { className: "quick-switcher-row" + (active ? " active" : ""), role: "option", "aria-selected": active, onMouseEnter: () => setActiveIdx(idx), onMouseDown: (ev) => { ev.preventDefault(); choose(entry); }, children: [_jsx("span", { className: "quick-switcher-icon", children: "@" }), _jsx("span", { className: "quick-switcher-name", children: display }), _jsx("span", { className: "quick-switcher-sub", children: "DM" })] }, "u-" + u.id));
+                        })] }), _jsx("div", { className: "quick-switcher-hint", children: "\u2191\u2193 \uC774\uB3D9 \u00B7 Enter \uC120\uD0DD \u00B7 Esc \uB2EB\uAE30" })] }) }));
+}
+// Phase 22 — user-level notify_props panel. Persists through PUT
+// /users/me/notify_props which writes the full map atomically. Each row in
+// the form is a string→string entry — Mattermost's contract intentionally
+// never types the values past TEXT so future provider plugins can extend
+// the map without a migration. We surface the four most actioned keys with
+// dropdowns and let everything else round-trip untouched.
+function NotifyPrefsModal({ token, onClose }) {
+    const [props, setProps] = useState({});
+    const [loading, setLoading] = useState(true);
+    const [saving, setSaving] = useState(false);
+    const [error, setError] = useState(null);
+    useEscClose(true, onClose);
+    useEffect(() => {
+        let cancelled = false;
+        notifyApi
+            .get(token)
+            .then((p) => { if (!cancelled)
+            setProps(p ?? {}); })
+            .catch((e) => { if (!cancelled)
+            setError(e.message); })
+            .finally(() => { if (!cancelled)
+            setLoading(false); });
+        return () => { cancelled = true; };
+    }, [token]);
+    const update = (key, value) => setProps((prev) => ({ ...prev, [key]: value }));
+    const save = async () => {
+        setSaving(true);
+        setError(null);
+        try {
+            const next = await notifyApi.put(token, props);
+            setProps(next ?? props);
+            onClose();
+        }
+        catch (e) {
+            setError(e.message);
+        }
+        finally {
+            setSaving(false);
+        }
+    };
+    return (_jsx("div", { className: "modal-backdrop", onClick: onClose, children: _jsxs("div", { className: "modal", onClick: (e) => e.stopPropagation(), role: "dialog", "aria-modal": true, children: [_jsx("h3", { style: { margin: "0 0 16px" }, children: "\uC54C\uB9BC \uC124\uC815" }), loading ? (_jsx("div", { style: { color: "var(--muted)" }, children: "\uBD88\uB7EC\uC624\uB294 \uC911\u2026" })) : (_jsxs("div", { style: { display: "grid", gap: 12 }, children: [_jsxs("label", { className: "notify-row", children: [_jsx("span", { children: "\uB370\uC2A4\uD06C\uD1B1 \uC54C\uB9BC" }), _jsxs("select", { value: props.desktop ?? "mention", onChange: (e) => update("desktop", e.target.value), children: [_jsx("option", { value: "all", children: "\uBAA8\uB4E0 \uBA54\uC2DC\uC9C0" }), _jsx("option", { value: "mention", children: "\uBA58\uC158 + DM\uB9CC" }), _jsx("option", { value: "none", children: "\uBC1B\uC9C0 \uC54A\uAE30" })] })] }), _jsxs("label", { className: "notify-row", children: [_jsx("span", { children: "\uC54C\uB9BC\uC74C" }), _jsxs("select", { value: props.desktop_sound ?? "true", onChange: (e) => update("desktop_sound", e.target.value), children: [_jsx("option", { value: "true", children: "\uC0AC\uC6A9" }), _jsx("option", { value: "false", children: "\uC0AC\uC6A9 \uC548 \uD568" })] })] }), _jsxs("label", { className: "notify-row", children: [_jsx("span", { children: "\uC774\uBA54\uC77C \uC54C\uB9BC" }), _jsxs("select", { value: props.email ?? "true", onChange: (e) => update("email", e.target.value), children: [_jsx("option", { value: "true", children: "\uC0AC\uC6A9" }), _jsx("option", { value: "false", children: "\uC0AC\uC6A9 \uC548 \uD568" })] })] }), _jsxs("label", { className: "notify-row", children: [_jsx("span", { children: "\uC774\uB984 \uBA58\uC158 \uAC15\uC870" }), _jsxs("select", { value: props.first_name ?? "false", onChange: (e) => update("first_name", e.target.value), children: [_jsx("option", { value: "true", children: "\uC0AC\uC6A9" }), _jsx("option", { value: "false", children: "\uC0AC\uC6A9 \uC548 \uD568" })] })] }), _jsxs("label", { className: "notify-row", children: [_jsx("span", { children: "\uCC44\uB110 \uC804\uCCB4 \uD638\uCD9C (@channel)" }), _jsxs("select", { value: props.channel ?? "true", onChange: (e) => update("channel", e.target.value), children: [_jsx("option", { value: "true", children: "\uBC1B\uAE30" }), _jsx("option", { value: "false", children: "\uBB34\uC2DC" })] })] }), _jsxs("label", { className: "notify-row", children: [_jsx("span", { children: "\uAC15\uC870 \uD0A4\uC6CC\uB4DC (\uC27C\uD45C \uAD6C\uBD84)" }), _jsx("input", { type: "text", value: props.mention_keys ?? "", onChange: (e) => update("mention_keys", e.target.value), placeholder: "\uBC30\uD3EC, \uAE34\uAE09", style: { flex: 1 } })] })] })), error && (_jsx("div", { style: { color: "var(--danger)", marginTop: 12, fontSize: 13 }, children: error })), _jsxs("div", { style: { display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 16 }, children: [_jsx("button", { type: "button", className: "btn-ghost", onClick: onClose, children: "\uCDE8\uC18C" }), _jsx("button", { type: "button", className: "btn-primary", onClick: save, disabled: loading || saving, children: saving ? "저장 중…" : "저장" })] })] }) }));
 }

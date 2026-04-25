@@ -2,6 +2,7 @@ package auth
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"strings"
 	"time"
@@ -12,6 +13,11 @@ import (
 	"github.com/moddle/moddle/server/internal/store"
 	"golang.org/x/crypto/bcrypt"
 )
+
+// Thin local wrappers so the notify_props code reads cleanly without
+// importing encoding/json at every call site.
+func jsonUnmarshal(b []byte, v any) error { return json.Unmarshal(b, v) }
+func jsonMarshal(v any) ([]byte, error)   { return json.Marshal(v) }
 
 var (
 	ErrInvalidCredentials = errors.New("invalid credentials")
@@ -44,11 +50,51 @@ type User struct {
 	// UI falls back to initial-tile avatars. Kept as TEXT not URL so both
 	// forms pass through without validation fuss.
 	Picture string `json:"picture"`
+	// Phase 23 — first-class profile fields surfaced via PUT /users/{id}
+	// and PUT /users/{id}/patch. All four default to "" (never null) so
+	// JSON marshalling stays predictable. They're omitempty here so older
+	// API consumers that just want id/username/email still see a tight
+	// envelope, but the field set on the wire is stable for those that do
+	// care.
+	FirstName string `json:"first_name,omitempty"`
+	LastName  string `json:"last_name,omitempty"`
+	Nickname  string `json:"nickname,omitempty"`
+	Position  string `json:"position,omitempty"`
 	// DeleteAt is zero for active users and a unix-millis timestamp for
 	// deactivated ones. Most lookups filter `delete_at = 0` on the DB
 	// side so the field stays zero; the admin `ListUsersIncludingDeleted`
 	// path is the one caller that needs a non-zero value here.
 	DeleteAt int64 `json:"delete_at,omitempty"`
+}
+
+// userColumns is the canonical SELECT clause for hydrating User. Kept as a
+// constant so adding a column to the struct only edits one place. COALESCE
+// guards against any pre-Phase-23 NULL rows since the migration uses
+// NOT NULL DEFAULT '' but ALTER on a populated table can hand out NULLs
+// during the transitional moment.
+const userColumns = `id, username, email, roles, COALESCE(picture,''),
+       COALESCE(first_name,''), COALESCE(last_name,''),
+       COALESCE(nickname,''),  COALESCE(position,'')`
+
+func scanUser(row interface {
+	Scan(...any) error
+}) (*User, error) {
+	var u User
+	if err := row.Scan(&u.ID, &u.Username, &u.Email, &u.Roles, &u.Picture,
+		&u.FirstName, &u.LastName, &u.Nickname, &u.Position); err != nil {
+		return nil, err
+	}
+	return &u, nil
+}
+
+// scanUserRow scans the userColumns column set out of a *pgx.Rows cursor.
+// Used by the *List* / *ByIDs / *ByUsernames bulk readers — separate from
+// scanUser to keep the latter's pgx.Row vs. pgx.Rows interfaces straight.
+func scanUserRow(rows pgx.Rows) (User, error) {
+	var u User
+	err := rows.Scan(&u.ID, &u.Username, &u.Email, &u.Roles, &u.Picture,
+		&u.FirstName, &u.LastName, &u.Nickname, &u.Position)
+	return u, err
 }
 
 type Claims struct {
@@ -88,9 +134,10 @@ func (s *Service) LoginWithDevice(ctx context.Context, loginID, password, device
 	var hash string
 	var isBot bool
 	err := s.db.Pool.QueryRow(ctx, `
-		SELECT id, username, email, roles, COALESCE(picture,''), password_hash, COALESCE(is_bot, FALSE)
+		SELECT `+userColumns+`, password_hash, COALESCE(is_bot, FALSE)
 		FROM users WHERE (LOWER(username)=LOWER($1) OR LOWER(email)=LOWER($1)) AND delete_at=0
-	`, loginID).Scan(&u.ID, &u.Username, &u.Email, &u.Roles, &u.Picture, &hash, &isBot)
+	`, loginID).Scan(&u.ID, &u.Username, &u.Email, &u.Roles, &u.Picture,
+		&u.FirstName, &u.LastName, &u.Nickname, &u.Position, &hash, &isBot)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, "", ErrInvalidCredentials
 	}
@@ -179,27 +226,13 @@ func (s *Service) Parse(tokenStr string) (*Claims, error) {
 }
 
 func (s *Service) UserByID(ctx context.Context, id string) (*User, error) {
-	var u User
-	err := s.db.Pool.QueryRow(ctx, `
-		SELECT id, username, email, roles, COALESCE(picture,'') FROM users WHERE id=$1 AND delete_at=0
-	`, id).Scan(&u.ID, &u.Username, &u.Email, &u.Roles, &u.Picture)
-	if err != nil {
-		return nil, err
-	}
-	return &u, nil
+	return scanUser(s.db.Pool.QueryRow(ctx, `SELECT `+userColumns+` FROM users WHERE id=$1 AND delete_at=0`, id))
 }
 
 // UserByUsername looks up a user by username. Returns ErrInvalidCredentials
 // shape (pgx.ErrNoRows) when missing so handlers can 404 cleanly.
 func (s *Service) UserByUsername(ctx context.Context, name string) (*User, error) {
-	var u User
-	err := s.db.Pool.QueryRow(ctx, `
-		SELECT id, username, email, roles, COALESCE(picture,'') FROM users WHERE username=$1 AND delete_at=0
-	`, name).Scan(&u.ID, &u.Username, &u.Email, &u.Roles, &u.Picture)
-	if err != nil {
-		return nil, err
-	}
-	return &u, nil
+	return scanUser(s.db.Pool.QueryRow(ctx, `SELECT `+userColumns+` FROM users WHERE username=$1 AND delete_at=0`, name))
 }
 
 // ListUsers returns a paginated slice of active users ordered by username.
@@ -227,7 +260,7 @@ func (s *Service) listUsersPaginated(ctx context.Context, page, perPage int, inc
 		where = ""
 	}
 	rows, err := s.db.Pool.Query(ctx, `
-		SELECT id, username, email, roles, COALESCE(picture,''), delete_at FROM users
+		SELECT `+userColumns+`, delete_at FROM users
 		`+where+`
 		ORDER BY username ASC
 		LIMIT $1 OFFSET $2
@@ -239,7 +272,99 @@ func (s *Service) listUsersPaginated(ctx context.Context, page, perPage int, inc
 	out := []User{}
 	for rows.Next() {
 		var u User
-		if err := rows.Scan(&u.ID, &u.Username, &u.Email, &u.Roles, &u.Picture, &u.DeleteAt); err != nil {
+		if err := rows.Scan(&u.ID, &u.Username, &u.Email, &u.Roles, &u.Picture,
+			&u.FirstName, &u.LastName, &u.Nickname, &u.Position, &u.DeleteAt); err != nil {
+			return nil, err
+		}
+		out = append(out, u)
+	}
+	return out, rows.Err()
+}
+
+// UserByEmail mirrors UserByUsername but keys on email — lets official
+// Mattermost clients implement "is this email registered" probes via
+// `GET /api/v4/users/email/{email}` without falling back to the search
+// endpoint. Returns pgx.ErrNoRows for missing rows so the handler 404s.
+func (s *Service) UserByEmail(ctx context.Context, email string) (*User, error) {
+	return scanUser(s.db.Pool.QueryRow(ctx, `SELECT `+userColumns+` FROM users WHERE email=$1 AND delete_at=0`, email))
+}
+
+// UsersByIDs hydrates a batch of user records by id. Order in the input
+// slice is NOT preserved (callers re-key by id from the result). Missing
+// ids are silently dropped — Mattermost's contract treats unknowns as
+// non-fatal.
+func (s *Service) UsersByIDs(ctx context.Context, ids []string) ([]User, error) {
+	out := []User{}
+	if len(ids) == 0 {
+		return out, nil
+	}
+	rows, err := s.db.Pool.Query(ctx, `
+		SELECT `+userColumns+` FROM users
+		WHERE id = ANY($1) AND delete_at = 0
+	`, ids)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		u, err := scanUserRow(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, u)
+	}
+	return out, rows.Err()
+}
+
+// UsersByUsernames is the bulk username variant. Same semantics as
+// UsersByIDs — missing usernames are dropped, order is not preserved.
+func (s *Service) UsersByUsernames(ctx context.Context, names []string) ([]User, error) {
+	out := []User{}
+	if len(names) == 0 {
+		return out, nil
+	}
+	rows, err := s.db.Pool.Query(ctx, `
+		SELECT `+userColumns+` FROM users
+		WHERE username = ANY($1) AND delete_at = 0
+	`, names)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		u, err := scanUserRow(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, u)
+	}
+	return out, rows.Err()
+}
+
+// AutocompleteUsers prefixes-first matches on username for the
+// /users/autocomplete endpoint. Mattermost's response shape is split into
+// "users" (any) + "out_of_channel" (when the caller scopes to a channel).
+// We expose the bare list here; the handler shapes the envelope.
+func (s *Service) AutocompleteUsers(ctx context.Context, term string, limit int) ([]User, error) {
+	if limit <= 0 || limit > 50 {
+		limit = 25
+	}
+	prefix := term + "%"
+	contains := "%" + term + "%"
+	rows, err := s.db.Pool.Query(ctx, `
+		SELECT `+userColumns+` FROM users
+		WHERE delete_at = 0 AND (username ILIKE $1 OR username ILIKE $2)
+		ORDER BY (username ILIKE $1) DESC, username ASC
+		LIMIT $3
+	`, prefix, contains, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []User{}
+	for rows.Next() {
+		u, err := scanUserRow(rows)
+		if err != nil {
 			return nil, err
 		}
 		out = append(out, u)
@@ -254,7 +379,7 @@ func (s *Service) SearchUsers(ctx context.Context, term string, limit int) ([]Us
 	}
 	like := "%" + term + "%"
 	rows, err := s.db.Pool.Query(ctx, `
-		SELECT id, username, email, roles, COALESCE(picture,'') FROM users
+		SELECT `+userColumns+` FROM users
 		WHERE delete_at = 0 AND (username ILIKE $1 OR email ILIKE $1)
 		ORDER BY username ASC
 		LIMIT $2
@@ -265,8 +390,8 @@ func (s *Service) SearchUsers(ctx context.Context, term string, limit int) ([]Us
 	defer rows.Close()
 	out := []User{}
 	for rows.Next() {
-		var u User
-		if err := rows.Scan(&u.ID, &u.Username, &u.Email, &u.Roles, &u.Picture); err != nil {
+		u, err := scanUserRow(rows)
+		if err != nil {
 			return nil, err
 		}
 		out = append(out, u)
@@ -376,6 +501,47 @@ func (s *Service) RevokeOthers(ctx context.Context, userID, currentToken string)
 	return cmd.RowsAffected(), nil
 }
 
+// GetNotifyProps reads the user's top-level Mattermost-shaped notification
+// preferences. Empty/missing rows return an empty map (never nil) so the
+// JSON response stays `{}` not `null`. Mattermost stores notify_props as a
+// flat map of string→string ("desktop":"all", "email":"true", etc.); we
+// keep that shape for byte-for-byte API compatibility.
+func (s *Service) GetNotifyProps(ctx context.Context, userID string) (map[string]string, error) {
+	var raw []byte
+	err := s.db.Pool.QueryRow(ctx, `
+		SELECT COALESCE(notify_props::text,'{}') FROM users WHERE id=$1 AND delete_at=0
+	`, userID).Scan(&raw)
+	if err != nil {
+		return nil, err
+	}
+	out := map[string]string{}
+	if len(raw) == 0 || string(raw) == "{}" {
+		return out, nil
+	}
+	if err := jsonUnmarshal(raw, &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// SetNotifyProps replaces the user's notify_props blob wholesale. Mattermost's
+// PUT contract is "here is the new full map" — partial updates are caller's
+// responsibility (the webapp merges before sending). Empty input writes `{}`
+// rather than NULL so future reads stay strict-typed.
+func (s *Service) SetNotifyProps(ctx context.Context, userID string, props map[string]string) error {
+	if props == nil {
+		props = map[string]string{}
+	}
+	blob, err := jsonMarshal(props)
+	if err != nil {
+		return err
+	}
+	_, err = s.db.Pool.Exec(ctx, `
+		UPDATE users SET notify_props=$2::jsonb, update_at=$3 WHERE id=$1 AND delete_at=0
+	`, userID, string(blob), time.Now().UnixMilli())
+	return err
+}
+
 // UpdatePicture overwrites the user's `picture` field — accepts either a
 // full URL or a server-relative path. Returns the refreshed user.
 func (s *Service) UpdatePicture(ctx context.Context, userID, picture string) (*User, error) {
@@ -402,6 +568,93 @@ func (s *Service) UpdateProfile(ctx context.Context, userID, username, email str
 		return nil, err
 	}
 	return s.UserByID(ctx, userID)
+}
+
+// ProfilePatch carries Phase 23 partial-update fields for PUT /users/{id}/patch.
+// Pointer-typed so the handler can distinguish "field omitted" (skip) from
+// "field set to empty string" (clear).
+type ProfilePatch struct {
+	Username  *string
+	Email     *string
+	FirstName *string
+	LastName  *string
+	Nickname  *string
+	Position  *string
+}
+
+// PatchProfile applies the partial update and returns the refreshed user.
+// Empty strings explicitly clear the field (handy for "remove your nickname"
+// flows); nil pointers leave the existing value intact.
+func (s *Service) PatchProfile(ctx context.Context, userID string, p ProfilePatch) (*User, error) {
+	// Building one big COALESCE-with-sentinel update keeps the UPDATE atomic
+	// and avoids a per-field row spin. We pass each field as a {value, set}
+	// pair: the boolean controls whether to overwrite, the value supplies
+	// the new content. Postgres CASE handles the branching cheaply and
+	// trivially supports the "explicit empty string" case.
+	now := time.Now().UnixMilli()
+	usernameVal, usernameSet := derefStringPtr(p.Username)
+	emailVal, emailSet := derefStringPtr(p.Email)
+	firstVal, firstSet := derefStringPtr(p.FirstName)
+	lastVal, lastSet := derefStringPtr(p.LastName)
+	nickVal, nickSet := derefStringPtr(p.Nickname)
+	posVal, posSet := derefStringPtr(p.Position)
+	_, err := s.db.Pool.Exec(ctx, `
+		UPDATE users SET
+			username   = CASE WHEN $2  THEN $3  ELSE username END,
+			email      = CASE WHEN $4  THEN $5  ELSE email END,
+			first_name = CASE WHEN $6  THEN $7  ELSE first_name END,
+			last_name  = CASE WHEN $8  THEN $9  ELSE last_name END,
+			nickname   = CASE WHEN $10 THEN $11 ELSE nickname END,
+			position   = CASE WHEN $12 THEN $13 ELSE position END,
+			update_at  = $14
+		WHERE id = $1 AND delete_at = 0
+	`, userID,
+		usernameSet, usernameVal,
+		emailSet, emailVal,
+		firstSet, firstVal,
+		lastSet, lastVal,
+		nickSet, nickVal,
+		posSet, posVal,
+		now)
+	if err != nil {
+		return nil, err
+	}
+	return s.UserByID(ctx, userID)
+}
+
+func derefStringPtr(p *string) (string, bool) {
+	if p == nil {
+		return "", false
+	}
+	return *p, true
+}
+
+// SetActive toggles a user's active/deactivated state. Wrapper over
+// Deactivate / Reactivate that picks the right call from the boolean payload
+// PUT /users/{id}/active sends. Returns whether anything changed.
+func (s *Service) SetActive(ctx context.Context, targetID string, active bool) (bool, error) {
+	if active {
+		return s.Reactivate(ctx, targetID)
+	}
+	return s.Deactivate(ctx, targetID)
+}
+
+// UserStats is the GET /users/stats response shape. Mattermost includes a
+// few more counters but `total_users_count` is the one official clients
+// poll for the admin dashboard top-of-page badge — the rest can be added
+// piecewise as we wire each enterprise surface.
+type UserStats struct {
+	TotalUsersCount int64 `json:"total_users_count"`
+}
+
+// Stats returns the global user-count snapshot. Counts active users only
+// (delete_at = 0) so admin dashboards don't double-count reactivated rows.
+func (s *Service) Stats(ctx context.Context) (*UserStats, error) {
+	var n int64
+	if err := s.db.Pool.QueryRow(ctx, `SELECT COUNT(*) FROM users WHERE delete_at = 0`).Scan(&n); err != nil {
+		return nil, err
+	}
+	return &UserStats{TotalUsersCount: n}, nil
 }
 
 // UpdatePassword verifies the current password then swaps in the new one.

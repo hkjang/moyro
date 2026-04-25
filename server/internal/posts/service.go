@@ -191,6 +191,121 @@ func (s *Service) ListForChannel(ctx context.Context, channelID string, page, pe
 	return list, rows.Err()
 }
 
+// PageOpts is the union of the four cursor modes Mattermost's
+// `GET /channels/{id}/posts` accepts: `since`, `before`, `after`, or plain
+// page/per_page. All fields are optional; zero values mean "ignore".
+//
+//	Since>0  → posts with create_at >= since (ordered ascending), capped at PerPage
+//	Before!= → posts strictly older than the post with id=Before (descending)
+//	After!=  → posts strictly newer than the post with id=After (ascending)
+//	otherwise → standard offset paging via Page+PerPage
+//
+// before/after take a post id (not a timestamp) for parity with the official
+// API — clients pass the boundary post they already have.
+type PageOpts struct {
+	Since   int64
+	Before  string
+	After   string
+	Page    int
+	PerPage int
+}
+
+// ListForChannelPaged is the cursor-aware variant of ListForChannel. It
+// supports Mattermost's full set of post-paging knobs. Returns ascending
+// or descending order depending on the cursor — Mattermost clients flip
+// rendering based on `order` so they don't reverse the array themselves.
+func (s *Service) ListForChannelPaged(ctx context.Context, channelID string, opts PageOpts) (*PostList, error) {
+	perPage := opts.PerPage
+	if perPage <= 0 || perPage > 200 {
+		perPage = 60
+	}
+	list := &PostList{Order: []string{}, Posts: map[string]*Post{}}
+
+	switch {
+	case opts.Since > 0:
+		// `since` is a unix-ms epoch. Mattermost returns posts at-or-newer
+		// than this timestamp, ascending so the client can append-only.
+		rows, err := s.db.Pool.Query(ctx, `
+			SELECT `+allPostColumns+`
+			FROM posts WHERE channel_id=$1 AND delete_at=0 AND create_at >= $2
+			ORDER BY create_at ASC
+			LIMIT $3
+		`, channelID, opts.Since, perPage)
+		if err != nil {
+			return nil, err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			p, err := scanPost(rows)
+			if err != nil {
+				return nil, err
+			}
+			list.Order = append(list.Order, p.ID)
+			list.Posts[p.ID] = p
+		}
+		return list, rows.Err()
+
+	case opts.Before != "":
+		// "give me the page just *before* this post id". Resolve the
+		// boundary post's create_at first, then page descending.
+		var anchor int64
+		if err := s.db.Pool.QueryRow(ctx, `SELECT create_at FROM posts WHERE id=$1`, opts.Before).Scan(&anchor); err != nil {
+			return list, nil // missing anchor → empty page, not 500
+		}
+		rows, err := s.db.Pool.Query(ctx, `
+			SELECT `+allPostColumns+`
+			FROM posts WHERE channel_id=$1 AND delete_at=0 AND create_at < $2
+			ORDER BY create_at DESC
+			LIMIT $3
+		`, channelID, anchor, perPage)
+		if err != nil {
+			return nil, err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			p, err := scanPost(rows)
+			if err != nil {
+				return nil, err
+			}
+			list.Order = append(list.Order, p.ID)
+			list.Posts[p.ID] = p
+		}
+		return list, rows.Err()
+
+	case opts.After != "":
+		var anchor int64
+		if err := s.db.Pool.QueryRow(ctx, `SELECT create_at FROM posts WHERE id=$1`, opts.After).Scan(&anchor); err != nil {
+			return list, nil
+		}
+		rows, err := s.db.Pool.Query(ctx, `
+			SELECT `+allPostColumns+`
+			FROM posts WHERE channel_id=$1 AND delete_at=0 AND create_at > $2
+			ORDER BY create_at ASC
+			LIMIT $3
+		`, channelID, anchor, perPage)
+		if err != nil {
+			return nil, err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			p, err := scanPost(rows)
+			if err != nil {
+				return nil, err
+			}
+			list.Order = append(list.Order, p.ID)
+			list.Posts[p.ID] = p
+		}
+		return list, rows.Err()
+
+	default:
+		page := opts.Page
+		if page < 0 {
+			page = 0
+		}
+		return s.ListForChannel(ctx, channelID, page, perPage)
+	}
+}
+
 func (s *Service) Delete(ctx context.Context, postID, userID string) error {
 	now := time.Now().UnixMilli()
 	_, err := s.db.Pool.Exec(ctx, `

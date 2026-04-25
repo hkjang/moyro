@@ -4,15 +4,24 @@ import type { RootState } from "@/store";
 import { clearAuth, setAuth } from "@/store/authSlice";
 import {
   api,
+  compatApi,
+  notifyApi,
+  prefsApi,
+  sidebarApi,
   type Channel,
   type ChannelNotifyProps,
+  type ChannelStats,
   type FileInfo,
+  type OrderedSidebarCategories,
   type Post,
   type PostList,
+  type Preference,
   type Reaction,
   type SessionRow,
+  type SidebarCategory,
   type Team,
   type User,
+  type UserNotifyProps,
   type UserStatusValue,
 } from "@/api/client";
 import { IntegrationsPanel } from "@/components/IntegrationsPanel";
@@ -156,6 +165,169 @@ export function ChatView() {
     excerpt: string;
   };
   const [reminderToasts, setReminderToasts] = useState<ReminderToast[]>([]);
+
+  // Phase 21 — Mattermost-shaped preferences. Theme value is one of
+  // "light" | "dark" | "system"; default is "system" (follows the OS prefers-
+  // color-scheme media query). Stored in preferences.category=display_settings,
+  // name=theme so any official client points at the same row.
+  type ThemeChoice = "light" | "dark" | "system";
+  const [theme, setThemeState] = useState<ThemeChoice>(() => {
+    // Hydrate from localStorage so first paint matches the user's last
+    // saved theme — the prefs API call later in the mount cycle reconciles
+    // if the server has a different value.
+    const cached = (typeof window !== "undefined" && window.localStorage.getItem("moddle:theme")) || "";
+    return cached === "light" || cached === "dark" || cached === "system" ? cached : "system";
+  });
+  // Apply the theme to <html data-theme=…> so CSS variables can branch.
+  useEffect(() => {
+    const root = document.documentElement;
+    const apply = () => {
+      let resolved: "light" | "dark" = "light";
+      if (theme === "system") {
+        resolved = window.matchMedia?.("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+      } else {
+        resolved = theme;
+      }
+      root.setAttribute("data-theme", resolved);
+    };
+    apply();
+    if (theme === "system" && window.matchMedia) {
+      const mq = window.matchMedia("(prefers-color-scheme: dark)");
+      mq.addEventListener("change", apply);
+      return () => mq.removeEventListener("change", apply);
+    }
+    return undefined;
+  }, [theme]);
+  // Cache the choice locally so the next first-paint is correct without
+  // waiting on the network. Server is still source-of-truth.
+  useEffect(() => {
+    try { window.localStorage.setItem("moddle:theme", theme); } catch { /* ignore */ }
+  }, [theme]);
+  // Pull the canonical theme from preferences once at login.
+  useEffect(() => {
+    if (!token || !user?.id) return;
+    let cancelled = false;
+    prefsApi
+      .listCategory(token, "display_settings", user.id)
+      .then((prefs) => {
+        if (cancelled) return;
+        const t = prefs.find((p) => p.name === "theme")?.value;
+        if (t === "light" || t === "dark" || t === "system") setThemeState(t);
+      })
+      .catch(() => { /* server may not have prefs yet — leave local default */ });
+    return () => { cancelled = true; };
+  }, [token, user?.id]);
+  const setTheme = useCallback(async (next: ThemeChoice) => {
+    setThemeState(next);
+    if (!token || !user?.id) return;
+    const pref: Preference = {
+      user_id: user.id,
+      category: "display_settings",
+      name: "theme",
+      value: next,
+    };
+    try { await prefsApi.upsert(token, [pref], user.id); } catch { /* keep local choice */ }
+  }, [token, user?.id]);
+
+  // Phase 21 — Quick Switcher (Cmd+K / Ctrl+K). Mattermost's keyboard-first
+  // navigation surface. Combines channel autocomplete + user autocomplete so
+  // a user can jump to a channel or open a DM in one shortcut.
+  const [showQuickSwitcher, setShowQuickSwitcher] = useState(false);
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const mod = e.metaKey || e.ctrlKey;
+      if (mod && (e.key === "k" || e.key === "K")) {
+        // Skip if the user is mid-text-input ⇢ we'd kidnap their typing.
+        // …no, actually the whole point is to grab focus from anywhere.
+        e.preventDefault();
+        setShowQuickSwitcher(true);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
+  // Phase 21 — channel stats (member/pinned/files counts). Fetched lazily
+  // when the active channel changes; a ChannelStats object is cached per id
+  // so back-and-forth navigation doesn't re-fetch. The chip in the header
+  // renders only when the count is known.
+  const [channelStatsByID, setChannelStatsByID] = useState<Record<string, ChannelStats>>({});
+  useEffect(() => {
+    if (!token || !currentChannelId) return;
+    if (channelStatsByID[currentChannelId]) return;
+    let cancelled = false;
+    compatApi
+      .channelStats(token, currentChannelId)
+      .then((s) => {
+        if (cancelled) return;
+        setChannelStatsByID((prev) => ({ ...prev, [currentChannelId]: s }));
+      })
+      .catch(() => { /* non-fatal — chip just stays hidden */ });
+    return () => { cancelled = true; };
+    // channelStatsByID intentionally not in deps: cache lookup is the guard.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [token, currentChannelId]);
+
+  // Phase 22 — Mattermost sidebar categories. Loaded per (user, team) and
+  // refreshed on team switch + WS-driven reload events. The categories
+  // drive sidebar grouping (즐겨찾기/채널/DM/사용자 정의) and ordering. We
+  // never fall back to the flat-render path while categories are loading —
+  // the sidebar just shows a skeleton row to avoid a sort flicker.
+  const [sidebarCats, setSidebarCats] = useState<OrderedSidebarCategories | null>(null);
+  const [showNotifyPrefs, setShowNotifyPrefs] = useState(false);
+
+  // Reload categories whenever the team changes. Server auto-bootstraps the
+  // three defaults on first call, so a freshly-joined team renders correctly
+  // without any client-side seeding.
+  useEffect(() => {
+    if (!token || !currentTeamId) {
+      setSidebarCats(null);
+      return;
+    }
+    let cancelled = false;
+    sidebarApi
+      .list(token, currentTeamId)
+      .then((res) => { if (!cancelled) setSidebarCats(res); })
+      .catch(() => { if (!cancelled) setSidebarCats(null); });
+    return () => { cancelled = true; };
+  }, [token, currentTeamId]);
+
+  // Channel-id → favorite? lookup, derived from the favorites category. The
+  // memo lets the sidebar render in O(1) per channel during the map phase.
+  const favoriteChannelIds = useMemo(() => {
+    const set = new Set<string>();
+    if (!sidebarCats) return set;
+    const fav = sidebarCats.categories.find((c) => c.type === "favorites");
+    if (fav) for (const id of fav.channel_ids) set.add(id);
+    return set;
+  }, [sidebarCats]);
+
+  // Toggle favorite: adds/removes the channel from the favorites category.
+  // We optimistically patch sidebarCats then call the bulk-update endpoint;
+  // a failed call rolls back via the next list reload.
+  const onToggleFavorite = useCallback(async (channelId: string) => {
+    if (!token || !currentTeamId || !sidebarCats) return;
+    const fav = sidebarCats.categories.find((c) => c.type === "favorites");
+    if (!fav) return;
+    const isFav = fav.channel_ids.includes(channelId);
+    const nextFavIds = isFav
+      ? fav.channel_ids.filter((id) => id !== channelId)
+      : [...fav.channel_ids, channelId];
+    const patched: SidebarCategory = { ...fav, channel_ids: nextFavIds };
+    setSidebarCats({
+      ...sidebarCats,
+      categories: sidebarCats.categories.map((c) => c.id === fav.id ? patched : c),
+    });
+    try {
+      await sidebarApi.update(token, currentTeamId, patched);
+    } catch {
+      // Re-fetch on error so the UI doesn't drift from the server.
+      try {
+        const reloaded = await sidebarApi.list(token, currentTeamId);
+        setSidebarCats(reloaded);
+      } catch { /* swallowed — leave optimistic state */ }
+    }
+  }, [token, currentTeamId, sidebarCats]);
 
   // Phase 18 — search filters lifted out of the free-form terms. The
   // search input still accepts `from:` / `in:` / `before:` / `after:` /
@@ -662,6 +834,21 @@ export function ChatView() {
   );
   const publicChannels = useMemo(() => channels.filter((c) => c.type !== "D"), [channels]);
   const dmChannels = useMemo(() => channels.filter((c) => c.type === "D"), [channels]);
+  // Phase 22 — favorites cross both public and DM lists. Channels in the
+  // favorites category get hoisted into a top section so they're a single
+  // click away even when the user has dozens of channels.
+  const favoriteChannels = useMemo(
+    () => channels.filter((c) => favoriteChannelIds.has(c.id)),
+    [channels, favoriteChannelIds],
+  );
+  const nonFavoritePublic = useMemo(
+    () => publicChannels.filter((c) => !favoriteChannelIds.has(c.id)),
+    [publicChannels, favoriteChannelIds],
+  );
+  const nonFavoriteDM = useMemo(
+    () => dmChannels.filter((c) => !favoriteChannelIds.has(c.id)),
+    [dmChannels, favoriteChannelIds],
+  );
 
   // ---- Actions ----
   async function onCreateTeam() {
@@ -1319,15 +1506,68 @@ export function ChatView() {
                 )}
               </button>
             </div>
+            {/* Phase 22 — favorites section. Renders only when at least one
+                channel is starred so the sidebar doesn't grow an empty
+                header on a fresh team. The star toggle on every row in
+                the channel/DM lists below feeds this section. */}
+            {favoriteChannels.length > 0 && (
+              <>
+                <SectionTitle>⭐ 즐겨찾기</SectionTitle>
+                <div className="item-list">
+                  {favoriteChannels.map((c) => {
+                    if (c.type === "D") {
+                      const otherId = dmCounterpart(c.name, user?.id ?? "");
+                      const u = users[otherId];
+                      const ue = unread[c.id] ?? { msg: 0, mention: 0 };
+                      return (
+                        <button
+                          key={c.id}
+                          className={`item ${!savedView && !scheduledView && c.id === currentChannelId ? "item-active" : ""}`}
+                          onClick={() => { setSavedView(false); setScheduledView(false); setCurrentChannelId(c.id); }}
+                        >
+                          <Avatar id={otherId} name={u?.username ?? otherId.slice(0, 8)} status={statuses[otherId]} size={22} picture={u?.picture} updateAt={u?.update_at} />
+                          <span style={{ marginLeft: 2, flex: 1, textAlign: "left" }}>{u?.username ?? otherId.slice(0, 8)}</span>
+                          <span
+                            role="button"
+                            className="channel-fav is-fav"
+                            title="즐겨찾기 해제"
+                            onClick={(e) => { e.stopPropagation(); onToggleFavorite(c.id); }}
+                            onMouseDown={(e) => e.stopPropagation()}
+                          >★</span>
+                          {ue.mention > 0
+                            ? <span className="mention-badge">{ue.mention}</span>
+                            : ue.msg > 0
+                              ? <span className="unread">{ue.msg}</span>
+                              : null}
+                        </button>
+                      );
+                    }
+                    return (
+                      <ChannelRow
+                        key={c.id}
+                        channel={c}
+                        active={!savedView && !scheduledView && c.id === currentChannelId}
+                        unread={unread[c.id] ?? { msg: 0, mention: 0 }}
+                        onClick={() => { setSavedView(false); setScheduledView(false); setCurrentChannelId(c.id); }}
+                        isFavorite
+                        onToggleFavorite={onToggleFavorite}
+                      />
+                    );
+                  })}
+                </div>
+              </>
+            )}
             <SectionTitle>채널</SectionTitle>
             <div className="item-list">
-              {publicChannels.map((c) => (
+              {nonFavoritePublic.map((c) => (
                 <ChannelRow
                   key={c.id}
                   channel={c}
                   active={!savedView && !scheduledView && c.id === currentChannelId}
                   unread={unread[c.id] ?? { msg: 0, mention: 0 }}
                   onClick={() => { setSavedView(false); setScheduledView(false); setCurrentChannelId(c.id); }}
+                  isFavorite={false}
+                  onToggleFavorite={onToggleFavorite}
                 />
               ))}
               <button className="item item-muted" onClick={onCreateChannel}>＋ 새 채널</button>
@@ -1380,7 +1620,7 @@ export function ChatView() {
 
             <SectionTitle>다이렉트 메시지</SectionTitle>
             <div className="item-list">
-              {dmChannels.map((c) => {
+              {nonFavoriteDM.map((c) => {
                 const otherId = dmCounterpart(c.name, user?.id ?? "");
                 const u = users[otherId];
                 const ue = unread[c.id] ?? { msg: 0, mention: 0 };
@@ -1391,7 +1631,14 @@ export function ChatView() {
                     onClick={() => { setSavedView(false); setScheduledView(false); setCurrentChannelId(c.id); }}
                   >
                     <Avatar id={otherId} name={u?.username ?? otherId.slice(0, 8)} status={statuses[otherId]} size={22} picture={u?.picture} updateAt={u?.update_at} />
-                    <span style={{ marginLeft: 2 }}>{u?.username ?? otherId.slice(0, 8)}</span>
+                    <span style={{ marginLeft: 2, flex: 1, textAlign: "left" }}>{u?.username ?? otherId.slice(0, 8)}</span>
+                    <span
+                      role="button"
+                      className="channel-fav"
+                      title="즐겨찾기에 추가"
+                      onClick={(e) => { e.stopPropagation(); onToggleFavorite(c.id); }}
+                      onMouseDown={(e) => e.stopPropagation()}
+                    >☆</span>
                     {ue.mention > 0
                       ? <span className="mention-badge">{ue.mention}</span>
                       : ue.msg > 0
@@ -1492,6 +1739,47 @@ export function ChatView() {
             />
             이메일 알림 수신
           </label>
+          {/* Phase 21 — theme picker. Stored in Mattermost-shaped
+              preferences (display_settings/theme) so any future official
+              client lands on the same value. */}
+          <label
+            className="theme-picker"
+            style={{ marginTop: 8, display: "flex", alignItems: "center", gap: 6, fontSize: 13 }}
+            title="테마는 모든 기기에서 동기화됩니다"
+          >
+            <span>🎨 테마</span>
+            <select
+              value={theme}
+              onChange={(e) => setTheme(e.target.value as "light" | "dark" | "system")}
+              style={{ flex: 1, height: 28, borderRadius: 6 }}
+            >
+              <option value="system">시스템 설정 따르기</option>
+              <option value="light">밝게</option>
+              <option value="dark">어둡게</option>
+            </select>
+          </label>
+          <button
+            type="button"
+            className="btn-ghost"
+            style={{ marginTop: 8 }}
+            onClick={() => setShowQuickSwitcher(true)}
+            title="채널 / 사용자 빠른 이동 (Ctrl+K)"
+          >
+            🔎 빠른 이동 (Ctrl+K)
+          </button>
+          {/* Phase 22 — user-level notify_props. Per-channel notify_props
+              already lives in the channel-settings gear; this button surfaces
+              the top-level fallback (email digests, desktop default,
+              first-name highlighting). */}
+          <button
+            type="button"
+            className="btn-ghost"
+            style={{ marginTop: 8 }}
+            onClick={() => setShowNotifyPrefs(true)}
+            title="이메일 / 데스크톱 / 멘션 기본 설정"
+          >
+            🔔 알림 설정
+          </button>
           <button
             type="button"
             className="btn-ghost"
@@ -1573,6 +1861,18 @@ export function ChatView() {
                     </>
                   ) : (
                     <><span className="channel-hash">#</span>{currentChannel.display_name}</>
+                  )}
+                  {/* Phase 21 — channel member-count chip. Fed by the
+                      compat /channels/{id}/stats endpoint. Hidden for DMs
+                      (member count is always 2 there) and until the lazy
+                      stats fetch resolves. */}
+                  {currentChannel.type !== "D" && channelStatsByID[currentChannel.id] && (
+                    <span
+                      className="channel-stats-chip"
+                      title={`멤버 ${channelStatsByID[currentChannel.id].member_count}명 · 고정 ${channelStatsByID[currentChannel.id].pinnedpost_count}개 · 파일 ${channelStatsByID[currentChannel.id].files_count}개`}
+                    >
+                      👥 {channelStatsByID[currentChannel.id].member_count}
+                    </span>
                   )}
                   <ChannelSettingsMenu
                     props={channelNotify[currentChannel.id] ?? { desktop: "all", mark_unread: "all" }}
@@ -1871,6 +2171,46 @@ export function ChatView() {
         </div>
       )}
 
+      {/* Phase 21 — Quick Switcher (Cmd+K). Channel + user autocomplete in
+          one combined list; arrow keys cycle, Enter selects. On user pick
+          we open or create a DM channel. */}
+      {showQuickSwitcher && token && (
+        <QuickSwitcherModal
+          token={token}
+          teamId={currentTeamId}
+          channels={channels}
+          users={users}
+          meId={user?.id ?? ""}
+          onClose={() => setShowQuickSwitcher(false)}
+          onPickChannel={(chId) => {
+            setCurrentChannelId(chId);
+            setSavedView(false);
+            setScheduledView(false);
+            setShowQuickSwitcher(false);
+          }}
+          onPickUser={async (peer) => {
+            setShowQuickSwitcher(false);
+            if (!token || !peer.id || peer.id === user?.id) return;
+            try {
+              const ch = await api.createDirectChannel(token, [peer.id]);
+              setUsers((prev) => ({ ...prev, [peer.id]: peer }));
+              await loadChannels();
+              setCurrentChannelId(ch.id);
+              setSavedView(false);
+              setScheduledView(false);
+            } catch (err) {
+              setError((err as Error).message || "DM 열기 실패");
+            }
+          }}
+        />
+      )}
+
+      {/* Phase 22 — user-level notify_props panel. Persists through PUT
+          /users/me/notify_props. */}
+      {showNotifyPrefs && token && (
+        <NotifyPrefsModal token={token} onClose={() => setShowNotifyPrefs(false)} />
+      )}
+
       {/* Phase 20 — shared confirm dialog. Rendered last so its backdrop
           and z-index stack above every other modal in the shell. */}
       {confirmer.render()}
@@ -1885,17 +2225,34 @@ function SectionTitle({ children }: { children: React.ReactNode }) {
 }
 
 function ChannelRow({
-  channel, active, unread, onClick,
+  channel, active, unread, onClick, isFavorite, onToggleFavorite,
 }: {
   channel: Channel;
   active: boolean;
   unread: UnreadEntry;
   onClick: () => void;
+  // Phase 22 — favorites toggle. Optional so existing call sites that don't
+  // care (e.g. archived list) compile unchanged. When provided, a star icon
+  // appears on hover (or always for already-favorited rows).
+  isFavorite?: boolean;
+  onToggleFavorite?: (channelId: string) => void;
 }) {
   return (
     <button className={`item ${active ? "item-active" : ""}`} onClick={onClick}>
       <span className="channel-hash">#</span>
       <span style={{ flex: 1, textAlign: "left" }}>{channel.display_name}</span>
+      {onToggleFavorite && (
+        <span
+          role="button"
+          aria-label={isFavorite ? "즐겨찾기 해제" : "즐겨찾기"}
+          title={isFavorite ? "즐겨찾기 해제" : "즐겨찾기에 추가"}
+          className={`channel-fav ${isFavorite ? "is-fav" : ""}`}
+          onClick={(e) => { e.stopPropagation(); onToggleFavorite(channel.id); }}
+          onMouseDown={(e) => e.stopPropagation()}
+        >
+          {isFavorite ? "★" : "☆"}
+        </span>
+      )}
       {unread.mention > 0
         ? <span className="mention-badge">{unread.mention}</span>
         : unread.msg > 0
@@ -3371,6 +3728,299 @@ function SessionManagerModal({
             title={others === 0 ? "다른 기기 세션이 없습니다" : ""}
           >
             다른 모든 기기 로그아웃{others > 0 ? ` (${others})` : ""}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ---- Phase 21: Quick Switcher (Cmd+K) ----
+//
+// Mattermost-style keyboard switcher. Two parallel autocomplete sources
+// (channels in the current team + users globally) merged into one selectable
+// list. Empty input shows the user's most recent channels so the modal is
+// useful even before typing.
+//
+// Implementation details:
+//   - 120ms debounce on the input. Keeps requests sane while still feeling
+//     instant under typical typing.
+//   - Sequence-guarded: only the latest in-flight result lands in state.
+//   - Arrow keys cycle, Enter selects, Esc closes (via useEscClose).
+//   - Already-known users from the parent's `users` map render with avatars
+//     even before the autocomplete result populates.
+type QuickSwitcherEntry =
+  | { kind: "channel"; channel: Channel }
+  | { kind: "user"; user: User };
+
+function QuickSwitcherModal({
+  token,
+  teamId,
+  channels,
+  users,
+  meId,
+  onClose,
+  onPickChannel,
+  onPickUser,
+}: {
+  token: string;
+  teamId: string | null;
+  channels: Channel[];
+  users: UsersMap;
+  meId: string;
+  onClose: () => void;
+  onPickChannel: (channelId: string) => void;
+  onPickUser: (user: User) => void;
+}) {
+  useEscClose(true, onClose);
+  const [query, setQuery] = useState("");
+  const [channelHits, setChannelHits] = useState<Channel[]>([]);
+  const [userHits, setUserHits] = useState<User[]>([]);
+  const [activeIdx, setActiveIdx] = useState(0);
+  const inputRef = useRef<HTMLInputElement | null>(null);
+  const reqSeqRef = useRef(0);
+
+  // Initial focus + initial channel suggestions (recent joined channels).
+  useEffect(() => {
+    inputRef.current?.focus();
+  }, []);
+
+  // Debounced fetch. Empty query falls back to the local channel list so
+  // the modal isn't blank on open.
+  useEffect(() => {
+    const term = query.trim();
+    if (!term) {
+      // Up to 8 most recent channels the user belongs to.
+      setChannelHits(channels.slice(0, 8));
+      setUserHits([]);
+      setActiveIdx(0);
+      return;
+    }
+    const seq = ++reqSeqRef.current;
+    const handle = setTimeout(async () => {
+      try {
+        const [chs, ures] = await Promise.all([
+          teamId ? compatApi.autocompleteChannels(token, teamId, term).catch(() => []) : Promise.resolve([] as Channel[]),
+          compatApi.autocompleteUsers(token, term, 10).catch(() => ({ users: [] as User[], out_of_channel: [] as User[] })),
+        ]);
+        if (reqSeqRef.current !== seq) return;
+        setChannelHits(chs);
+        setUserHits(ures.users.filter((u) => u.id !== meId));
+        setActiveIdx(0);
+      } catch {
+        if (reqSeqRef.current !== seq) return;
+        setChannelHits([]);
+        setUserHits([]);
+      }
+    }, 120);
+    return () => clearTimeout(handle);
+  }, [query, token, teamId, channels, meId]);
+
+  const entries = useMemo<QuickSwitcherEntry[]>(() => {
+    return [
+      ...channelHits.map((c) => ({ kind: "channel" as const, channel: c })),
+      ...userHits.map((u) => ({ kind: "user" as const, user: u })),
+    ];
+  }, [channelHits, userHits]);
+
+  // Clamp the cursor whenever the result list shrinks under it.
+  useEffect(() => {
+    if (activeIdx >= entries.length) setActiveIdx(Math.max(0, entries.length - 1));
+  }, [entries.length, activeIdx]);
+
+  const choose = useCallback(
+    (e: QuickSwitcherEntry) => {
+      if (e.kind === "channel") onPickChannel(e.channel.id);
+      else onPickUser(e.user);
+    },
+    [onPickChannel, onPickUser],
+  );
+
+  return (
+    <div className="modal-backdrop" onClick={onClose}>
+      <div
+        className="modal-card quick-switcher"
+        onClick={(e) => e.stopPropagation()}
+        role="dialog"
+        aria-modal="true"
+        aria-label="빠른 이동"
+      >
+        <input
+          ref={inputRef}
+          className="quick-switcher-input"
+          type="text"
+          placeholder="채널이나 사용자를 입력하세요…"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "ArrowDown") {
+              e.preventDefault();
+              setActiveIdx((i) => Math.min(entries.length - 1, i + 1));
+            } else if (e.key === "ArrowUp") {
+              e.preventDefault();
+              setActiveIdx((i) => Math.max(0, i - 1));
+            } else if (e.key === "Enter") {
+              e.preventDefault();
+              const entry = entries[activeIdx];
+              if (entry) choose(entry);
+            }
+          }}
+        />
+        <ul className="quick-switcher-list" role="listbox">
+          {entries.length === 0 && (
+            <li className="quick-switcher-empty">결과 없음</li>
+          )}
+          {entries.map((entry, idx) => {
+            const active = idx === activeIdx;
+            if (entry.kind === "channel") {
+              const c = entry.channel;
+              const symbol = c.type === "P" ? "🔒" : c.type === "D" ? "👤" : c.type === "G" ? "👥" : "#";
+              return (
+                <li
+                  key={"ch-" + c.id}
+                  className={"quick-switcher-row" + (active ? " active" : "")}
+                  role="option"
+                  aria-selected={active}
+                  onMouseEnter={() => setActiveIdx(idx)}
+                  onMouseDown={(ev) => { ev.preventDefault(); choose(entry); }}
+                >
+                  <span className="quick-switcher-icon">{symbol}</span>
+                  <span className="quick-switcher-name">{c.display_name || c.name}</span>
+                  <span className="quick-switcher-sub">채널</span>
+                </li>
+              );
+            }
+            const u = entry.user;
+            const cached = users[u.id];
+            const display = u.username + (cached?.username && cached.username !== u.username ? ` (${cached.username})` : "");
+            return (
+              <li
+                key={"u-" + u.id}
+                className={"quick-switcher-row" + (active ? " active" : "")}
+                role="option"
+                aria-selected={active}
+                onMouseEnter={() => setActiveIdx(idx)}
+                onMouseDown={(ev) => { ev.preventDefault(); choose(entry); }}
+              >
+                <span className="quick-switcher-icon">@</span>
+                <span className="quick-switcher-name">{display}</span>
+                <span className="quick-switcher-sub">DM</span>
+              </li>
+            );
+          })}
+        </ul>
+        <div className="quick-switcher-hint">
+          ↑↓ 이동 · Enter 선택 · Esc 닫기
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Phase 22 — user-level notify_props panel. Persists through PUT
+// /users/me/notify_props which writes the full map atomically. Each row in
+// the form is a string→string entry — Mattermost's contract intentionally
+// never types the values past TEXT so future provider plugins can extend
+// the map without a migration. We surface the four most actioned keys with
+// dropdowns and let everything else round-trip untouched.
+function NotifyPrefsModal({ token, onClose }: { token: string; onClose: () => void }) {
+  const [props, setProps] = useState<UserNotifyProps>({});
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  useEscClose(true, onClose);
+  useEffect(() => {
+    let cancelled = false;
+    notifyApi
+      .get(token)
+      .then((p) => { if (!cancelled) setProps(p ?? {}); })
+      .catch((e) => { if (!cancelled) setError((e as Error).message); })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, [token]);
+  const update = (key: string, value: string) =>
+    setProps((prev) => ({ ...prev, [key]: value }));
+  const save = async () => {
+    setSaving(true);
+    setError(null);
+    try {
+      const next = await notifyApi.put(token, props);
+      setProps(next ?? props);
+      onClose();
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setSaving(false);
+    }
+  };
+  return (
+    <div className="modal-backdrop" onClick={onClose}>
+      <div className="modal" onClick={(e) => e.stopPropagation()} role="dialog" aria-modal>
+        <h3 style={{ margin: "0 0 16px" }}>알림 설정</h3>
+        {loading ? (
+          <div style={{ color: "var(--muted)" }}>불러오는 중…</div>
+        ) : (
+          <div style={{ display: "grid", gap: 12 }}>
+            <label className="notify-row">
+              <span>데스크톱 알림</span>
+              <select value={props.desktop ?? "mention"} onChange={(e) => update("desktop", e.target.value)}>
+                <option value="all">모든 메시지</option>
+                <option value="mention">멘션 + DM만</option>
+                <option value="none">받지 않기</option>
+              </select>
+            </label>
+            <label className="notify-row">
+              <span>알림음</span>
+              <select value={props.desktop_sound ?? "true"} onChange={(e) => update("desktop_sound", e.target.value)}>
+                <option value="true">사용</option>
+                <option value="false">사용 안 함</option>
+              </select>
+            </label>
+            <label className="notify-row">
+              <span>이메일 알림</span>
+              <select value={props.email ?? "true"} onChange={(e) => update("email", e.target.value)}>
+                <option value="true">사용</option>
+                <option value="false">사용 안 함</option>
+              </select>
+            </label>
+            <label className="notify-row">
+              <span>이름 멘션 강조</span>
+              <select value={props.first_name ?? "false"} onChange={(e) => update("first_name", e.target.value)}>
+                <option value="true">사용</option>
+                <option value="false">사용 안 함</option>
+              </select>
+            </label>
+            <label className="notify-row">
+              <span>채널 전체 호출 (@channel)</span>
+              <select value={props.channel ?? "true"} onChange={(e) => update("channel", e.target.value)}>
+                <option value="true">받기</option>
+                <option value="false">무시</option>
+              </select>
+            </label>
+            <label className="notify-row">
+              <span>강조 키워드 (쉼표 구분)</span>
+              <input
+                type="text"
+                value={props.mention_keys ?? ""}
+                onChange={(e) => update("mention_keys", e.target.value)}
+                placeholder="배포, 긴급"
+                style={{ flex: 1 }}
+              />
+            </label>
+          </div>
+        )}
+        {error && (
+          <div style={{ color: "var(--danger)", marginTop: 12, fontSize: 13 }}>{error}</div>
+        )}
+        <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 16 }}>
+          <button type="button" className="btn-ghost" onClick={onClose}>취소</button>
+          <button
+            type="button"
+            className="btn-primary"
+            onClick={save}
+            disabled={loading || saving}
+          >
+            {saving ? "저장 중…" : "저장"}
           </button>
         </div>
       </div>
