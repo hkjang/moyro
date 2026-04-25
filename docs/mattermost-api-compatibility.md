@@ -1,6 +1,6 @@
 # Mattermost API Compatibility
 
-Status date: 2026-04-25
+Status date: 2026-04-26
 
 Moddle targets Mattermost API v4 compatibility. The official Mattermost
 developer documentation describes the REST API as a JSON web service for
@@ -32,29 +32,30 @@ reports matched, missing, and extra route shapes.
 Using Mattermost `master` OpenAPI source:
 
 - Official API v4 endpoints: 539
-- Local routed endpoints: 200
-- Matched endpoint shapes: 154
-- Missing official endpoint shapes: 385
+- Local routed endpoints: 292
+- Matched endpoint shapes: 246
+- Missing official endpoint shapes: 293
 - Local-only endpoint shapes: 46
-- Route-shape coverage: 28.57%
+- Route-shape coverage: 45.64%
 
 This is not perfect API compatibility yet. It is a measured compatibility
 baseline that can now improve continuously.
 
 Top missing areas by route count:
 
-- users: 55
-- channels: 30
-- teams: 25
+- users: 44
+- channels: 27
+- teams: 23
 - groups: 21
 - data_retention: 15
 - access_control_policies: 15
-- cloud: 14
 - oauth: 14
-- ldap: 13
-- content_flagging: 12
-- plugins: 11
+- cloud: 14
 - remotecluster: 10
+- content_flagging: 9
+- posts: 9
+- bots: 8
+- schemes: 7
 
 ## Compatibility Strategy
 
@@ -104,9 +105,14 @@ permission denial, and not-found behavior where applicable.
    - Promote shell contract tests into endpoint-level compatibility fixtures.
 
 6. Admin and enterprise surfaces
-   - Decide which enterprise/cloud-only surfaces should return compatible
-     license/permission errors versus real implementations.
-   - Add stubs only when official clients need them to continue gracefully.
+   - Keep real operator workflows first: config read/reload, logs, audit,
+     plugin inventory, roles, server busy, jobs, license/trial/upgrade status,
+     and cluster status.
+   - Enterprise/cloud-only surfaces should return compatible disabled/not
+     available responses unless the product has a real backing service.
+   - Remaining admin-heavy work: audit log certificates, content flagging
+     review flows, remote clusters/shared channels, groups, schemes, data
+     retention, OAuth apps, import/export, and compliance reports.
 
 7. Plugin/webapp compatibility
    - Add `/plugins/statuses`, `/plugins/webapp`, marketplace read stubs, and
@@ -194,3 +200,38 @@ permission denial, and not-found behavior where applicable.
   - `GET /api/v4/emoji/autocomplete`
   - `POST /api/v4/emoji/search`
   - `POST /api/v4/emoji/names`
+
+## Admin Compatibility Slice
+
+Implemented on 2026-04-26:
+
+- System/config:
+  - `GET /api/v4/config`
+  - `PUT /api/v4/config`
+  - `PUT /api/v4/config/patch`
+  - `POST /api/v4/config/reload`
+  - `GET|POST|DELETE /api/v4/server_busy`
+  - `GET /api/v4/cluster/status`
+- Logs/audit:
+  - `GET|POST /api/v4/logs`
+  - `GET /api/v4/logs/download`
+  - `GET /api/v4/audits`
+  - `GET /api/v4/users/{user_id}/audits`
+- Roles/jobs/plugins:
+  - `GET /api/v4/roles`, `GET /api/v4/roles/{role_id}`,
+    `GET /api/v4/roles/name/{name}`, `POST /api/v4/roles/names`,
+    `PUT /api/v4/roles/{role_id}/patch`
+  - `GET|POST /api/v4/jobs`, `GET /api/v4/jobs/{job_id}`,
+    `PATCH /api/v4/jobs/{job_id}/status`,
+    `POST /api/v4/jobs/{job_id}/cancel`,
+    `GET /api/v4/jobs/{job_id}/download`, `GET /api/v4/jobs/type/{type}`
+  - Plugin upload/install/enable/disable/delete and marketplace first-visit
+    route shapes.
+- Enterprise-disabled compatibility:
+  - license/trial/upgrade, LDAP certificate/test/sync, SAML certificate and
+    metadata, content flagging config, AI bridge, brand image, system notices,
+    and support packet route shapes.
+
+Admin UI now uses these same Mattermost route shapes in the 운영 관리 modal:
+system status/config/logs, plugin lifecycle controls, role permission browse,
+and job creation/cancel smoke controls.

@@ -362,6 +362,35 @@ export const integrationsApi = {
         return request(token, `/audit/logs${tail ? `?${tail}` : ""}`);
     },
 };
+export const adminApi = {
+    getConfig: (token) => request(token, "/config"),
+    reloadConfig: (token) => request(token, "/config/reload", { method: "POST" }),
+    listLogs: (token, limit = 20) => request(token, `/logs?logs_per_page=${encodeURIComponent(String(limit))}`),
+    postLog: (token, level, message) => request(token, "/logs", {
+        method: "POST",
+        body: { level, message },
+    }),
+    clusterStatus: (token) => request(token, "/cluster/status"),
+    getServerBusy: (token) => request(token, "/server_busy"),
+    setServerBusy: (token) => request(token, "/server_busy", { method: "POST" }),
+    clearServerBusy: (token) => request(token, "/server_busy", { method: "DELETE" }),
+    listPlugins: (token) => request(token, "/plugins"),
+    listPluginStatuses: (token) => request(token, "/plugins/statuses"),
+    enablePlugin: (token, pluginId) => request(token, `/plugins/${encodeURIComponent(pluginId)}/enable`, {
+        method: "POST",
+    }),
+    disablePlugin: (token, pluginId) => request(token, `/plugins/${encodeURIComponent(pluginId)}/disable`, {
+        method: "POST",
+    }),
+    listRoles: (token) => request(token, "/roles"),
+    patchRole: (token, roleId, permissions) => request(token, `/roles/${encodeURIComponent(roleId)}/patch`, {
+        method: "PUT",
+        body: { permissions },
+    }),
+    listJobs: (token) => request(token, "/jobs"),
+    createJob: (token, type) => request(token, "/jobs", { method: "POST", body: { type } }),
+    cancelJob: (token, jobId) => request(token, `/jobs/${encodeURIComponent(jobId)}/cancel`, { method: "POST" }),
+};
 export function openWebSocket(token) {
     const scheme = window.location.protocol === "https:" ? "wss" : "ws";
     const url = `${scheme}://${window.location.host}/api/v4/websocket?access_token=${encodeURIComponent(token)}`;

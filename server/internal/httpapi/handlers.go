@@ -273,7 +273,7 @@ func (h *handlers) register(w http.ResponseWriter, r *http.Request) {
 	// a duplicate promotion is harmless.
 	if existed, err := h.auth.HasAnySystemAdmin(r.Context()); err == nil && !existed {
 		if err := h.auth.PromoteSystemAdmin(r.Context(), u.ID); err == nil {
-			u.Roles = "system_user system_admin"
+			u.Roles = ensureRoleToken(u.Roles, "system_admin")
 		}
 	}
 
@@ -377,6 +377,14 @@ func (h *handlers) login(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 500, "api.user.login.app_error", err.Error())
 		return
 	}
+	// Backfill older development databases that predate first-user admin
+	// bootstrap. If no active operator exists, the next successful login
+	// becomes system_admin so the instance is not locked out of admin UI.
+	if existed, berr := h.auth.HasAnySystemAdmin(r.Context()); berr == nil && !existed {
+		if perr := h.auth.PromoteSystemAdmin(r.Context(), u.ID); perr == nil {
+			u.Roles = ensureRoleToken(u.Roles, "system_admin")
+		}
+	}
 	if h.audit != nil {
 		h.audit.LogAsync(u.ID, audit.ActionUserLogin, u.Username, map[string]any{
 			"ip": r.RemoteAddr,
@@ -385,6 +393,17 @@ func (h *handlers) login(w http.ResponseWriter, r *http.Request) {
 	// Mattermost returns token in Token header. Also include in body for convenience.
 	w.Header().Set("Token", tok)
 	writeJSON(w, 201, map[string]any{"token": tok, "user": u})
+}
+
+func ensureRoleToken(roles, role string) string {
+	for _, token := range strings.Fields(roles) {
+		if token == role {
+			return strings.Join(strings.Fields(roles), " ")
+		}
+	}
+	parts := strings.Fields(roles)
+	parts = append(parts, role)
+	return strings.Join(parts, " ")
 }
 
 func (h *handlers) logout(w http.ResponseWriter, r *http.Request) {

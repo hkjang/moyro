@@ -1008,7 +1008,7 @@ select:focus-visible {
  * three tab panes have enough breathing room on a laptop display.
  * ------------------------------------------------------------------ */
 .integrations-panel {
-  width: 720px;
+  width: 920px;
   max-width: calc(100vw - 40px);
   max-height: calc(100vh - 80px);
   display: flex;
@@ -1023,6 +1023,7 @@ select:focus-visible {
 }
 .integrations-tabs {
   display: flex;
+  flex-wrap: wrap;
   gap: 6px;
   border-bottom: 1px solid var(--card-border);
   margin-bottom: 12px;
@@ -1035,6 +1036,7 @@ select:focus-visible {
   font-size: 13px;
   cursor: pointer;
   border-bottom: 2px solid transparent;
+  white-space: nowrap;
 }
 .integrations-tabs .login-tab[aria-selected="true"] {
   color: var(--fg);
@@ -1078,6 +1080,76 @@ select:focus-visible {
   background: rgba(255,255,255,0.02);
   border: 1px solid var(--card-border);
   border-radius: 10px;
+}
+.admin-toolbar {
+  justify-content: flex-start;
+}
+.admin-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+.admin-kv {
+  min-width: 0;
+  padding: 10px 12px;
+  background: rgba(255,255,255,0.02);
+  border: 1px solid var(--card-border);
+  border-radius: 8px;
+}
+.admin-kv span {
+  display: block;
+  margin-bottom: 4px;
+  color: var(--muted);
+  font-size: 11px;
+}
+.admin-kv strong {
+  display: block;
+  overflow: hidden;
+  color: var(--fg);
+  font-size: 13px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.admin-pill {
+  display: inline-flex;
+  align-items: center;
+  height: 22px;
+  padding: 0 8px;
+  border-radius: 999px;
+  background: rgba(148, 163, 184, 0.12);
+  border: 1px solid rgba(148, 163, 184, 0.2);
+  color: #cbd5e1;
+  font-size: 11px;
+  font-weight: 600;
+}
+.admin-pill.ok {
+  background: rgba(16, 185, 129, 0.12);
+  border-color: rgba(16, 185, 129, 0.32);
+  color: #86efac;
+}
+.admin-pill.danger {
+  background: rgba(248, 113, 113, 0.12);
+  border-color: rgba(248, 113, 113, 0.32);
+  color: #fca5a5;
+}
+.admin-permission-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 8px;
+}
+.admin-permission-list span {
+  padding: 3px 6px;
+  border-radius: 6px;
+  background: rgba(255,255,255,0.04);
+  color: var(--muted);
+  font-size: 11px;
+}
+.admin-log-list code {
+  overflow-wrap: anywhere;
+  font-size: 11px;
+  color: #d8dee9;
 }
 .reveal-card {
   margin: 0 0 12px;
@@ -1695,6 +1767,10 @@ button.file-image {
   .integrations-create {
     align-items: stretch;
     flex-direction: column;
+  }
+
+  .admin-summary-grid {
+    grid-template-columns: 1fr;
   }
 
   .schedule-custom .btn-primary,

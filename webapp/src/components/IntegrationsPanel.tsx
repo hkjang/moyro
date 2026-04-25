@@ -9,8 +9,15 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useSelector } from "react-redux";
 import type { RootState } from "@/store";
 import {
+  adminApi,
   api,
   integrationsApi,
+  type AdminClusterNode,
+  type AdminConfigSnapshot,
+  type AdminJob,
+  type AdminPlugin,
+  type AdminPluginStatus,
+  type AdminRole,
   type AuditEntry,
   type Bot,
   type Channel,
@@ -32,6 +39,10 @@ type Tab =
   | "emoji"
   | "invites"
   | "users"
+  | "system"
+  | "plugins"
+  | "roles"
+  | "jobs"
   | "audit";
 
 const TAB_LABELS: Record<Tab, string> = {
@@ -41,6 +52,10 @@ const TAB_LABELS: Record<Tab, string> = {
   emoji: "이모지",
   invites: "초대 링크",
   users: "사용자",
+  system: "시스템",
+  plugins: "플러그인",
+  roles: "역할",
+  jobs: "작업",
   audit: "감사 로그",
 };
 
@@ -51,6 +66,10 @@ const ALL_TABS: Tab[] = [
   "emoji",
   "invites",
   "users",
+  "system",
+  "plugins",
+  "roles",
+  "jobs",
   "audit",
 ];
 
@@ -143,7 +162,24 @@ export function IntegrationsPanel({
   const [auditPrefix, setAuditPrefix] = useState<string>("");
   const [auditActor, setAuditActor] = useState<string>("");
 
+  // Admin compatibility console. These calls intentionally use Mattermost
+  // route shapes, so the operator UI doubles as a contract smoke surface.
+  const [adminConfig, setAdminConfig] = useState<AdminConfigSnapshot | null>(null);
+  const [clusterNodes, setClusterNodes] = useState<AdminClusterNode[]>([]);
+  const [serverBusy, setServerBusyState] = useState<boolean>(false);
+  const [logRows, setLogRows] = useState<string[]>([]);
+  const [pluginRows, setPluginRows] = useState<AdminPlugin[]>([]);
+  const [pluginStatuses, setPluginStatuses] = useState<AdminPluginStatus[]>([]);
+  const [roles, setRoles] = useState<AdminRole[]>([]);
+  const [jobs, setJobs] = useState<AdminJob[]>([]);
+  const [newJobType, setNewJobType] = useState<string>("compatibility");
+
   const nonDMChannels = useMemo(() => channels.filter((c) => c.type !== "D"), [channels]);
+  const pluginStateByID = useMemo(() => {
+    const out: Record<string, string> = {};
+    for (const row of pluginStatuses) out[row.plugin_id] = row.state;
+    return out;
+  }, [pluginStatuses]);
 
   const refresh = useCallback(async () => {
     if (!token) return;
@@ -167,6 +203,28 @@ export function IntegrationsPanel({
         // for deactivated rows. Non-admins would be better off not seeing
         // this tab at all; the backend would silently drop the flag.
         setUsers(await api.listUsers(token, 0, 200, true));
+      } else if (tab === "system") {
+        const [config, cluster, busy, logs] = await Promise.all([
+          adminApi.getConfig(token),
+          adminApi.clusterStatus(token),
+          adminApi.getServerBusy(token),
+          adminApi.listLogs(token, 12),
+        ]);
+        setAdminConfig(config);
+        setClusterNodes(cluster);
+        setServerBusyState(Boolean(busy.busy));
+        setLogRows(logs);
+      } else if (tab === "plugins") {
+        const [plugins, statuses] = await Promise.all([
+          adminApi.listPlugins(token),
+          adminApi.listPluginStatuses(token),
+        ]);
+        setPluginRows(plugins);
+        setPluginStatuses(statuses);
+      } else if (tab === "roles") {
+        setRoles(await adminApi.listRoles(token));
+      } else if (tab === "jobs") {
+        setJobs(await adminApi.listJobs(token));
       } else if (tab === "audit") {
         setAuditRows(
           await integrationsApi.listAuditLogs(token, {
@@ -445,11 +503,65 @@ export function IntegrationsPanel({
     }
   }
 
+  // ---- Admin compatibility actions ----
+  async function onReloadConfig() {
+    if (!token) return;
+    try {
+      await adminApi.reloadConfig(token);
+      await adminApi.postLog(token, "info", "admin console requested config reload");
+      refresh();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "설정 리로드 실패");
+    }
+  }
+
+  async function onSetBusy(next: boolean) {
+    if (!token) return;
+    try {
+      if (next) await adminApi.setServerBusy(token);
+      else await adminApi.clearServerBusy(token);
+      setServerBusyState(next);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "서버 busy 상태 변경 실패");
+    }
+  }
+
+  async function onTogglePlugin(pluginId: string, enabled: boolean) {
+    if (!token || !pluginId) return;
+    try {
+      if (enabled) await adminApi.disablePlugin(token, pluginId);
+      else await adminApi.enablePlugin(token, pluginId);
+      refresh();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "플러그인 상태 변경 실패");
+    }
+  }
+
+  async function onCreateJob() {
+    if (!token || !newJobType.trim()) return;
+    try {
+      const job = await adminApi.createJob(token, newJobType.trim());
+      setJobs((prev) => [job, ...prev]);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "작업 생성 실패");
+    }
+  }
+
+  async function onCancelJob(jobId: string) {
+    if (!token) return;
+    try {
+      const job = await adminApi.cancelJob(token, jobId);
+      setJobs((prev) => prev.map((row) => row.id === job.id ? job : row));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "작업 취소 실패");
+    }
+  }
+
   return (
     <div className="modal-backdrop" onClick={onClose}>
       <div className="modal-card integrations-panel" onClick={(e) => e.stopPropagation()}>
         <header className="integrations-header">
-          <h3 style={{ margin: 0 }}>통합 관리</h3>
+          <h3 style={{ margin: 0 }}>운영 관리</h3>
           <button type="button" className="action-btn" onClick={onClose} title="닫기">✕</button>
         </header>
         <div className="integrations-tabs">
@@ -778,6 +890,219 @@ export function IntegrationsPanel({
                   </li>
                 );
               })}
+            </ul>
+          </div>
+        )}
+
+        {tab === "system" && (
+          <div className="integrations-body">
+            <div className="integrations-create admin-toolbar">
+              <button
+                type="button"
+                className="btn-ghost"
+                style={{ width: "auto", padding: "0 12px", height: 34 }}
+                onClick={refresh}
+              >새로고침</button>
+              <button
+                type="button"
+                className="btn-ghost"
+                style={{ width: "auto", padding: "0 12px", height: 34 }}
+                onClick={onReloadConfig}
+              >설정 리로드</button>
+              <button
+                type="button"
+                className="btn-ghost"
+                style={{
+                  width: "auto",
+                  padding: "0 12px",
+                  height: 34,
+                  color: serverBusy ? "var(--danger)" : "var(--fg)",
+                }}
+                onClick={() => onSetBusy(!serverBusy)}
+              >{serverBusy ? "Busy 해제" : "Busy 설정"}</button>
+              <span className={serverBusy ? "admin-pill danger" : "admin-pill ok"}>
+                {serverBusy ? "busy" : "ready"}
+              </span>
+            </div>
+            <div className="admin-summary-grid">
+              <div className="admin-kv">
+                <span>SiteURL</span>
+                <strong>{String(adminConfig?.ServiceSettings?.SiteURL ?? "—")}</strong>
+              </div>
+              <div className="admin-kv">
+                <span>Listen</span>
+                <strong>{String(adminConfig?.ServiceSettings?.ListenAddress ?? "—")}</strong>
+              </div>
+              <div className="admin-kv">
+                <span>Plugin Dir</span>
+                <strong>{String(adminConfig?.PluginSettings?.Directory ?? "—")}</strong>
+              </div>
+              <div className="admin-kv">
+                <span>File Driver</span>
+                <strong>{String(adminConfig?.FileSettings?.DriverName ?? "—")}</strong>
+              </div>
+            </div>
+            <ul className="integrations-list">
+              {clusterNodes.length === 0 && (
+                <li className="chat-empty" style={{ padding: 12 }}>클러스터 노드 정보가 없습니다.</li>
+              )}
+              {clusterNodes.map((node) => (
+                <li key={node.id} className="integrations-row">
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, fontWeight: 600 }}>
+                      {node.hostname || node.id}
+                      <span className={node.status === "OK" ? "admin-pill ok" : "admin-pill danger"}>
+                        {node.status}
+                      </span>
+                    </div>
+                    <div style={{ color: "var(--muted)", fontSize: 12, marginTop: 2 }}>
+                      {node.version || node.server_version || "relaychat"} · 마지막 ping {node.last_ping_at ? new Date(node.last_ping_at).toLocaleTimeString() : "—"}
+                    </div>
+                  </div>
+                </li>
+              ))}
+            </ul>
+            <ul className="integrations-list admin-log-list">
+              {logRows.map((row, idx) => (
+                <li key={`${idx}-${row}`} className="integrations-row">
+                  <code>{row}</code>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+
+        {tab === "plugins" && (
+          <div className="integrations-body">
+            <div className="integrations-create admin-toolbar">
+              <button
+                type="button"
+                className="btn-ghost"
+                style={{ width: "auto", padding: "0 12px", height: 34 }}
+                onClick={refresh}
+              >상태 새로고침</button>
+            </div>
+            <ul className="integrations-list">
+              {pluginRows.length === 0 && (
+                <li className="chat-empty" style={{ padding: 12 }}>로드된 플러그인이 없습니다.</li>
+              )}
+              {pluginRows.map((plugin, idx) => {
+                const pluginId = String(plugin.id ?? plugin.plugin_id ?? `plugin-${idx}`);
+                const state = pluginStateByID[pluginId] ?? String(plugin.state ?? "unknown");
+                const enabled = state === "running" || state === "enabled";
+                return (
+                  <li key={pluginId} className="integrations-row">
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 8, fontWeight: 600 }}>
+                        {String(plugin.name ?? pluginId)}
+                        <span className={enabled ? "admin-pill ok" : "admin-pill"}>
+                          {state}
+                        </span>
+                      </div>
+                      <div style={{ color: "var(--muted)", fontSize: 12, marginTop: 2 }}>
+                        {pluginId} · v{String(plugin.version ?? "dev")}
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      className="btn-ghost"
+                      style={{ width: "auto", padding: "0 10px", height: 30 }}
+                      onClick={() => onTogglePlugin(pluginId, enabled)}
+                    >{enabled ? "비활성화" : "활성화"}</button>
+                  </li>
+                );
+              })}
+            </ul>
+          </div>
+        )}
+
+        {tab === "roles" && (
+          <div className="integrations-body">
+            <div className="integrations-create admin-toolbar">
+              <button
+                type="button"
+                className="btn-ghost"
+                style={{ width: "auto", padding: "0 12px", height: 34 }}
+                onClick={refresh}
+              >역할 새로고침</button>
+            </div>
+            <ul className="integrations-list">
+              {roles.length === 0 && (
+                <li className="chat-empty" style={{ padding: 12 }}>역할 정보가 없습니다.</li>
+              )}
+              {roles.map((role) => (
+                <li key={role.id} className="integrations-row" style={{ alignItems: "flex-start" }}>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, fontWeight: 600 }}>
+                      {role.display_name || role.name}
+                      {role.built_in && <span className="admin-pill">built-in</span>}
+                    </div>
+                    <div style={{ color: "var(--muted)", fontSize: 12, marginTop: 2 }}>
+                      {role.name} · 권한 {role.permissions.length}개
+                    </div>
+                    <div className="admin-permission-list">
+                      {role.permissions.slice(0, 10).map((permission) => (
+                        <span key={permission}>{permission}</span>
+                      ))}
+                      {role.permissions.length > 10 && <span>+{role.permissions.length - 10}</span>}
+                    </div>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+
+        {tab === "jobs" && (
+          <div className="integrations-body">
+            <div className="integrations-create">
+              <input
+                className="field-input"
+                value={newJobType}
+                onChange={(e) => setNewJobType(e.target.value)}
+                placeholder="작업 타입"
+                style={{ flex: "1 1 180px" }}
+              />
+              <button
+                type="button"
+                className="btn-primary"
+                style={{ width: "auto", padding: "0 14px", height: 38 }}
+                onClick={onCreateJob}
+              >작업 생성</button>
+              <button
+                type="button"
+                className="btn-ghost"
+                style={{ width: "auto", padding: "0 12px", height: 38 }}
+                onClick={refresh}
+              >새로고침</button>
+            </div>
+            <ul className="integrations-list">
+              {jobs.length === 0 && (
+                <li className="chat-empty" style={{ padding: 12 }}>실행 중인 작업이 없습니다.</li>
+              )}
+              {jobs.map((job) => (
+                <li key={job.id} className="integrations-row">
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, fontWeight: 600 }}>
+                      {job.type}
+                      <span className={job.status === "canceled" ? "admin-pill danger" : "admin-pill"}>
+                        {job.status}
+                      </span>
+                    </div>
+                    <div style={{ color: "var(--muted)", fontSize: 12, marginTop: 2 }}>
+                      {job.id.slice(0, 8)} · {new Date(job.create_at).toLocaleString()}
+                    </div>
+                  </div>
+                  {job.status !== "canceled" && job.status !== "success" && (
+                    <button
+                      type="button"
+                      className="btn-ghost"
+                      style={{ width: "auto", padding: "0 10px", height: 30, color: "var(--danger)" }}
+                      onClick={() => onCancelJob(job.id)}
+                    >취소</button>
+                  )}
+                </li>
+              ))}
             </ul>
           </div>
         )}

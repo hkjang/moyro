@@ -1674,9 +1674,9 @@ export function ChatView() {
               className="btn-ghost"
               style={{ marginTop: 8 }}
               onClick={() => setShowIntegrations(true)}
-              title="봇 · 웹훅 · 토큰 관리"
+              title="시스템 · 플러그인 · 역할 · 작업 관리"
             >
-              🔧 통합 관리
+              🔧 운영 관리
             </button>
           )}
           {/* Hidden file input driven by the "프로필 사진 변경" button below.

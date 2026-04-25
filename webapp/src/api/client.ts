@@ -779,6 +779,59 @@ export type OutgoingWebhook = {
   delete_at: number;
 };
 
+// ---- Admin/operator compatibility types ----
+
+export type AdminConfigSnapshot = Record<string, Record<string, unknown>>;
+
+export type AdminClusterNode = {
+  id: string;
+  status: string;
+  hostname?: string;
+  version?: string;
+  server_version?: string;
+  last_ping_at?: number;
+  busy?: boolean;
+  [key: string]: unknown;
+};
+
+export type AdminPlugin = {
+  id?: string;
+  plugin_id?: string;
+  name?: string;
+  version?: string;
+  state?: string;
+  description?: string;
+  [key: string]: unknown;
+};
+
+export type AdminPluginStatus = {
+  plugin_id: string;
+  state: string;
+};
+
+export type AdminRole = {
+  id: string;
+  name: string;
+  display_name: string;
+  description: string;
+  permissions: string[];
+  scheme_managed?: boolean;
+  built_in?: boolean;
+  create_at?: number;
+  update_at?: number;
+};
+
+export type AdminJob = {
+  id: string;
+  type: string;
+  status: string;
+  create_at: number;
+  start_at?: number;
+  last_activity_at?: number;
+  progress?: number;
+  data?: Record<string, unknown>;
+};
+
 // ---- Phase 12 API extensions ----
 //
 // Mutating the frozen `api` literal above would force a reorganisation of
@@ -909,6 +962,50 @@ export const integrationsApi = {
     const tail = qs.toString();
     return request<AuditEntry[]>(token, `/audit/logs${tail ? `?${tail}` : ""}`);
   },
+};
+
+export const adminApi = {
+  getConfig: (token: string) => request<AdminConfigSnapshot>(token, "/config"),
+  reloadConfig: (token: string) =>
+    request<{ status: string }>(token, "/config/reload", { method: "POST" }),
+  listLogs: (token: string, limit = 20) =>
+    request<string[]>(token, `/logs?logs_per_page=${encodeURIComponent(String(limit))}`),
+  postLog: (token: string, level: string, message: string) =>
+    request<{ status: string }>(token, "/logs", {
+      method: "POST",
+      body: { level, message },
+    }),
+  clusterStatus: (token: string) => request<AdminClusterNode[]>(token, "/cluster/status"),
+  getServerBusy: (token: string) => request<{ busy: boolean }>(token, "/server_busy"),
+  setServerBusy: (token: string) =>
+    request<{ status: string }>(token, "/server_busy", { method: "POST" }),
+  clearServerBusy: (token: string) =>
+    request<{ status: string }>(token, "/server_busy", { method: "DELETE" }),
+
+  listPlugins: (token: string) => request<AdminPlugin[]>(token, "/plugins"),
+  listPluginStatuses: (token: string) =>
+    request<AdminPluginStatus[]>(token, "/plugins/statuses"),
+  enablePlugin: (token: string, pluginId: string) =>
+    request<{ status: string }>(token, `/plugins/${encodeURIComponent(pluginId)}/enable`, {
+      method: "POST",
+    }),
+  disablePlugin: (token: string, pluginId: string) =>
+    request<{ status: string }>(token, `/plugins/${encodeURIComponent(pluginId)}/disable`, {
+      method: "POST",
+    }),
+
+  listRoles: (token: string) => request<AdminRole[]>(token, "/roles"),
+  patchRole: (token: string, roleId: string, permissions: string[]) =>
+    request<AdminRole>(token, `/roles/${encodeURIComponent(roleId)}/patch`, {
+      method: "PUT",
+      body: { permissions },
+    }),
+
+  listJobs: (token: string) => request<AdminJob[]>(token, "/jobs"),
+  createJob: (token: string, type: string) =>
+    request<AdminJob>(token, "/jobs", { method: "POST", body: { type } }),
+  cancelJob: (token: string, jobId: string) =>
+    request<AdminJob>(token, `/jobs/${encodeURIComponent(jobId)}/cancel`, { method: "POST" }),
 };
 
 export function openWebSocket(token: string): WebSocket {
