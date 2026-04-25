@@ -56,7 +56,9 @@ export function LoginView() {
     // Development-only fast path: Vite dev sessions should land directly in
     // the chat app. If the default user is missing, create it once and retry.
     // Invite and OAuth error URLs deliberately bypass this path so those flows
-    // remain testable during development.
+    // remain testable during development. React 18 StrictMode runs this effect,
+    // cleans it up, then runs it again in development; reset the guard in
+    // cleanup so the second real attempt can still dispatch setAuth.
     useEffect(() => {
         if (!DEV_AUTO_LOGIN.enabled || devAutoLoginStartedRef.current)
             return;
@@ -108,6 +110,7 @@ export function LoginView() {
         void loginOrCreateDevUser();
         return () => {
             cancelled = true;
+            devAutoLoginStartedRef.current = false;
         };
     }, [dispatch]);
     // Read enabled OAuth providers once on mount. A failure here is
