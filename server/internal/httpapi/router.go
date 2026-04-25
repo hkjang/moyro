@@ -299,6 +299,7 @@ func New(cfg *config.Config, db *store.DB, hub *ws.Hub, host *pluginhost.Host, l
 			r.Put("/users/{userID}/active", h.setUserActive)
 			r.Delete("/users/{userID}/image", h.deleteUserImage)
 			r.Get("/users/username/{username}", h.getUserByUsername)
+			r.Get("/users/{userID}/image/default", h.getDefaultProfileImage)
 			r.Get("/users/{userID}/image", h.getUserImage)
 			r.Get("/users/{userID}/sessions", h.listUserSessions)
 			// Phase 16: soft-delete / restore. DELETE accepts self-for-self
@@ -386,6 +387,8 @@ func New(cfg *config.Config, db *store.DB, hub *ws.Hub, host *pluginhost.Host, l
 			r.Post("/files", h.uploadFiles)
 			r.Get("/files/{fileID}", h.downloadFile)
 			r.Get("/files/{fileID}/info", h.fileInfo)
+			r.Get("/files/{fileID}/link", h.fileLink)
+			r.Get("/files/{fileID}/preview", h.filePreview)
 			r.Get("/files/{fileID}/thumbnail", h.fileThumbnail)
 
 			// Custom emoji (Phase 13). Any logged-in user can create; only
@@ -393,6 +396,9 @@ func New(cfg *config.Config, db *store.DB, hub *ws.Hub, host *pluginhost.Host, l
 			// since they're identifiers, not private content.
 			r.Post("/emoji", h.createEmoji)
 			r.Get("/emoji", h.listEmojis)
+			r.Get("/emoji/autocomplete", h.autocompleteEmojis)
+			r.Post("/emoji/search", h.searchEmojis)
+			r.Post("/emoji/names", h.emojisByNames)
 			r.Get("/emoji/{emojiID}", func(w http.ResponseWriter, r *http.Request) {
 				// Inline wrapper so both id→record and name→record share one URL style.
 				id := chi.URLParam(r, "emojiID")
@@ -532,6 +538,10 @@ func New(cfg *config.Config, db *store.DB, hub *ws.Hub, host *pluginhost.Host, l
 			r.Post("/users/{userID}/posts/{postID}/set_unread", h.setPostUnread)
 
 			r.Post("/commands/execute", h.executeCommand)
+
+			r.Get("/plugins/statuses", h.listPluginStatuses)
+			r.Get("/plugins/webapp", h.listPluginWebapp)
+			r.Get("/plugins/marketplace", h.listPluginMarketplace)
 
 			// Personal access tokens — self-issue allowed. The handler
 			// performs the admin/self check itself since chi can't express

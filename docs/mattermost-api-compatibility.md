@@ -32,18 +32,18 @@ reports matched, missing, and extra route shapes.
 Using Mattermost `master` OpenAPI source:
 
 - Official API v4 endpoints: 539
-- Local routed endpoints: 191
-- Matched endpoint shapes: 145
-- Missing official endpoint shapes: 394
+- Local routed endpoints: 200
+- Matched endpoint shapes: 154
+- Missing official endpoint shapes: 385
 - Local-only endpoint shapes: 46
-- Route-shape coverage: 26.90%
+- Route-shape coverage: 28.57%
 
 This is not perfect API compatibility yet. It is a measured compatibility
 baseline that can now improve continuously.
 
 Top missing areas by route count:
 
-- users: 56
+- users: 55
 - channels: 30
 - teams: 25
 - groups: 21
@@ -183,3 +183,14 @@ permission denial, and not-found behavior where applicable.
   - `GET /api/v4/users/{user_id}/channels`
   - `GET /api/v4/users/{user_id}/channels/{channel_id}/unread`
   - `POST /api/v4/channels/members/{user_id}/view`
+- Added media/plugin/emoji compatibility routes that official clients often
+  probe during startup and rich-message rendering:
+  - `GET /api/v4/users/{user_id}/image/default`
+  - `GET /api/v4/files/{file_id}/link`
+  - `GET /api/v4/files/{file_id}/preview`
+  - `GET /api/v4/plugins/statuses`
+  - `GET /api/v4/plugins/webapp`
+  - `GET /api/v4/plugins/marketplace`
+  - `GET /api/v4/emoji/autocomplete`
+  - `POST /api/v4/emoji/search`
+  - `POST /api/v4/emoji/names`

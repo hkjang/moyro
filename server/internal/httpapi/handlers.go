@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"html"
 	"io"
 	"log/slog"
 	"net/http"
@@ -827,6 +829,37 @@ func (h *handlers) getUserImage(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Cache-Control", "private, max-age=3600")
 	_, _ = io.Copy(w, rc)
+}
+
+func (h *handlers) getDefaultProfileImage(w http.ResponseWriter, r *http.Request) {
+	targetID := chi.URLParam(r, "userID")
+	if targetID == "me" {
+		targetID = userID(r)
+	}
+	u, err := h.auth.UserByID(r.Context(), targetID)
+	if err != nil {
+		writeError(w, 404, "api.user.image.default.not_found", "user not found")
+		return
+	}
+	name := strings.TrimSpace(u.FirstName + " " + u.LastName)
+	if name == "" {
+		name = u.Username
+	}
+	label := "?"
+	for _, r := range name {
+		label = strings.ToUpper(string(r))
+		break
+	}
+	palette := []string{"#2563eb", "#0891b2", "#059669", "#7c3aed", "#dc2626", "#d97706"}
+	idx := 0
+	for _, r := range u.ID {
+		idx = (idx + int(r)) % len(palette)
+	}
+	svg := fmt.Sprintf(`<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128"><rect width="128" height="128" rx="24" fill="%s"/><text x="64" y="78" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="56" font-weight="700" fill="#fff">%s</text></svg>`, palette[idx], html.EscapeString(label))
+	w.Header().Set("Content-Type", "image/svg+xml; charset=utf-8")
+	w.Header().Set("Cache-Control", "public, max-age=86400")
+	w.WriteHeader(200)
+	_, _ = w.Write([]byte(svg))
 }
 
 // ---- User status ----
@@ -2565,6 +2598,24 @@ func (h *handlers) downloadFile(w http.ResponseWriter, r *http.Request) {
 	_, _ = io.Copy(w, rc)
 }
 
+func (h *handlers) fileLink(w http.ResponseWriter, r *http.Request) {
+	fileID := chi.URLParam(r, "fileID")
+	fi, err := h.files.GetInfo(r.Context(), fileID)
+	if err != nil {
+		writeError(w, 404, "api.file.link.not_found", err.Error())
+		return
+	}
+	if err := h.authorizeFile(r, fi); err != nil {
+		writeError(w, 403, "api.file.link.forbidden", err.Error())
+		return
+	}
+	link := "/api/v4/files/" + url.PathEscape(fileID)
+	if h.cfg != nil && strings.TrimSpace(h.cfg.PublicBaseURL) != "" {
+		link = strings.TrimRight(h.cfg.PublicBaseURL, "/") + link
+	}
+	writeJSON(w, 200, map[string]string{"link": link})
+}
+
 // authorizeFile allows access when: the caller uploaded it, or the file is
 // attached to a post in a channel the caller is a member of.
 func (h *handlers) authorizeFile(r *http.Request, fi *files.FileInfo) error {
@@ -2667,6 +2718,26 @@ func (a *pluginCommandAdapter) ExecuteCommand(ctx context.Context, trigger, arg,
 
 func (h *handlers) listPlugins(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, h.host.List())
+}
+
+func (h *handlers) listPluginStatuses(w http.ResponseWriter, r *http.Request) {
+	plugins := h.host.List()
+	out := make([]map[string]any, 0, len(plugins))
+	for _, p := range plugins {
+		out = append(out, map[string]any{
+			"plugin_id": p["id"],
+			"state":     p["state"],
+		})
+	}
+	writeJSON(w, 200, out)
+}
+
+func (h *handlers) listPluginWebapp(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, 200, []any{})
+}
+
+func (h *handlers) listPluginMarketplace(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, 200, map[string]any{"plugins": []any{}})
 }
 
 // ---- Audit ----
@@ -3067,6 +3138,64 @@ func (h *handlers) listEmojis(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, list)
 }
 
+func (h *handlers) autocompleteEmojis(w http.ResponseWriter, r *http.Request) {
+	term := strings.Trim(strings.ToLower(r.URL.Query().Get("name")), ":")
+	h.writeEmojiSearch(w, r, term)
+}
+
+func (h *handlers) searchEmojis(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Term string `json:"term"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, 400, "api.emoji.search.invalid_body", err.Error())
+		return
+	}
+	h.writeEmojiSearch(w, r, strings.Trim(strings.ToLower(req.Term), ":"))
+}
+
+func (h *handlers) emojisByNames(w http.ResponseWriter, r *http.Request) {
+	var names []string
+	if err := json.NewDecoder(r.Body).Decode(&names); err != nil {
+		writeError(w, 400, "api.emoji.names.invalid_body", err.Error())
+		return
+	}
+	if len(names) > 200 {
+		names = names[:200]
+	}
+	out := []emojis.Emoji{}
+	for _, name := range names {
+		name = strings.Trim(strings.ToLower(name), ":")
+		if name == "" {
+			continue
+		}
+		e, err := h.emojis.GetByName(r.Context(), name)
+		if err == nil && e != nil {
+			out = append(out, *e)
+		}
+	}
+	writeJSON(w, 200, out)
+}
+
+func (h *handlers) writeEmojiSearch(w http.ResponseWriter, r *http.Request, term string) {
+	list, err := h.emojis.List(r.Context(), 0, 200)
+	if err != nil {
+		writeError(w, 500, "api.emoji.search.fail", err.Error())
+		return
+	}
+	if term == "" {
+		writeJSON(w, 200, list)
+		return
+	}
+	out := []emojis.Emoji{}
+	for _, e := range list {
+		if strings.Contains(e.Name, term) {
+			out = append(out, e)
+		}
+	}
+	writeJSON(w, 200, out)
+}
+
 // deleteEmoji is allowed for admin OR creator. We derive admin status via
 // the existing auth.HasRole helper to avoid wiring a new role cache here.
 func (h *handlers) deleteEmoji(w http.ResponseWriter, r *http.Request) {
@@ -3142,6 +3271,36 @@ func (h *handlers) fileThumbnail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "image/jpeg")
+	w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+	w.WriteHeader(200)
+	_, _ = io.Copy(w, rc)
+}
+
+func (h *handlers) filePreview(w http.ResponseWriter, r *http.Request) {
+	fileID := chi.URLParam(r, "fileID")
+	rc, fi, err := h.files.OpenThumbnail(r.Context(), fileID)
+	if err != nil {
+		rc, fi, err = h.files.Open(r.Context(), fileID)
+		if err != nil {
+			writeError(w, 404, "api.file.preview.not_found", err.Error())
+			return
+		}
+		if !strings.HasPrefix(strings.ToLower(fi.MimeType), "image/") {
+			rc.Close()
+			writeError(w, 404, "api.file.preview.unsupported", "preview not available")
+			return
+		}
+	} else if rc != nil {
+		fi.MimeType = "image/jpeg"
+	}
+	defer rc.Close()
+	if err := h.authorizeFile(r, fi); err != nil {
+		writeError(w, 403, "api.file.preview.forbidden", err.Error())
+		return
+	}
+	if fi.MimeType != "" {
+		w.Header().Set("Content-Type", fi.MimeType)
+	}
 	w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
 	w.WriteHeader(200)
 	_, _ = io.Copy(w, rc)
