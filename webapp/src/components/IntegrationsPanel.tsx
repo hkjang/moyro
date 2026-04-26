@@ -14,6 +14,7 @@ import {
   integrationsApi,
   type AdminClusterNode,
   type AdminConfigSnapshot,
+  type AdminCompatRecord,
   type AdminJob,
   type AdminPlugin,
   type AdminPluginStatus,
@@ -43,6 +44,7 @@ type Tab =
   | "plugins"
   | "roles"
   | "jobs"
+  | "policies"
   | "audit";
 
 const TAB_LABELS: Record<Tab, string> = {
@@ -56,21 +58,48 @@ const TAB_LABELS: Record<Tab, string> = {
   plugins: "플러그인",
   roles: "역할",
   jobs: "작업",
+  policies: "정책",
   audit: "감사 로그",
 };
 
-const ALL_TABS: Tab[] = [
-  "bots",
-  "incoming",
-  "outgoing",
-  "emoji",
-  "invites",
-  "users",
-  "system",
-  "plugins",
-  "roles",
-  "jobs",
-  "audit",
+const ADMIN_NAV: { section: string; items: { tab: Tab; label: string }[] }[] = [
+  {
+    section: "Environment",
+    items: [
+      { tab: "system", label: "Web Server / Database / File Storage" },
+      { tab: "jobs", label: "Background Jobs" },
+    ],
+  },
+  {
+    section: "Authentication",
+    items: [
+      { tab: "users", label: "Users" },
+      { tab: "roles", label: "Permissions / Roles" },
+    ],
+  },
+  {
+    section: "Site Configuration",
+    items: [
+      { tab: "invites", label: "Team Invites" },
+      { tab: "emoji", label: "Custom Emoji" },
+    ],
+  },
+  {
+    section: "Integrations",
+    items: [
+      { tab: "bots", label: "Bots / Tokens" },
+      { tab: "incoming", label: "Incoming Webhooks" },
+      { tab: "outgoing", label: "Outgoing Webhooks" },
+      { tab: "plugins", label: "Plugins" },
+    ],
+  },
+  {
+    section: "Compliance",
+    items: [
+      { tab: "audit", label: "Logging / Audit" },
+      { tab: "policies", label: "Data Retention / Governance" },
+    ],
+  },
 ];
 
 // Human-readable labels for the TTL dropdown when issuing invites. Values
@@ -91,6 +120,15 @@ const AUDIT_PREFIXES: { label: string; value: string }[] = [
   { label: "웹훅", value: "webhook." },
   { label: "봇", value: "bot." },
 ];
+
+type AdminPolicyProbe = {
+  key: string;
+  label: string;
+  status: string;
+  detail: string;
+  count?: number;
+  tone?: "ok" | "danger";
+};
 
 export function IntegrationsPanel({
   channels,
@@ -173,6 +211,8 @@ export function IntegrationsPanel({
   const [roles, setRoles] = useState<AdminRole[]>([]);
   const [jobs, setJobs] = useState<AdminJob[]>([]);
   const [newJobType, setNewJobType] = useState<string>("compatibility");
+  const [policyRows, setPolicyRows] = useState<AdminPolicyProbe[]>([]);
+  const [globalRetentionPolicy, setGlobalRetentionPolicy] = useState<AdminCompatRecord | null>(null);
 
   const nonDMChannels = useMemo(() => channels.filter((c) => c.type !== "D"), [channels]);
   const pluginStateByID = useMemo(() => {
@@ -225,6 +265,74 @@ export function IntegrationsPanel({
         setRoles(await adminApi.listRoles(token));
       } else if (tab === "jobs") {
         setJobs(await adminApi.listJobs(token));
+      } else if (tab === "policies") {
+        const [
+          globalRetention,
+          retentionPolicies,
+          complianceReports,
+          contentFlaggingConfig,
+          contentFlaggingFields,
+          remoteClusters,
+          groups,
+          schemes,
+        ] = await Promise.all([
+          adminApi.getDataRetentionPolicy(token),
+          adminApi.listDataRetentionPolicies(token),
+          adminApi.listComplianceReports(token),
+          adminApi.getContentFlaggingConfig(token),
+          adminApi.listContentFlaggingFields(token),
+          adminApi.listRemoteClusters(token),
+          adminApi.listGroups(token),
+          adminApi.listSchemes(token),
+        ]);
+        setGlobalRetentionPolicy(globalRetention);
+        setPolicyRows([
+          {
+            key: "data-retention",
+            label: "Data Retention",
+            status: retentionPolicies.length > 0 ? "custom" : "global",
+            detail: "message/file retention policy",
+            count: retentionPolicies.length,
+            tone: retentionPolicies.length > 0 ? "ok" : undefined,
+          },
+          {
+            key: "content-flagging",
+            label: "Content Flagging",
+            status: contentFlaggingConfig.enabled === true ? "enabled" : "disabled",
+            detail: "review queue fields",
+            count: contentFlaggingFields.length,
+            tone: contentFlaggingConfig.enabled === true ? "ok" : undefined,
+          },
+          {
+            key: "compliance",
+            label: "Compliance Reports",
+            status: complianceReports.length > 0 ? "reports" : "ready",
+            detail: "exportable audit report surface",
+            count: complianceReports.length,
+            tone: "ok",
+          },
+          {
+            key: "remote-clusters",
+            label: "Remote Clusters",
+            status: remoteClusters.length > 0 ? "linked" : "none",
+            detail: "shared channel federation",
+            count: remoteClusters.length,
+          },
+          {
+            key: "groups",
+            label: "Groups",
+            status: groups.length > 0 ? "synced" : "none",
+            detail: "LDAP/custom group policy shape",
+            count: groups.length,
+          },
+          {
+            key: "schemes",
+            label: "Permission Schemes",
+            status: schemes.length > 0 ? "custom" : "default",
+            detail: "team/channel role scheme shape",
+            count: schemes.length,
+          },
+        ]);
       } else if (tab === "audit") {
         setAuditRows(
           await integrationsApi.listAuditLogs(token, {
@@ -561,37 +669,51 @@ export function IntegrationsPanel({
     <div className="modal-backdrop" onClick={onClose}>
       <div className="modal-card integrations-panel" onClick={(e) => e.stopPropagation()}>
         <header className="integrations-header">
-          <h3 style={{ margin: 0 }}>운영 관리</h3>
+          <h3 style={{ margin: 0 }}>System Console</h3>
           <button type="button" className="action-btn" onClick={onClose} title="닫기">✕</button>
         </header>
-        <div className="integrations-tabs">
-          {ALL_TABS.map((t) => (
-            <button
-              key={t}
-              className="login-tab"
-              aria-selected={tab === t}
-              onClick={() => setTab(t)}
-            >{TAB_LABELS[t]}</button>
-          ))}
-        </div>
+        <div className="admin-console-shell">
+          <nav className="admin-console-tree" aria-label="System Console">
+            {ADMIN_NAV.map((section) => (
+              <div key={section.section} className="admin-console-tree-section">
+                <div className="admin-console-tree-heading">{section.section}</div>
+                {section.items.map((item) => (
+                  <button
+                    key={item.tab}
+                    type="button"
+                    className="admin-console-tree-item"
+                    aria-selected={tab === item.tab}
+                    onClick={() => setTab(item.tab)}
+                  >
+                    <span>{item.label}</span>
+                    <small>{TAB_LABELS[item.tab]}</small>
+                  </button>
+                ))}
+              </div>
+            ))}
+          </nav>
+          <section className="admin-console-panel">
+            <div className="admin-console-panel-heading">
+              <span>{TAB_LABELS[tab]}</span>
+            </div>
 
-        {error && <div className="login-error" style={{ margin: "12px 0" }}>{error}</div>}
+            {error && <div className="login-error" style={{ margin: "0 0 12px" }}>{error}</div>}
 
-        {/* One-time reveal for newly minted PATs */}
-        {freshPAT && (
+            {/* One-time reveal for newly minted PATs */}
+            {freshPAT && (
           <div className="reveal-card">
             <div style={{ fontWeight: 600 }}>토큰이 생성되었습니다. 지금 복사해 두세요. 이후에는 다시 볼 수 없습니다.</div>
             <code className="reveal-code">{freshPAT.token}</code>
             <button type="button" className="btn-ghost" onClick={() => setFreshPAT(null)}>확인</button>
           </div>
-        )}
-        {freshIncomingURL && (
+            )}
+            {freshIncomingURL && (
           <div className="reveal-card">
             <div style={{ fontWeight: 600 }}>인커밍 웹훅 URL이 생성되었습니다. 이 URL을 공유하면 누구나 메시지를 보낼 수 있습니다.</div>
             <code className="reveal-code">{freshIncomingURL}</code>
             <button type="button" className="btn-ghost" onClick={() => setFreshIncomingURL(null)}>확인</button>
           </div>
-        )}
+            )}
 
         {tab === "bots" && (
           <div className="integrations-body">
@@ -1107,6 +1229,68 @@ export function IntegrationsPanel({
           </div>
         )}
 
+        {tab === "policies" && (
+          <div className="integrations-body">
+            <div className="integrations-create admin-toolbar">
+              <button
+                type="button"
+                className="btn-ghost"
+                style={{ width: "auto", padding: "0 12px", height: 34 }}
+                onClick={refresh}
+              >정책 새로고침</button>
+              <span className="admin-pill ok">Mattermost API</span>
+            </div>
+            <div className="admin-summary-grid">
+              {policyRows.map((row) => (
+                <div key={row.key} className="admin-kv">
+                  <span>{row.label}</span>
+                  <strong>
+                    {row.count !== undefined ? `${row.count} · ` : ""}
+                    {row.status}
+                  </strong>
+                </div>
+              ))}
+            </div>
+            <ul className="integrations-list">
+              {policyRows.length === 0 && (
+                <li className="chat-empty" style={{ padding: 12 }}>정책 상태를 불러오지 않았습니다.</li>
+              )}
+              {policyRows.map((row) => (
+                <li key={row.key} className="integrations-row">
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, fontWeight: 600 }}>
+                      {row.label}
+                      <span className={`admin-pill ${row.tone ?? ""}`.trim()}>{row.status}</span>
+                    </div>
+                    <div style={{ color: "var(--muted)", fontSize: 12, marginTop: 2 }}>
+                      {row.detail}
+                      {row.count !== undefined && ` · ${row.count} rows`}
+                    </div>
+                  </div>
+                </li>
+              ))}
+              <li className="integrations-row">
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8, fontWeight: 600 }}>
+                    Global Retention
+                    <span className="admin-pill">
+                      {globalRetentionPolicy?.message_deletion_enabled === true ||
+                      globalRetentionPolicy?.file_deletion_enabled === true
+                        ? "enabled"
+                        : "inactive"}
+                    </span>
+                  </div>
+                  <div style={{ color: "var(--muted)", fontSize: 12, marginTop: 2 }}>
+                    message {String(globalRetentionPolicy?.message_retention_cutoff ?? 0)}
+                    {" · "}
+                    file {String(globalRetentionPolicy?.file_retention_cutoff ?? 0)}
+                  </div>
+                </div>
+              </li>
+            </ul>
+          </div>
+        )}
+
         {tab === "audit" && (
           <div className="integrations-body">
             <div className="integrations-create">
@@ -1185,6 +1369,8 @@ export function IntegrationsPanel({
             </ul>
           </div>
         )}
+          </section>
+        </div>
       </div>
       {confirmer.render()}
     </div>

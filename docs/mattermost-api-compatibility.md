@@ -32,30 +32,29 @@ reports matched, missing, and extra route shapes.
 Using Mattermost `master` OpenAPI source:
 
 - Official API v4 endpoints: 539
-- Local routed endpoints: 292
-- Matched endpoint shapes: 246
-- Missing official endpoint shapes: 293
+- Local routed endpoints: 404
+- Matched endpoint shapes: 358
+- Missing official endpoint shapes: 181
 - Local-only endpoint shapes: 46
-- Route-shape coverage: 45.64%
+- Route-shape coverage: 66.42%
 
 This is not perfect API compatibility yet. It is a measured compatibility
 baseline that can now improve continuously.
 
 Top missing areas by route count:
 
-- users: 44
-- channels: 27
-- teams: 23
-- groups: 21
-- data_retention: 15
+- users: 31
+- channels: 26
+- teams: 18
 - access_control_policies: 15
 - oauth: 14
 - cloud: 14
-- remotecluster: 10
-- content_flagging: 9
-- posts: 9
-- bots: 8
-- schemes: 7
+- custom_profile_attributes: 6
+- recaps: 6
+- reports: 4
+- posts: 4
+- uploads: 3
+- bots: 3
 
 ## Compatibility Strategy
 
@@ -231,7 +230,37 @@ Implemented on 2026-04-26:
   - license/trial/upgrade, LDAP certificate/test/sync, SAML certificate and
     metadata, content flagging config, AI bridge, brand image, system notices,
     and support packet route shapes.
+- Enterprise/admin compatibility wave:
+  - `POST|DELETE /api/v4/audit_logs/certificate`
+  - `GET|POST /api/v4/compliance/reports`,
+    `GET /api/v4/compliance/reports/{report_id}`,
+    `GET /api/v4/compliance/reports/{report_id}/download`
+  - content flagging fields, post review state, reviewer search, assign,
+    flag, keep, and remove route shapes.
+  - data retention global policy, policy CRUD, policy channel/team membership,
+    and user channel/team policy read route shapes.
+  - groups, schemes, remote clusters, shared channels, and property field/value
+    route shapes.
+  - interactive dialog open/lookup/submit route shapes for slash-command and
+    post-action workflows.
 
-Admin UI now uses these same Mattermost route shapes in the 운영 관리 modal:
+Admin UI now uses these same Mattermost route shapes in the System Console:
 system status/config/logs, plugin lifecycle controls, role permission browse,
-and job creation/cancel smoke controls.
+job creation/cancel smoke controls, and the compliance/policy compatibility
+surface.
+
+## Admin Console UX Direction
+
+The admin surface is moving toward a Mattermost-style System Console:
+
+- Entry: separate System Console modal from the chat workspace.
+- Navigation: left tree navigation with Environment, Authentication, Site
+  Configuration, Integrations, Compliance, and Experimental-style sections.
+- Content: dense right-side settings panels built around forms, toggles,
+  status rows, and compact operational tables.
+- Users and permissions: role-based controls for system, team, and channel
+  administration.
+- Compliance: logging, audit, data retention, content flagging, reports, and
+  remote/shared-channel governance should be grouped together.
+- Product stance: prioritize admin control, on-premise operation, and technical
+  clarity; use calmer UI density rather than marketing-style layouts.

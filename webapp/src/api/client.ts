@@ -832,6 +832,8 @@ export type AdminJob = {
   data?: Record<string, unknown>;
 };
 
+export type AdminCompatRecord = Record<string, unknown>;
+
 // ---- Phase 12 API extensions ----
 //
 // Mutating the frozen `api` literal above would force a reorganisation of
@@ -1006,6 +1008,20 @@ export const adminApi = {
     request<AdminJob>(token, "/jobs", { method: "POST", body: { type } }),
   cancelJob: (token: string, jobId: string) =>
     request<AdminJob>(token, `/jobs/${encodeURIComponent(jobId)}/cancel`, { method: "POST" }),
+
+  listRemoteClusters: (token: string) => request<AdminCompatRecord[]>(token, "/remotecluster"),
+  listSchemes: (token: string) => request<AdminCompatRecord[]>(token, "/schemes"),
+  listGroups: (token: string) => request<AdminCompatRecord[]>(token, "/groups"),
+  listDataRetentionPolicies: (token: string) =>
+    request<AdminCompatRecord[]>(token, "/data_retention/policies"),
+  getDataRetentionPolicy: (token: string) =>
+    request<AdminCompatRecord>(token, "/data_retention/policy"),
+  listComplianceReports: (token: string) =>
+    request<AdminCompatRecord[]>(token, "/compliance/reports"),
+  getContentFlaggingConfig: (token: string) =>
+    request<AdminCompatRecord>(token, "/content_flagging/config"),
+  listContentFlaggingFields: (token: string) =>
+    request<AdminCompatRecord[]>(token, "/content_flagging/fields"),
 };
 
 export function openWebSocket(token: string): WebSocket {

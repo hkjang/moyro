@@ -390,6 +390,14 @@ export const adminApi = {
     listJobs: (token) => request(token, "/jobs"),
     createJob: (token, type) => request(token, "/jobs", { method: "POST", body: { type } }),
     cancelJob: (token, jobId) => request(token, `/jobs/${encodeURIComponent(jobId)}/cancel`, { method: "POST" }),
+    listRemoteClusters: (token) => request(token, "/remotecluster"),
+    listSchemes: (token) => request(token, "/schemes"),
+    listGroups: (token) => request(token, "/groups"),
+    listDataRetentionPolicies: (token) => request(token, "/data_retention/policies"),
+    getDataRetentionPolicy: (token) => request(token, "/data_retention/policy"),
+    listComplianceReports: (token) => request(token, "/compliance/reports"),
+    getContentFlaggingConfig: (token) => request(token, "/content_flagging/config"),
+    listContentFlaggingFields: (token) => request(token, "/content_flagging/fields"),
 };
 export function openWebSocket(token) {
     const scheme = window.location.protocol === "https:" ? "wss" : "ws";

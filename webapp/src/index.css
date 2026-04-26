@@ -1008,7 +1008,7 @@ select:focus-visible {
  * three tab panes have enough breathing room on a laptop display.
  * ------------------------------------------------------------------ */
 .integrations-panel {
-  width: 920px;
+  width: 1080px;
   max-width: calc(100vw - 40px);
   max-height: calc(100vh - 80px);
   display: flex;
@@ -1020,6 +1020,85 @@ select:focus-visible {
   align-items: center;
   justify-content: space-between;
   margin-bottom: 10px;
+}
+.admin-console-shell {
+  min-height: 0;
+  display: grid;
+  grid-template-columns: 260px minmax(0, 1fr);
+  gap: 16px;
+  flex: 1;
+}
+.admin-console-tree {
+  min-height: 0;
+  overflow-y: auto;
+  padding: 10px;
+  border: 1px solid var(--card-border);
+  border-radius: 8px;
+  background: rgba(255,255,255,0.018);
+}
+.admin-console-tree-section + .admin-console-tree-section {
+  margin-top: 14px;
+}
+.admin-console-tree-heading {
+  margin: 0 0 6px 4px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.admin-console-tree-item {
+  width: 100%;
+  min-height: 44px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 2px;
+  padding: 7px 9px;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--fg);
+  cursor: pointer;
+  text-align: left;
+}
+.admin-console-tree-item span {
+  max-width: 100%;
+  overflow: hidden;
+  font-size: 12px;
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.admin-console-tree-item small {
+  max-width: 100%;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.admin-console-tree-item:hover,
+.admin-console-tree-item[aria-selected="true"] {
+  border-color: rgba(125, 211, 252, 0.28);
+  background: rgba(125, 211, 252, 0.08);
+}
+.admin-console-panel {
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.admin-console-panel-heading {
+  display: flex;
+  align-items: center;
+  min-height: 32px;
+  margin-bottom: 10px;
+  border-bottom: 1px solid var(--card-border);
+  color: var(--fg);
+  font-size: 14px;
+  font-weight: 700;
 }
 .integrations-tabs {
   display: flex;
@@ -1713,6 +1792,25 @@ button.file-image {
     max-width: 100vw;
     z-index: 90;
     box-shadow: -24px 0 60px -30px rgba(0, 0, 0, 0.8);
+  }
+
+  .admin-console-shell {
+    grid-template-columns: 1fr;
+  }
+
+  .admin-console-tree {
+    display: flex;
+    gap: 12px;
+    overflow-x: auto;
+    overflow-y: hidden;
+  }
+
+  .admin-console-tree-section {
+    min-width: 190px;
+  }
+
+  .admin-console-tree-section + .admin-console-tree-section {
+    margin-top: 0;
   }
 }
 
