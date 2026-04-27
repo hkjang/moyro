@@ -56,6 +56,8 @@ than a chat-adjacent utility drawer.
 - Access Control / Governance now probes `access_control_policies` search and
   CEL autocomplete fields so the admin UI tracks Mattermost enterprise policy
   capabilities without requiring a full policy engine yet.
+- The console panel now shows an active section/page header and stacks the tree
+  navigation above the settings panel on narrow viewports.
 - Enterprise-only features that do not have backing services should remain
   compatible disabled surfaces until real storage and workflows exist.
 

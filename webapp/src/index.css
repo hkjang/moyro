@@ -1024,7 +1024,7 @@ select:focus-visible {
 .admin-console-shell {
   min-height: 0;
   display: grid;
-  grid-template-columns: 260px minmax(0, 1fr);
+  grid-template-columns: minmax(220px, 280px) minmax(0, 1fr);
   gap: 16px;
   flex: 1;
 }
@@ -1080,7 +1080,8 @@ select:focus-visible {
   white-space: nowrap;
 }
 .admin-console-tree-item:hover,
-.admin-console-tree-item[aria-selected="true"] {
+.admin-console-tree-item[aria-selected="true"],
+.admin-console-tree-item[aria-current="page"] {
   border-color: rgba(125, 211, 252, 0.28);
   background: rgba(125, 211, 252, 0.08);
 }
@@ -1093,12 +1094,36 @@ select:focus-visible {
 .admin-console-panel-heading {
   display: flex;
   align-items: center;
+  justify-content: space-between;
+  gap: 12px;
   min-height: 32px;
   margin-bottom: 10px;
+  padding-bottom: 10px;
   border-bottom: 1px solid var(--card-border);
   color: var(--fg);
-  font-size: 14px;
+}
+.admin-console-panel-heading > div {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.admin-console-panel-heading strong {
+  overflow: hidden;
+  font-size: 15px;
   font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.admin-console-panel-heading .admin-pill {
+  flex: 0 0 auto;
+}
+.admin-console-panel-kicker {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
 }
 .integrations-tabs {
   display: flex;
@@ -1869,6 +1894,14 @@ button.file-image {
 
   .admin-summary-grid {
     grid-template-columns: 1fr;
+  }
+
+  .admin-console-shell {
+    grid-template-columns: 1fr;
+  }
+
+  .admin-console-tree {
+    max-height: 260px;
   }
 
   .schedule-custom .btn-primary,

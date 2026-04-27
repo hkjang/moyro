@@ -220,6 +220,13 @@ export function IntegrationsPanel({
     for (const row of pluginStatuses) out[row.plugin_id] = row.state;
     return out;
   }, [pluginStatuses]);
+  const activeNavItem = useMemo(() => {
+    for (const section of ADMIN_NAV) {
+      const item = section.items.find((candidate) => candidate.tab === tab);
+      if (item) return { section: section.section, item };
+    }
+    return null;
+  }, [tab]);
 
   const refresh = useCallback(async () => {
     if (!token) return;
@@ -699,7 +706,9 @@ export function IntegrationsPanel({
                     type="button"
                     className="admin-console-tree-item"
                     aria-selected={tab === item.tab}
+                    aria-current={tab === item.tab ? "page" : undefined}
                     onClick={() => setTab(item.tab)}
+                    title={item.label}
                   >
                     <span>{item.label}</span>
                     <small>{TAB_LABELS[item.tab]}</small>
@@ -710,7 +719,13 @@ export function IntegrationsPanel({
           </nav>
           <section className="admin-console-panel">
             <div className="admin-console-panel-heading">
-              <span>{TAB_LABELS[tab]}</span>
+              <div>
+                <span className="admin-console-panel-kicker">
+                  {activeNavItem?.section ?? "System Console"}
+                </span>
+                <strong>{activeNavItem?.item.label ?? TAB_LABELS[tab]}</strong>
+              </div>
+              <span className="admin-pill">{TAB_LABELS[tab]}</span>
             </div>
 
             {error && <div className="login-error" style={{ margin: "0 0 12px" }}>{error}</div>}
