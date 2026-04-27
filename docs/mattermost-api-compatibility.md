@@ -251,19 +251,24 @@ surface.
 
 ## Parallel Workspace Progress
 
-Working-tree audit on 2026-04-27, including concurrent Phase 25-30 API
+Working-tree audit on 2026-04-28, including concurrent Phase 25-32 API
 compatibility work in progress:
 
 - Official API v4 endpoints: 539
-- Local routed endpoints: 511
-- Matched endpoint shapes: 462
-- Missing official endpoint shapes: 77
-- Local-only endpoint shapes: 49
-- Route-shape coverage: 85.71%
+- Local routed endpoints: 595
+- Matched endpoint shapes: 539
+- Missing official endpoint shapes: 0
+- Local-only endpoint shapes: 56
+- Route-shape coverage: 100.00%
 
-This is a working-tree measurement, not a clean release baseline. The current
-admin-focused slice adds Mattermost access-control policy route shapes and UI
-probes:
+This is a working-tree measurement, not a clean release baseline. It means every
+official Mattermost API v4 method/path shape is currently routed locally. It
+does not mean full behavioral compatibility yet; enterprise/cloud/AI-only
+surfaces still need contract hardening or intentionally disabled responses where
+RelayChat does not provide the backing service.
+
+Recent admin-focused slices added Mattermost access-control and authentication
+operator surfaces:
 
 - `POST /api/v4/access_control_policies/search`
 - `PUT /api/v4/access_control_policies`
@@ -275,6 +280,17 @@ probes:
 - `GET|POST /api/v4/access_control_policies/{policy_id}/resources/channels`
 - CEL helper routes for autocomplete, check, test, requester validation, and
   visual AST.
+- System Console probes for license renewal/load metrics, LDAP groups and
+  diagnostics, SAML certificate status, MFA/config state, and session policy.
+
+Next compatibility focus after route-shape parity:
+
+- Contract tests for non-stub admin endpoints: status codes, request body
+  validation, and Mattermost-style error envelopes.
+- Backing storage decisions for custom profile attributes, terms of service,
+  post acknowledgements, channel bookmarks, and policy objects.
+- UI-driven smoke tests for login, System Console navigation, policy refresh,
+  plugin lifecycle, and authentication diagnostics.
 
 ## Admin Console UX Direction
 
