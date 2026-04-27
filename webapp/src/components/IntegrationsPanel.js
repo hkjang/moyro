@@ -18,6 +18,7 @@ const TAB_LABELS = {
     emoji: "이모지",
     invites: "초대 링크",
     users: "사용자",
+    auth: "Authentication",
     system: "시스템",
     plugins: "플러그인",
     roles: "역할",
@@ -36,6 +37,7 @@ const ADMIN_NAV = [
     {
         section: "Authentication",
         items: [
+            { tab: "auth", label: "LDAP / SSO / MFA" },
             { tab: "users", label: "Users" },
             { tab: "roles", label: "Permissions / Roles" },
         ],
@@ -144,6 +146,7 @@ export function IntegrationsPanel({ channels, currentTeamId, onClose, }) {
     const [roles, setRoles] = useState([]);
     const [jobs, setJobs] = useState([]);
     const [newJobType, setNewJobType] = useState("compatibility");
+    const [authRows, setAuthRows] = useState([]);
     const [policyRows, setPolicyRows] = useState([]);
     const [globalRetentionPolicy, setGlobalRetentionPolicy] = useState(null);
     const nonDMChannels = useMemo(() => channels.filter((c) => c.type !== "D"), [channels]);
@@ -190,6 +193,66 @@ export function IntegrationsPanel({ channels, currentTeamId, onClose, }) {
                 // for deactivated rows. Non-admins would be better off not seeing
                 // this tab at all; the backend would silently drop the flag.
                 setUsers(await api.listUsers(token, 0, 200, true));
+            }
+            else if (tab === "auth") {
+                const [config, licenseRenewal, licenseMetric, ldapGroups, ldapProbe, samlStatus] = await Promise.all([
+                    adminApi.getConfig(token),
+                    adminApi.getLicenseRenewal(token),
+                    adminApi.getLicenseLoadMetric(token),
+                    adminApi.listLDAPGroups(token),
+                    adminApi.testLDAPConnection(token),
+                    adminApi.getSAMLCertificateStatus(token),
+                ]);
+                const serviceSettings = config.ServiceSettings ?? {};
+                const teamSettings = config.TeamSettings ?? {};
+                const samlCertCount = [
+                    samlStatus.idp_certificate_file,
+                    samlStatus.public_certificate_file,
+                    samlStatus.private_key_file,
+                ].filter(Boolean).length;
+                const mfaEnabled = serviceSettings.EnableMultifactorAuthentication === true;
+                setAuthRows([
+                    {
+                        key: "ldap",
+                        label: "LDAP",
+                        status: ldapProbe.enabled === true ? "enabled" : "disabled",
+                        detail: "directory groups",
+                        count: ldapGroups.length,
+                        tone: ldapProbe.enabled === true ? "ok" : undefined,
+                    },
+                    {
+                        key: "saml",
+                        label: "SAML / SSO",
+                        status: samlStatus.can_login_with_saml === true ||
+                            samlStatus.can_login_with_saml_test === true
+                            ? "ready"
+                            : "disabled",
+                        detail: "certificate material",
+                        count: samlCertCount,
+                        tone: samlCertCount > 0 ? "ok" : undefined,
+                    },
+                    {
+                        key: "mfa",
+                        label: "MFA",
+                        status: mfaEnabled ? "enabled" : "disabled",
+                        detail: "multifactor policy",
+                        tone: mfaEnabled ? "ok" : undefined,
+                    },
+                    {
+                        key: "license",
+                        label: "Enterprise License",
+                        status: licenseRenewal.is_licensed === true ? "licensed" : "community",
+                        detail: "renewal and trial state",
+                        tone: licenseRenewal.is_licensed === true ? "ok" : undefined,
+                    },
+                    {
+                        key: "sessions",
+                        label: "Session Policy",
+                        status: `${String(serviceSettings.SessionLengthWebInHours ?? "auto")}h`,
+                        detail: `open server ${teamSettings.EnableOpenServer === false ? "off" : "on"}`,
+                        count: Number(licenseMetric.active_users ?? 0),
+                    },
+                ]);
             }
             else if (tab === "system") {
                 const [config, cluster, busy, logs] = await Promise.all([
@@ -655,7 +718,7 @@ export function IntegrationsPanel({ channels, currentTeamId, onClose, }) {
                                                         })] })] })) })), tab === "users" && (_jsx("div", { className: "integrations-body", children: _jsxs("ul", { className: "integrations-list", children: [users.length === 0 && (_jsx("li", { className: "chat-empty", style: { padding: 12 }, children: "\uB4F1\uB85D\uB41C \uC0AC\uC6A9\uC790\uAC00 \uC5C6\uC2B5\uB2C8\uB2E4." })), users.map((u) => {
                                                     const inactive = (u.delete_at ?? 0) > 0;
                                                     return (_jsxs("li", { className: "integrations-row", style: inactive ? { opacity: 0.55 } : undefined, children: [_jsxs("div", { style: { flex: 1 }, children: [_jsxs("div", { style: { fontWeight: 600 }, children: ["@", u.username, inactive && (_jsx("span", { style: { marginLeft: 8, color: "var(--danger)", fontSize: 11 }, children: "\uBE44\uD65C\uC131" }))] }), _jsxs("div", { style: { color: "var(--muted)", fontSize: 12 }, children: [u.email, " \u00B7 ", u.roles || "system_user"] })] }), inactive ? (_jsx("button", { type: "button", className: "btn-ghost", style: { width: "auto", padding: "0 10px", height: 30 }, onClick: () => onReactivateUser(u.id), children: "\uD65C\uC131\uD654" })) : (_jsx("button", { type: "button", className: "btn-ghost", style: { width: "auto", padding: "0 10px", height: 30, color: "var(--danger)" }, onClick: () => onDeactivateUser(u.id, u.username), children: "\uBE44\uD65C\uC131\uD654" }))] }, u.id));
-                                                })] }) })), tab === "system" && (_jsxs("div", { className: "integrations-body", children: [_jsxs("div", { className: "integrations-create admin-toolbar", children: [_jsx("button", { type: "button", className: "btn-ghost", style: { width: "auto", padding: "0 12px", height: 34 }, onClick: refresh, children: "\uC0C8\uB85C\uACE0\uCE68" }), _jsx("button", { type: "button", className: "btn-ghost", style: { width: "auto", padding: "0 12px", height: 34 }, onClick: onReloadConfig, children: "\uC124\uC815 \uB9AC\uB85C\uB4DC" }), _jsx("button", { type: "button", className: "btn-ghost", style: {
+                                                })] }) })), tab === "auth" && (_jsxs("div", { className: "integrations-body", children: [_jsxs("div", { className: "integrations-create admin-toolbar", children: [_jsx("button", { type: "button", className: "btn-ghost", style: { width: "auto", padding: "0 12px", height: 34 }, onClick: refresh, children: "\uC778\uC99D \uC0C8\uB85C\uACE0\uCE68" }), _jsx("span", { className: "admin-pill ok", children: "Mattermost API" })] }), _jsx("div", { className: "admin-summary-grid", children: authRows.map((row) => (_jsxs("div", { className: "admin-kv", children: [_jsx("span", { children: row.label }), _jsxs("strong", { children: [row.count !== undefined ? `${row.count} · ` : "", row.status] })] }, row.key))) }), _jsxs("ul", { className: "integrations-list", children: [authRows.length === 0 && (_jsx("li", { className: "chat-empty", style: { padding: 12 }, children: "\uC778\uC99D \uC0C1\uD0DC\uB97C \uBD88\uB7EC\uC624\uC9C0 \uC54A\uC558\uC2B5\uB2C8\uB2E4." })), authRows.map((row) => (_jsx("li", { className: "integrations-row", children: _jsxs("div", { style: { flex: 1, minWidth: 0 }, children: [_jsxs("div", { style: { display: "flex", alignItems: "center", gap: 8, fontWeight: 600 }, children: [row.label, _jsx("span", { className: `admin-pill ${row.tone ?? ""}`.trim(), children: row.status })] }), _jsxs("div", { style: { color: "var(--muted)", fontSize: 12, marginTop: 2 }, children: [row.detail, row.count !== undefined && ` · ${row.count} rows`] })] }) }, row.key)))] })] })), tab === "system" && (_jsxs("div", { className: "integrations-body", children: [_jsxs("div", { className: "integrations-create admin-toolbar", children: [_jsx("button", { type: "button", className: "btn-ghost", style: { width: "auto", padding: "0 12px", height: 34 }, onClick: refresh, children: "\uC0C8\uB85C\uACE0\uCE68" }), _jsx("button", { type: "button", className: "btn-ghost", style: { width: "auto", padding: "0 12px", height: 34 }, onClick: onReloadConfig, children: "\uC124\uC815 \uB9AC\uB85C\uB4DC" }), _jsx("button", { type: "button", className: "btn-ghost", style: {
                                                             width: "auto",
                                                             padding: "0 12px",
                                                             height: 34,

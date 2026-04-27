@@ -58,6 +58,8 @@ than a chat-adjacent utility drawer.
   capabilities without requiring a full policy engine yet.
 - The console panel now shows an active section/page header and stacks the tree
   navigation above the settings panel on narrow viewports.
+- Authentication now has its own operator page backed by Mattermost-compatible
+  license, LDAP, SAML, MFA/config, and session-policy probes.
 - Enterprise-only features that do not have backing services should remain
   compatible disabled surfaces until real storage and workflows exist.
 

@@ -40,6 +40,7 @@ type Tab =
   | "emoji"
   | "invites"
   | "users"
+  | "auth"
   | "system"
   | "plugins"
   | "roles"
@@ -54,6 +55,7 @@ const TAB_LABELS: Record<Tab, string> = {
   emoji: "이모지",
   invites: "초대 링크",
   users: "사용자",
+  auth: "Authentication",
   system: "시스템",
   plugins: "플러그인",
   roles: "역할",
@@ -73,6 +75,7 @@ const ADMIN_NAV: { section: string; items: { tab: Tab; label: string }[] }[] = [
   {
     section: "Authentication",
     items: [
+      { tab: "auth", label: "LDAP / SSO / MFA" },
       { tab: "users", label: "Users" },
       { tab: "roles", label: "Permissions / Roles" },
     ],
@@ -129,6 +132,8 @@ type AdminPolicyProbe = {
   count?: number;
   tone?: "ok" | "danger";
 };
+
+type AdminAuthProbe = AdminPolicyProbe;
 
 export function IntegrationsPanel({
   channels,
@@ -211,6 +216,7 @@ export function IntegrationsPanel({
   const [roles, setRoles] = useState<AdminRole[]>([]);
   const [jobs, setJobs] = useState<AdminJob[]>([]);
   const [newJobType, setNewJobType] = useState<string>("compatibility");
+  const [authRows, setAuthRows] = useState<AdminAuthProbe[]>([]);
   const [policyRows, setPolicyRows] = useState<AdminPolicyProbe[]>([]);
   const [globalRetentionPolicy, setGlobalRetentionPolicy] = useState<AdminCompatRecord | null>(null);
 
@@ -250,6 +256,67 @@ export function IntegrationsPanel({
         // for deactivated rows. Non-admins would be better off not seeing
         // this tab at all; the backend would silently drop the flag.
         setUsers(await api.listUsers(token, 0, 200, true));
+      } else if (tab === "auth") {
+        const [config, licenseRenewal, licenseMetric, ldapGroups, ldapProbe, samlStatus] =
+          await Promise.all([
+            adminApi.getConfig(token),
+            adminApi.getLicenseRenewal(token),
+            adminApi.getLicenseLoadMetric(token),
+            adminApi.listLDAPGroups(token),
+            adminApi.testLDAPConnection(token),
+            adminApi.getSAMLCertificateStatus(token),
+          ]);
+        const serviceSettings = config.ServiceSettings ?? {};
+        const teamSettings = config.TeamSettings ?? {};
+        const samlCertCount = [
+          samlStatus.idp_certificate_file,
+          samlStatus.public_certificate_file,
+          samlStatus.private_key_file,
+        ].filter(Boolean).length;
+        const mfaEnabled = serviceSettings.EnableMultifactorAuthentication === true;
+        setAuthRows([
+          {
+            key: "ldap",
+            label: "LDAP",
+            status: ldapProbe.enabled === true ? "enabled" : "disabled",
+            detail: "directory groups",
+            count: ldapGroups.length,
+            tone: ldapProbe.enabled === true ? "ok" : undefined,
+          },
+          {
+            key: "saml",
+            label: "SAML / SSO",
+            status:
+              samlStatus.can_login_with_saml === true ||
+              samlStatus.can_login_with_saml_test === true
+                ? "ready"
+                : "disabled",
+            detail: "certificate material",
+            count: samlCertCount,
+            tone: samlCertCount > 0 ? "ok" : undefined,
+          },
+          {
+            key: "mfa",
+            label: "MFA",
+            status: mfaEnabled ? "enabled" : "disabled",
+            detail: "multifactor policy",
+            tone: mfaEnabled ? "ok" : undefined,
+          },
+          {
+            key: "license",
+            label: "Enterprise License",
+            status: licenseRenewal.is_licensed === true ? "licensed" : "community",
+            detail: "renewal and trial state",
+            tone: licenseRenewal.is_licensed === true ? "ok" : undefined,
+          },
+          {
+            key: "sessions",
+            label: "Session Policy",
+            status: `${String(serviceSettings.SessionLengthWebInHours ?? "auto")}h`,
+            detail: `open server ${teamSettings.EnableOpenServer === false ? "off" : "on"}`,
+            count: Number(licenseMetric.active_users ?? 0),
+          },
+        ]);
       } else if (tab === "system") {
         const [config, cluster, busy, logs] = await Promise.all([
           adminApi.getConfig(token),
@@ -1043,6 +1110,50 @@ export function IntegrationsPanel({
                   </li>
                 );
               })}
+            </ul>
+          </div>
+        )}
+
+        {tab === "auth" && (
+          <div className="integrations-body">
+            <div className="integrations-create admin-toolbar">
+              <button
+                type="button"
+                className="btn-ghost"
+                style={{ width: "auto", padding: "0 12px", height: 34 }}
+                onClick={refresh}
+              >인증 새로고침</button>
+              <span className="admin-pill ok">Mattermost API</span>
+            </div>
+            <div className="admin-summary-grid">
+              {authRows.map((row) => (
+                <div key={row.key} className="admin-kv">
+                  <span>{row.label}</span>
+                  <strong>
+                    {row.count !== undefined ? `${row.count} · ` : ""}
+                    {row.status}
+                  </strong>
+                </div>
+              ))}
+            </div>
+            <ul className="integrations-list">
+              {authRows.length === 0 && (
+                <li className="chat-empty" style={{ padding: 12 }}>인증 상태를 불러오지 않았습니다.</li>
+              )}
+              {authRows.map((row) => (
+                <li key={row.key} className="integrations-row">
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, fontWeight: 600 }}>
+                      {row.label}
+                      <span className={`admin-pill ${row.tone ?? ""}`.trim()}>{row.status}</span>
+                    </div>
+                    <div style={{ color: "var(--muted)", fontSize: 12, marginTop: 2 }}>
+                      {row.detail}
+                      {row.count !== undefined && ` · ${row.count} rows`}
+                    </div>
+                  </div>
+                </li>
+              ))}
             </ul>
           </div>
         )}

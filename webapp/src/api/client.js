@@ -390,6 +390,11 @@ export const adminApi = {
     listJobs: (token) => request(token, "/jobs"),
     createJob: (token, type) => request(token, "/jobs", { method: "POST", body: { type } }),
     cancelJob: (token, jobId) => request(token, `/jobs/${encodeURIComponent(jobId)}/cancel`, { method: "POST" }),
+    getLicenseRenewal: (token) => request(token, "/license/renewal"),
+    getLicenseLoadMetric: (token) => request(token, "/license/load_metric"),
+    listLDAPGroups: (token) => request(token, "/ldap/groups"),
+    testLDAPConnection: (token) => request(token, "/ldap/test_connection", { method: "POST" }),
+    getSAMLCertificateStatus: (token) => request(token, "/saml/certificate/status"),
     listRemoteClusters: (token) => request(token, "/remotecluster"),
     listSchemes: (token) => request(token, "/schemes"),
     listGroups: (token) => request(token, "/groups"),
@@ -470,4 +475,21 @@ export const sidebarApi = {
 export const notifyApi = {
     get: (token, userId = "me") => request(token, `/users/${encodeURIComponent(userId)}/notify_props`),
     put: (token, props, userId = "me") => request(token, `/users/${encodeURIComponent(userId)}/notify_props`, { method: "PUT", body: props }),
+};
+export const customProfileApi = {
+    listFields: (token) => request(token, `/custom_profile_attributes/fields`),
+    createField: (token, field) => request(token, `/custom_profile_attributes/fields`, {
+        method: "POST",
+        body: field,
+    }),
+    patchField: (token, fieldId, patch) => request(token, `/custom_profile_attributes/fields/${encodeURIComponent(fieldId)}`, { method: "PATCH", body: patch }),
+    deleteField: (token, fieldId) => request(token, `/custom_profile_attributes/fields/${encodeURIComponent(fieldId)}`, { method: "DELETE" }),
+    // Caller's own value blob (the "/values" PATCH path that the official
+    // Mattermost client uses for self-edits).
+    patchMyValues: (token, values) => request(token, `/custom_profile_attributes/values`, {
+        method: "PATCH",
+        body: values,
+    }),
+    getUserValues: (token, userId = "me") => request(token, `/users/${encodeURIComponent(userId)}/custom_profile_attributes`),
+    patchUserValues: (token, values, userId = "me") => request(token, `/users/${encodeURIComponent(userId)}/custom_profile_attributes`, { method: "PATCH", body: values }),
 };

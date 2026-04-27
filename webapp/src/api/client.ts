@@ -1015,6 +1015,14 @@ export const adminApi = {
   cancelJob: (token: string, jobId: string) =>
     request<AdminJob>(token, `/jobs/${encodeURIComponent(jobId)}/cancel`, { method: "POST" }),
 
+  getLicenseRenewal: (token: string) => request<AdminCompatRecord>(token, "/license/renewal"),
+  getLicenseLoadMetric: (token: string) => request<AdminCompatRecord>(token, "/license/load_metric"),
+  listLDAPGroups: (token: string) => request<AdminCompatRecord[]>(token, "/ldap/groups"),
+  testLDAPConnection: (token: string) =>
+    request<AdminCompatRecord>(token, "/ldap/test_connection", { method: "POST" }),
+  getSAMLCertificateStatus: (token: string) =>
+    request<AdminCompatRecord>(token, "/saml/certificate/status"),
+
   listRemoteClusters: (token: string) => request<AdminCompatRecord[]>(token, "/remotecluster"),
   listSchemes: (token: string) => request<AdminCompatRecord[]>(token, "/schemes"),
   listGroups: (token: string) => request<AdminCompatRecord[]>(token, "/groups"),
@@ -1315,5 +1323,73 @@ export const notifyApi = {
       token,
       `/users/${encodeURIComponent(userId)}/notify_props`,
       { method: "PUT", body: props },
+    ),
+};
+
+// Phase 33 — Custom profile attributes. Admin-defined fields ("Department",
+// "Phone", etc.) that every user can fill in. Field definitions are global
+// (admin-curated); values are per-user. Values are stored as opaque JSONB
+// on the server so future field types round-trip without a migration.
+export type CustomProfileField = {
+  id: string;
+  name: string;
+  type: string;
+  target_id?: string;
+  target_type?: string;
+  attrs: Record<string, unknown>;
+  sort_order: number;
+  create_at: number;
+  update_at: number;
+  delete_at: number;
+};
+
+// Values are stored opaque so a "select" field can be a string while a
+// "multi_select" can be an array — the consuming UI casts based on field.type.
+export type CustomProfileValues = Record<string, unknown>;
+
+export const customProfileApi = {
+  listFields: (token: string) =>
+    request<CustomProfileField[]>(token, `/custom_profile_attributes/fields`),
+  createField: (
+    token: string,
+    field: { name: string; type?: string; attrs?: Record<string, unknown> },
+  ) =>
+    request<CustomProfileField>(token, `/custom_profile_attributes/fields`, {
+      method: "POST",
+      body: field,
+    }),
+  patchField: (
+    token: string,
+    fieldId: string,
+    patch: { name?: string; type?: string; attrs?: Record<string, unknown>; sort_order?: number },
+  ) =>
+    request<CustomProfileField>(
+      token,
+      `/custom_profile_attributes/fields/${encodeURIComponent(fieldId)}`,
+      { method: "PATCH", body: patch },
+    ),
+  deleteField: (token: string, fieldId: string) =>
+    request<void>(
+      token,
+      `/custom_profile_attributes/fields/${encodeURIComponent(fieldId)}`,
+      { method: "DELETE" },
+    ),
+  // Caller's own value blob (the "/values" PATCH path that the official
+  // Mattermost client uses for self-edits).
+  patchMyValues: (token: string, values: CustomProfileValues) =>
+    request<CustomProfileValues>(token, `/custom_profile_attributes/values`, {
+      method: "PATCH",
+      body: values,
+    }),
+  getUserValues: (token: string, userId = "me") =>
+    request<CustomProfileValues>(
+      token,
+      `/users/${encodeURIComponent(userId)}/custom_profile_attributes`,
+    ),
+  patchUserValues: (token: string, values: CustomProfileValues, userId = "me") =>
+    request<CustomProfileValues>(
+      token,
+      `/users/${encodeURIComponent(userId)}/custom_profile_attributes`,
+      { method: "PATCH", body: values },
     ),
 };
