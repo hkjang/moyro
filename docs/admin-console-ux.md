@@ -48,8 +48,13 @@ than a chat-adjacent utility drawer.
 
 ## Current Implementation Notes
 
-- The current `IntegrationsPanel` has been reshaped into a System Console shell
-  with a left navigation tree and right settings panel.
+- The current `IntegrationsPanel` has been reshaped into a dedicated full-page
+  System Console with a left navigation tree and right settings panel.
+- Admin is intentionally not a modal over chat; opening it switches to an
+  operator page surface.
+- The admin page now has organization/workspace scope, global admin search,
+  current-admin identity, collapsible navigation sections, table-based detail
+  lists, and a right-side detail panel.
 - Compliance policy probes intentionally call Mattermost route shapes:
   data retention, content flagging, compliance reports, groups, schemes, remote
   clusters, and shared channels.

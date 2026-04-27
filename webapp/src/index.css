@@ -1002,24 +1002,73 @@ select:focus-visible {
 }
 .cmd-notice span { flex: 1; }
 
-/* ---- Integrations panel (Phase 12) ---------------------------------
- * Reuses .modal-backdrop + .modal-card. The .integrations-panel class
- * widens the card and stretches to nearly full viewport height so the
- * three tab panes have enough breathing room on a laptop display.
+/* ---- Admin console ---------------------------------------------------
+ * Full-page operator surface. It intentionally does not use the modal shell:
+ * admin work needs deep navigation, tables, detail panels, and durable scope.
  * ------------------------------------------------------------------ */
+.admin-page {
+  position: fixed;
+  inset: 0;
+  z-index: 90;
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  background: var(--bg);
+}
 .integrations-panel {
-  width: 1080px;
-  max-width: calc(100vw - 40px);
-  max-height: calc(100vh - 80px);
+  width: 100%;
+  max-width: none;
+  height: 100vh;
+  max-height: none;
   display: flex;
   flex-direction: column;
-  padding: 18px 20px 20px;
+  padding: 18px 24px 22px;
+  border-radius: 0;
 }
 .integrations-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
   margin-bottom: 10px;
+}
+.admin-console-topbar {
+  display: grid;
+  grid-template-columns: minmax(150px, 220px) minmax(150px, 220px) minmax(220px, 1fr) minmax(150px, 220px);
+  gap: 10px;
+  align-items: stretch;
+  margin-bottom: 14px;
+}
+.admin-scope-chip,
+.admin-account-chip {
+  min-width: 0;
+  padding: 9px 11px;
+  border: 1px solid var(--card-border);
+  border-radius: 8px;
+  background: rgba(255,255,255,0.02);
+}
+.admin-scope-chip span,
+.admin-account-chip small {
+  display: block;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.admin-scope-chip strong,
+.admin-account-chip span {
+  display: block;
+  overflow: hidden;
+  color: var(--fg);
+  font-size: 13px;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.admin-console-search {
+  width: 100%;
+  height: 100%;
+  min-height: 42px;
 }
 .admin-console-shell {
   min-height: 0;
@@ -1040,12 +1089,25 @@ select:focus-visible {
   margin-top: 14px;
 }
 .admin-console-tree-heading {
-  margin: 0 0 6px 4px;
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin: 0 0 6px;
+  padding: 2px 4px;
+  border: 0;
+  background: transparent;
   color: var(--muted);
+  cursor: pointer;
   font-size: 11px;
   font-weight: 700;
   letter-spacing: 0.04em;
   text-transform: uppercase;
+  text-align: left;
+}
+.admin-console-tree-heading small {
+  font-size: 13px;
 }
 .admin-console-tree-item {
   width: 100%;
@@ -1085,7 +1147,12 @@ select:focus-visible {
   border-color: rgba(125, 211, 252, 0.28);
   background: rgba(125, 211, 252, 0.08);
 }
+.admin-console-tree-item:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
 .admin-console-panel {
+  position: relative;
   min-width: 0;
   min-height: 0;
   display: flex;
@@ -1254,6 +1321,112 @@ select:focus-visible {
   overflow-wrap: anywhere;
   font-size: 11px;
   color: #d8dee9;
+}
+.admin-data-table {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  overflow: hidden;
+  border: 1px solid var(--card-border);
+  border-radius: 8px;
+  background: rgba(255,255,255,0.015);
+  table-layout: fixed;
+}
+.admin-data-table th,
+.admin-data-table td {
+  overflow: hidden;
+  padding: 9px 10px;
+  border-bottom: 1px solid var(--card-border);
+  color: var(--fg);
+  font-size: 12px;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.admin-data-table th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: rgba(20, 24, 33, 0.96);
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+.admin-data-table tbody tr {
+  cursor: pointer;
+}
+.admin-data-table tbody tr:hover,
+.admin-data-table tbody tr:focus-visible {
+  background: rgba(125, 211, 252, 0.07);
+  outline: none;
+}
+.admin-data-table tbody tr:last-child td {
+  border-bottom: 0;
+}
+.admin-empty-cell {
+  color: var(--muted) !important;
+  text-align: center !important;
+}
+.admin-detail-panel {
+  position: absolute;
+  top: 42px;
+  right: 0;
+  bottom: 0;
+  z-index: 4;
+  width: min(380px, 100%);
+  overflow-y: auto;
+  padding: 14px;
+  border: 1px solid var(--card-border);
+  border-radius: 8px;
+  background: rgba(18, 22, 30, 0.98);
+  box-shadow: 0 20px 60px rgba(0,0,0,0.35);
+}
+.admin-detail-panel-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+.admin-detail-panel-head span {
+  display: block;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+.admin-detail-panel-head strong {
+  display: block;
+  color: var(--fg);
+  font-size: 15px;
+}
+.admin-detail-panel p {
+  margin: 0 0 12px;
+  color: var(--muted);
+  font-size: 12px;
+}
+.admin-detail-panel dl {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+}
+.admin-detail-panel dl div {
+  min-width: 0;
+  padding: 8px 10px;
+  border: 1px solid var(--card-border);
+  border-radius: 8px;
+  background: rgba(255,255,255,0.02);
+}
+.admin-detail-panel dt {
+  color: var(--muted);
+  font-size: 11px;
+}
+.admin-detail-panel dd {
+  overflow-wrap: anywhere;
+  margin: 2px 0 0;
+  color: var(--fg);
+  font-size: 12px;
 }
 .reveal-card {
   margin: 0 0 12px;
@@ -1819,6 +1992,14 @@ button.file-image {
     box-shadow: -24px 0 60px -30px rgba(0, 0, 0, 0.8);
   }
 
+  .admin-console-topbar {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .admin-console-search {
+    grid-column: 1 / -1;
+  }
+
   .admin-console-shell {
     grid-template-columns: 1fr;
   }
@@ -1877,13 +2058,24 @@ button.file-image {
   }
 
   .modal-card,
-  .integrations-panel,
   .channel-discover-modal,
   .schedule-modal,
   .reminder-popover {
     width: calc(100vw - 24px);
     max-width: calc(100vw - 24px);
     max-height: calc(100vh - 24px);
+  }
+
+  .integrations-panel {
+    width: 100%;
+    max-width: none;
+    height: 100vh;
+    max-height: none;
+    padding: 12px;
+  }
+
+  .admin-console-topbar {
+    grid-template-columns: 1fr;
   }
 
   .schedule-custom,
@@ -1902,6 +2094,11 @@ button.file-image {
 
   .admin-console-tree {
     max-height: 260px;
+  }
+
+  .admin-detail-panel {
+    top: 48px;
+    width: 100%;
   }
 
   .schedule-custom .btn-primary,

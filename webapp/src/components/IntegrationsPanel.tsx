@@ -28,18 +28,23 @@ import {
   type Invite,
   type OutgoingWebhook,
   type PAT,
+  type Team,
   type User,
 } from "@/api/client";
 import { invalidateEmojiCache } from "@/components/EmojiPicker";
 import { useEscClose, useConfirm } from "@/components/shared";
 
 type Tab =
+  | "org"
+  | "workspaces"
   | "bots"
   | "incoming"
   | "outgoing"
   | "emoji"
   | "invites"
   | "users"
+  | "channels"
+  | "apps"
   | "auth"
   | "system"
   | "plugins"
@@ -49,16 +54,20 @@ type Tab =
   | "audit";
 
 const TAB_LABELS: Record<Tab, string> = {
+  org: "조직",
+  workspaces: "워크스페이스",
   bots: "봇",
   incoming: "인커밍 웹훅",
   outgoing: "아웃고잉 웹훅",
   emoji: "이모지",
   invites: "초대 링크",
-  users: "사용자",
-  auth: "Authentication",
+  users: "멤버",
+  channels: "채널",
+  apps: "앱",
+  auth: "보안",
   system: "시스템",
   plugins: "플러그인",
-  roles: "역할",
+  roles: "권한",
   jobs: "작업",
   policies: "정책",
   audit: "감사 로그",
@@ -66,41 +75,45 @@ const TAB_LABELS: Record<Tab, string> = {
 
 const ADMIN_NAV: { section: string; items: { tab: Tab; label: string }[] }[] = [
   {
-    section: "Environment",
+    section: "Organization",
     items: [
-      { tab: "system", label: "Web Server / Database / File Storage" },
-      { tab: "jobs", label: "Background Jobs" },
+      { tab: "org", label: "Organization" },
+      { tab: "workspaces", label: "Workspaces" },
     ],
   },
   {
-    section: "Authentication",
+    section: "Directory",
     items: [
-      { tab: "auth", label: "LDAP / SSO / MFA" },
-      { tab: "users", label: "Users" },
+      { tab: "users", label: "Members" },
+      { tab: "channels", label: "Channels" },
+    ],
+  },
+  {
+    section: "Apps",
+    items: [
+      { tab: "apps", label: "Installed Apps" },
+      { tab: "plugins", label: "Plugins" },
+      { tab: "bots", label: "Bots / Tokens" },
+    ],
+  },
+  {
+    section: "Security",
+    items: [
+      { tab: "auth", label: "2FA / SSO / Sessions" },
       { tab: "roles", label: "Permissions / Roles" },
+      { tab: "policies", label: "Access Control" },
     ],
   },
   {
-    section: "Site Configuration",
+    section: "Operations",
     items: [
+      { tab: "system", label: "System / Storage" },
+      { tab: "jobs", label: "Background Jobs" },
+      { tab: "audit", label: "Logging / Audit" },
       { tab: "invites", label: "Team Invites" },
       { tab: "emoji", label: "Custom Emoji" },
-    ],
-  },
-  {
-    section: "Integrations",
-    items: [
-      { tab: "bots", label: "Bots / Tokens" },
       { tab: "incoming", label: "Incoming Webhooks" },
       { tab: "outgoing", label: "Outgoing Webhooks" },
-      { tab: "plugins", label: "Plugins" },
-    ],
-  },
-  {
-    section: "Compliance",
-    items: [
-      { tab: "audit", label: "Logging / Audit" },
-      { tab: "policies", label: "Access Control / Governance" },
     ],
   },
 ];
@@ -135,6 +148,12 @@ type AdminPolicyProbe = {
 
 type AdminAuthProbe = AdminPolicyProbe;
 
+type AdminDetailPanel = {
+  title: string;
+  subtitle: string;
+  rows: { label: string; value: string }[];
+};
+
 export function IntegrationsPanel({
   channels,
   currentTeamId,
@@ -147,8 +166,12 @@ export function IntegrationsPanel({
   useEscClose(true, onClose);
   const confirmer = useConfirm();
   const token = useSelector((s: RootState) => s.auth.token);
-  const [tab, setTab] = useState<Tab>("bots");
+  const currentUser = useSelector((s: RootState) => s.auth.user);
+  const [tab, setTab] = useState<Tab>("org");
   const [error, setError] = useState<string | null>(null);
+  const [adminSearch, setAdminSearch] = useState("");
+  const [collapsedSections, setCollapsedSections] = useState<Record<string, boolean>>({});
+  const [adminDetail, setAdminDetail] = useState<AdminDetailPanel | null>(null);
 
   // Bots
   const [bots, setBots] = useState<Bot[]>([]);
@@ -197,6 +220,7 @@ export function IntegrationsPanel({
   // Phase 16 — users directory (admin). We fetch the first page; the
   // existing `listUsers` endpoint already paginates and returns `User[]`.
   const [users, setUsers] = useState<User[]>([]);
+  const [teams, setTeams] = useState<Team[]>([]);
 
   // Phase 16 — audit browse. Filters are driven client-side into the
   // server's `?action_prefix=` + `?actor=` params; changing either kicks
@@ -233,11 +257,85 @@ export function IntegrationsPanel({
     }
     return null;
   }, [tab]);
+  const isSystemAdmin = useMemo(
+    () => (currentUser?.roles ?? "").split(/\s+/).includes("system_admin"),
+    [currentUser],
+  );
+  const organizationName = String(adminConfig?.TeamSettings?.SiteName ?? "RelayChat");
+  const workspaceScope = currentTeamId ? currentTeamId.slice(0, 8) : "all workspaces";
+  const query = adminSearch.trim().toLowerCase();
+  const filteredUsers = useMemo(
+    () => users.filter((u) =>
+      !query ||
+      u.username.toLowerCase().includes(query) ||
+      u.email.toLowerCase().includes(query) ||
+      (u.roles ?? "").toLowerCase().includes(query),
+    ),
+    [query, users],
+  );
+  const filteredChannels = useMemo(
+    () => channels.filter((c) =>
+      !query ||
+      c.display_name.toLowerCase().includes(query) ||
+      c.name.toLowerCase().includes(query) ||
+      c.type.toLowerCase().includes(query),
+    ),
+    [channels, query],
+  );
+  const filteredTeams = useMemo(
+    () => teams.filter((team) =>
+      !query ||
+      team.display_name.toLowerCase().includes(query) ||
+      team.name.toLowerCase().includes(query) ||
+      team.type.toLowerCase().includes(query),
+    ),
+    [query, teams],
+  );
+  const filteredPlugins = useMemo(
+    () => pluginRows.filter((plugin, idx) => {
+      const pluginID = String(plugin.id ?? plugin.plugin_id ?? `plugin-${idx}`);
+      return !query ||
+        pluginID.toLowerCase().includes(query) ||
+        String(plugin.name ?? "").toLowerCase().includes(query) ||
+        String(plugin.description ?? "").toLowerCase().includes(query);
+    }),
+    [pluginRows, query],
+  );
+  const canAccessTab = useCallback((candidate: Tab) => {
+    if (isSystemAdmin) return true;
+    return candidate === "users" || candidate === "channels" || candidate === "audit";
+  }, [isSystemAdmin]);
+  const openDetail = useCallback((detail: AdminDetailPanel) => setAdminDetail(detail), []);
 
   const refresh = useCallback(async () => {
     if (!token) return;
     try {
-      if (tab === "bots") {
+      if (tab === "org") {
+        const [config, listedUsers, listedTeams, rolesList] = await Promise.all([
+          adminApi.getConfig(token),
+          api.listUsers(token, 0, 200, true),
+          api.listTeams(token),
+          adminApi.listRoles(token),
+        ]);
+        setAdminConfig(config);
+        setUsers(listedUsers);
+        setTeams(listedTeams);
+        setRoles(rolesList);
+      } else if (tab === "workspaces") {
+        setTeams(await api.listTeams(token));
+      } else if (tab === "channels") {
+        // Channels are provided by the chat shell; this tab keeps the admin
+        // surface read-only until server-side admin pagination is wired.
+      } else if (tab === "apps") {
+        const [plugins, statuses, botRows] = await Promise.all([
+          adminApi.listPlugins(token),
+          adminApi.listPluginStatuses(token),
+          integrationsApi.listBots(token),
+        ]);
+        setPluginRows(plugins);
+        setPluginStatuses(statuses);
+        setBots(botRows);
+      } else if (tab === "bots") {
         setBots(await integrationsApi.listBots(token));
       } else if (tab === "incoming") {
         setIncoming(await integrationsApi.listIncoming(token));
@@ -435,9 +533,10 @@ export function IntegrationsPanel({
     } catch (e) {
       setError(e instanceof Error ? e.message : "로드 실패");
     }
-  }, [token, tab, currentTeamId, auditPrefix, auditActor]);
+  }, [token, tab, currentTeamId, auditPrefix, auditActor, channels]);
 
   useEffect(() => { refresh(); }, [refresh]);
+  useEffect(() => { setAdminDetail(null); }, [tab]);
 
   // ---- Bot actions ----
   async function onCreateBot() {
@@ -756,33 +855,75 @@ export function IntegrationsPanel({
   }
 
   return (
-    <div className="modal-backdrop" onClick={onClose}>
-      <div className="modal-card integrations-panel" onClick={(e) => e.stopPropagation()}>
+    <main className="admin-page">
+      <div className="integrations-panel admin-page-frame">
         <header className="integrations-header">
           <h3 style={{ margin: 0 }}>System Console</h3>
           <button type="button" className="action-btn" onClick={onClose} title="닫기">✕</button>
         </header>
+        <div className="admin-console-topbar">
+          <div className="admin-scope-chip">
+            <span>Organization</span>
+            <strong>{organizationName}</strong>
+          </div>
+          <div className="admin-scope-chip">
+            <span>Workspace Scope</span>
+            <strong>{workspaceScope}</strong>
+          </div>
+          <input
+            className="field-input admin-console-search"
+            value={adminSearch}
+            onChange={(e) => setAdminSearch(e.target.value)}
+            placeholder="Search members, channels, apps, logs"
+            aria-label="Search admin data"
+          />
+          <div className="admin-account-chip">
+            <span>{currentUser?.username ?? "admin"}</span>
+            <small>{currentUser?.roles ?? "system_user"}</small>
+          </div>
+        </div>
         <div className="admin-console-shell">
           <nav className="admin-console-tree" aria-label="System Console">
-            {ADMIN_NAV.map((section) => (
-              <div key={section.section} className="admin-console-tree-section">
-                <div className="admin-console-tree-heading">{section.section}</div>
-                {section.items.map((item) => (
+            {ADMIN_NAV.map((section) => {
+              const collapsed = collapsedSections[section.section] === true;
+              return (
+                <div key={section.section} className="admin-console-tree-section">
                   <button
-                    key={item.tab}
                     type="button"
-                    className="admin-console-tree-item"
-                    aria-selected={tab === item.tab}
-                    aria-current={tab === item.tab ? "page" : undefined}
-                    onClick={() => setTab(item.tab)}
-                    title={item.label}
+                    className="admin-console-tree-heading"
+                    aria-expanded={!collapsed}
+                    onClick={() =>
+                      setCollapsedSections((prev) => ({
+                        ...prev,
+                        [section.section]: !prev[section.section],
+                      }))
+                    }
                   >
-                    <span>{item.label}</span>
-                    <small>{TAB_LABELS[item.tab]}</small>
+                    <span>{section.section}</span>
+                    <small>{collapsed ? "+" : "−"}</small>
                   </button>
-                ))}
-              </div>
-            ))}
+                  {!collapsed && section.items.map((item) => {
+                    const disabled = !canAccessTab(item.tab);
+                    return (
+                      <button
+                        key={item.tab}
+                        type="button"
+                        className="admin-console-tree-item"
+                        aria-selected={tab === item.tab}
+                        aria-current={tab === item.tab ? "page" : undefined}
+                        aria-disabled={disabled}
+                        disabled={disabled}
+                        onClick={() => setTab(item.tab)}
+                        title={disabled ? "권한이 필요합니다" : item.label}
+                      >
+                        <span>{item.label}</span>
+                        <small>{TAB_LABELS[item.tab]}</small>
+                      </button>
+                    );
+                  })}
+                </div>
+              );
+            })}
           </nav>
           <section className="admin-console-panel">
             <div className="admin-console-panel-heading">
@@ -796,6 +937,26 @@ export function IntegrationsPanel({
             </div>
 
             {error && <div className="login-error" style={{ margin: "0 0 12px" }}>{error}</div>}
+            {adminDetail && (
+              <aside className="admin-detail-panel" aria-label="Admin detail">
+                <div className="admin-detail-panel-head">
+                  <div>
+                    <span>Detail</span>
+                    <strong>{adminDetail.title}</strong>
+                  </div>
+                  <button type="button" className="action-btn" onClick={() => setAdminDetail(null)} title="Close detail">✕</button>
+                </div>
+                <p>{adminDetail.subtitle}</p>
+                <dl>
+                  {adminDetail.rows.map((row) => (
+                    <div key={row.label}>
+                      <dt>{row.label}</dt>
+                      <dd>{row.value}</dd>
+                    </div>
+                  ))}
+                </dl>
+              </aside>
+            )}
 
             {/* One-time reveal for newly minted PATs */}
             {freshPAT && (
@@ -812,6 +973,252 @@ export function IntegrationsPanel({
             <button type="button" className="btn-ghost" onClick={() => setFreshIncomingURL(null)}>확인</button>
           </div>
             )}
+
+        {tab === "org" && (
+          <div className="integrations-body">
+            <div className="integrations-create admin-toolbar">
+              <button
+                type="button"
+                className="btn-ghost"
+                style={{ width: "auto", padding: "0 12px", height: 34 }}
+                onClick={refresh}
+              >조직 새로고침</button>
+              <span className={isSystemAdmin ? "admin-pill ok" : "admin-pill"}>{isSystemAdmin ? "Org Owner" : "Admin"}</span>
+            </div>
+            <div className="admin-summary-grid">
+              <div className="admin-kv">
+                <span>Organization</span>
+                <strong>{organizationName}</strong>
+              </div>
+              <div className="admin-kv">
+                <span>Members</span>
+                <strong>{users.length}</strong>
+              </div>
+              <div className="admin-kv">
+                <span>Workspaces</span>
+                <strong>{teams.length}</strong>
+              </div>
+              <div className="admin-kv">
+                <span>System Roles</span>
+                <strong>{roles.length}</strong>
+              </div>
+            </div>
+            <table className="admin-data-table">
+              <thead>
+                <tr>
+                  <th>Area</th>
+                  <th>Status</th>
+                  <th>Controls</th>
+                  <th>Audit</th>
+                </tr>
+              </thead>
+              <tbody>
+                {[
+                  ["Members", `${users.length} loaded`, "Deactivate, reactivate, role review", "user.*"],
+                  ["Workspaces", `${teams.length} visible`, "Scope, invites, workspace settings", "team.*"],
+                  ["Apps", `${pluginRows.length + bots.length} installed/requested`, "Approve, enable, disable", "plugin.* / bot.*"],
+                  ["Security", "policy probes", "SSO, MFA, sessions, license", "system.*"],
+                ].map(([area, status, controls, audit]) => (
+                  <tr
+                    key={area}
+                    tabIndex={0}
+                    onClick={() => openDetail({
+                      title: area,
+                      subtitle: "Administrative operating area",
+                      rows: [
+                        { label: "Status", value: status },
+                        { label: "Controls", value: controls },
+                        { label: "Audit Filter", value: audit },
+                      ],
+                    })}
+                  >
+                    <td>{area}</td>
+                    <td><span className="admin-pill ok">{status}</span></td>
+                    <td>{controls}</td>
+                    <td><code>{audit}</code></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+
+        {tab === "workspaces" && (
+          <div className="integrations-body">
+            <div className="integrations-create admin-toolbar">
+              <button
+                type="button"
+                className="btn-ghost"
+                style={{ width: "auto", padding: "0 12px", height: 34 }}
+                onClick={refresh}
+              >워크스페이스 새로고침</button>
+              <span className="admin-pill">server paginated target</span>
+            </div>
+            <table className="admin-data-table">
+              <thead>
+                <tr>
+                  <th>Workspace</th>
+                  <th>Visibility</th>
+                  <th>Created</th>
+                  <th>Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filteredTeams.length === 0 && (
+                  <tr><td colSpan={4} className="admin-empty-cell">워크스페이스가 없거나 검색 결과가 없습니다.</td></tr>
+                )}
+                {filteredTeams.map((team) => (
+                  <tr
+                    key={team.id}
+                    tabIndex={0}
+                    onClick={() => openDetail({
+                      title: team.display_name,
+                      subtitle: team.name,
+                      rows: [
+                        { label: "ID", value: team.id },
+                        { label: "Visibility", value: team.type === "O" ? "open" : "invite only" },
+                        { label: "Created", value: new Date(team.create_at).toLocaleString() },
+                      ],
+                    })}
+                  >
+                    <td>{team.display_name}</td>
+                    <td>{team.type === "O" ? "Open" : "Private"}</td>
+                    <td>{new Date(team.create_at).toLocaleDateString()}</td>
+                    <td><span className="admin-pill ok">active</span></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+
+        {tab === "channels" && (
+          <div className="integrations-body">
+            <div className="integrations-create admin-toolbar">
+              <button
+                type="button"
+                className="btn-ghost"
+                style={{ width: "auto", padding: "0 12px", height: 34 }}
+                onClick={refresh}
+              >채널 새로고침</button>
+              <span className="admin-pill">{filteredChannels.length} rows</span>
+            </div>
+            <table className="admin-data-table">
+              <thead>
+                <tr>
+                  <th>Channel</th>
+                  <th>Type</th>
+                  <th>Created</th>
+                  <th>Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filteredChannels.length === 0 && (
+                  <tr><td colSpan={4} className="admin-empty-cell">채널이 없거나 검색 결과가 없습니다.</td></tr>
+                )}
+                {filteredChannels.map((channel) => {
+                  const archived = (channel.delete_at ?? 0) > 0;
+                  return (
+                    <tr
+                      key={channel.id}
+                      tabIndex={0}
+                      onClick={() => openDetail({
+                        title: channel.display_name || channel.name,
+                        subtitle: `#${channel.name}`,
+                        rows: [
+                          { label: "ID", value: channel.id },
+                          { label: "Team", value: channel.team_id },
+                          { label: "Type", value: channel.type },
+                          { label: "Status", value: archived ? "archived" : "active" },
+                        ],
+                      })}
+                    >
+                      <td>{channel.display_name || channel.name}</td>
+                      <td>{channel.type === "O" ? "Public" : channel.type === "P" ? "Private" : "Direct"}</td>
+                      <td>{new Date(channel.create_at).toLocaleDateString()}</td>
+                      <td><span className={archived ? "admin-pill danger" : "admin-pill ok"}>{archived ? "archived" : "active"}</span></td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+
+        {tab === "apps" && (
+          <div className="integrations-body">
+            <div className="integrations-create admin-toolbar">
+              <button
+                type="button"
+                className="btn-ghost"
+                style={{ width: "auto", padding: "0 12px", height: 34 }}
+                onClick={refresh}
+              >앱 새로고침</button>
+              <span className="admin-pill ok">approval workflow ready</span>
+            </div>
+            <table className="admin-data-table">
+              <thead>
+                <tr>
+                  <th>App</th>
+                  <th>Kind</th>
+                  <th>Approval</th>
+                  <th>Scope</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filteredPlugins.length === 0 && bots.length === 0 && (
+                  <tr><td colSpan={4} className="admin-empty-cell">앱 또는 플러그인이 없습니다.</td></tr>
+                )}
+                {filteredPlugins.map((plugin, idx) => {
+                  const pluginId = String(plugin.id ?? plugin.plugin_id ?? `plugin-${idx}`);
+                  const state = pluginStateByID[pluginId] ?? String(plugin.state ?? "unknown");
+                  return (
+                    <tr
+                      key={pluginId}
+                      tabIndex={0}
+                      onClick={() => openDetail({
+                        title: String(plugin.name ?? pluginId),
+                        subtitle: pluginId,
+                        rows: [
+                          { label: "Kind", value: "Plugin" },
+                          { label: "State", value: state },
+                          { label: "Version", value: String(plugin.version ?? "dev") },
+                        ],
+                      })}
+                    >
+                      <td>{String(plugin.name ?? pluginId)}</td>
+                      <td>Plugin</td>
+                      <td><span className={state === "running" || state === "enabled" ? "admin-pill ok" : "admin-pill"}>{state}</span></td>
+                      <td>system</td>
+                    </tr>
+                  );
+                })}
+                {bots
+                  .filter((bot) => !query || bot.username.toLowerCase().includes(query) || (bot.description ?? "").toLowerCase().includes(query))
+                  .map((bot) => (
+                    <tr
+                      key={bot.user_id}
+                      tabIndex={0}
+                      onClick={() => openDetail({
+                        title: `@${bot.username}`,
+                        subtitle: bot.user_id,
+                        rows: [
+                          { label: "Kind", value: "Bot" },
+                          { label: "Approval", value: "approved" },
+                          { label: "Description", value: bot.description || "-" },
+                        ],
+                      })}
+                    >
+                      <td>@{bot.username}</td>
+                      <td>Bot</td>
+                      <td><span className="admin-pill ok">approved</span></td>
+                      <td>tokens</td>
+                    </tr>
+                  ))}
+              </tbody>
+            </table>
+          </div>
+        )}
 
         {tab === "bots" && (
           <div className="integrations-body">
@@ -1068,10 +1475,10 @@ export function IntegrationsPanel({
         {tab === "users" && (
           <div className="integrations-body">
             <ul className="integrations-list">
-              {users.length === 0 && (
+              {filteredUsers.length === 0 && (
                 <li className="chat-empty" style={{ padding: 12 }}>등록된 사용자가 없습니다.</li>
               )}
-              {users.map((u) => {
+              {filteredUsers.map((u) => {
                 const inactive = (u.delete_at ?? 0) > 0;
                 return (
                   <li
@@ -1515,6 +1922,6 @@ export function IntegrationsPanel({
         </div>
       </div>
       {confirmer.render()}
-    </div>
+    </main>
   );
 }

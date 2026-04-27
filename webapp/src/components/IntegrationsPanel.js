@@ -12,57 +12,65 @@ import { adminApi, api, integrationsApi, } from "@/api/client";
 import { invalidateEmojiCache } from "@/components/EmojiPicker";
 import { useEscClose, useConfirm } from "@/components/shared";
 const TAB_LABELS = {
+    org: "조직",
+    workspaces: "워크스페이스",
     bots: "봇",
     incoming: "인커밍 웹훅",
     outgoing: "아웃고잉 웹훅",
     emoji: "이모지",
     invites: "초대 링크",
-    users: "사용자",
-    auth: "Authentication",
+    users: "멤버",
+    channels: "채널",
+    apps: "앱",
+    auth: "보안",
     system: "시스템",
     plugins: "플러그인",
-    roles: "역할",
+    roles: "권한",
     jobs: "작업",
     policies: "정책",
     audit: "감사 로그",
 };
 const ADMIN_NAV = [
     {
-        section: "Environment",
+        section: "Organization",
         items: [
-            { tab: "system", label: "Web Server / Database / File Storage" },
-            { tab: "jobs", label: "Background Jobs" },
+            { tab: "org", label: "Organization" },
+            { tab: "workspaces", label: "Workspaces" },
         ],
     },
     {
-        section: "Authentication",
+        section: "Directory",
         items: [
-            { tab: "auth", label: "LDAP / SSO / MFA" },
-            { tab: "users", label: "Users" },
+            { tab: "users", label: "Members" },
+            { tab: "channels", label: "Channels" },
+        ],
+    },
+    {
+        section: "Apps",
+        items: [
+            { tab: "apps", label: "Installed Apps" },
+            { tab: "plugins", label: "Plugins" },
+            { tab: "bots", label: "Bots / Tokens" },
+        ],
+    },
+    {
+        section: "Security",
+        items: [
+            { tab: "auth", label: "2FA / SSO / Sessions" },
             { tab: "roles", label: "Permissions / Roles" },
+            { tab: "policies", label: "Access Control" },
         ],
     },
     {
-        section: "Site Configuration",
+        section: "Operations",
         items: [
+            { tab: "system", label: "System / Storage" },
+            { tab: "jobs", label: "Background Jobs" },
+            { tab: "audit", label: "Logging / Audit" },
             { tab: "invites", label: "Team Invites" },
             { tab: "emoji", label: "Custom Emoji" },
-        ],
-    },
-    {
-        section: "Integrations",
-        items: [
-            { tab: "bots", label: "Bots / Tokens" },
             { tab: "incoming", label: "Incoming Webhooks" },
             { tab: "outgoing", label: "Outgoing Webhooks" },
-            { tab: "plugins", label: "Plugins" },
-        ],
-    },
-    {
-        section: "Compliance",
-        items: [
-            { tab: "audit", label: "Logging / Audit" },
-            { tab: "policies", label: "Access Control / Governance" },
         ],
     },
 ];
@@ -87,8 +95,12 @@ export function IntegrationsPanel({ channels, currentTeamId, onClose, }) {
     useEscClose(true, onClose);
     const confirmer = useConfirm();
     const token = useSelector((s) => s.auth.token);
-    const [tab, setTab] = useState("bots");
+    const currentUser = useSelector((s) => s.auth.user);
+    const [tab, setTab] = useState("org");
     const [error, setError] = useState(null);
+    const [adminSearch, setAdminSearch] = useState("");
+    const [collapsedSections, setCollapsedSections] = useState({});
+    const [adminDetail, setAdminDetail] = useState(null);
     // Bots
     const [bots, setBots] = useState([]);
     const [newBotName, setNewBotName] = useState("");
@@ -129,6 +141,7 @@ export function IntegrationsPanel({ channels, currentTeamId, onClose, }) {
     // Phase 16 — users directory (admin). We fetch the first page; the
     // existing `listUsers` endpoint already paginates and returns `User[]`.
     const [users, setUsers] = useState([]);
+    const [teams, setTeams] = useState([]);
     // Phase 16 — audit browse. Filters are driven client-side into the
     // server's `?action_prefix=` + `?actor=` params; changing either kicks
     // off a refresh via the effect on `refresh`.
@@ -164,11 +177,69 @@ export function IntegrationsPanel({ channels, currentTeamId, onClose, }) {
         }
         return null;
     }, [tab]);
+    const isSystemAdmin = useMemo(() => (currentUser?.roles ?? "").split(/\s+/).includes("system_admin"), [currentUser]);
+    const organizationName = String(adminConfig?.TeamSettings?.SiteName ?? "RelayChat");
+    const workspaceScope = currentTeamId ? currentTeamId.slice(0, 8) : "all workspaces";
+    const query = adminSearch.trim().toLowerCase();
+    const filteredUsers = useMemo(() => users.filter((u) => !query ||
+        u.username.toLowerCase().includes(query) ||
+        u.email.toLowerCase().includes(query) ||
+        (u.roles ?? "").toLowerCase().includes(query)), [query, users]);
+    const filteredChannels = useMemo(() => channels.filter((c) => !query ||
+        c.display_name.toLowerCase().includes(query) ||
+        c.name.toLowerCase().includes(query) ||
+        c.type.toLowerCase().includes(query)), [channels, query]);
+    const filteredTeams = useMemo(() => teams.filter((team) => !query ||
+        team.display_name.toLowerCase().includes(query) ||
+        team.name.toLowerCase().includes(query) ||
+        team.type.toLowerCase().includes(query)), [query, teams]);
+    const filteredPlugins = useMemo(() => pluginRows.filter((plugin, idx) => {
+        const pluginID = String(plugin.id ?? plugin.plugin_id ?? `plugin-${idx}`);
+        return !query ||
+            pluginID.toLowerCase().includes(query) ||
+            String(plugin.name ?? "").toLowerCase().includes(query) ||
+            String(plugin.description ?? "").toLowerCase().includes(query);
+    }), [pluginRows, query]);
+    const canAccessTab = useCallback((candidate) => {
+        if (isSystemAdmin)
+            return true;
+        return candidate === "users" || candidate === "channels" || candidate === "audit";
+    }, [isSystemAdmin]);
+    const openDetail = useCallback((detail) => setAdminDetail(detail), []);
     const refresh = useCallback(async () => {
         if (!token)
             return;
         try {
-            if (tab === "bots") {
+            if (tab === "org") {
+                const [config, listedUsers, listedTeams, rolesList] = await Promise.all([
+                    adminApi.getConfig(token),
+                    api.listUsers(token, 0, 200, true),
+                    api.listTeams(token),
+                    adminApi.listRoles(token),
+                ]);
+                setAdminConfig(config);
+                setUsers(listedUsers);
+                setTeams(listedTeams);
+                setRoles(rolesList);
+            }
+            else if (tab === "workspaces") {
+                setTeams(await api.listTeams(token));
+            }
+            else if (tab === "channels") {
+                // Channels are provided by the chat shell; this tab keeps the admin
+                // surface read-only until server-side admin pagination is wired.
+            }
+            else if (tab === "apps") {
+                const [plugins, statuses, botRows] = await Promise.all([
+                    adminApi.listPlugins(token),
+                    adminApi.listPluginStatuses(token),
+                    integrationsApi.listBots(token),
+                ]);
+                setPluginRows(plugins);
+                setPluginStatuses(statuses);
+                setBots(botRows);
+            }
+            else if (tab === "bots") {
                 setBots(await integrationsApi.listBots(token));
             }
             else if (tab === "incoming") {
@@ -365,8 +436,9 @@ export function IntegrationsPanel({ channels, currentTeamId, onClose, }) {
         catch (e) {
             setError(e instanceof Error ? e.message : "로드 실패");
         }
-    }, [token, tab, currentTeamId, auditPrefix, auditActor]);
+    }, [token, tab, currentTeamId, auditPrefix, auditActor, channels]);
     useEffect(() => { refresh(); }, [refresh]);
+    useEffect(() => { setAdminDetail(null); }, [tab]);
     // ---- Bot actions ----
     async function onCreateBot() {
         if (!token || !newBotName.trim())
@@ -707,7 +779,71 @@ export function IntegrationsPanel({ channels, currentTeamId, onClose, }) {
             setError(e instanceof Error ? e.message : "작업 취소 실패");
         }
     }
-    return (_jsxs("div", { className: "modal-backdrop", onClick: onClose, children: [_jsxs("div", { className: "modal-card integrations-panel", onClick: (e) => e.stopPropagation(), children: [_jsxs("header", { className: "integrations-header", children: [_jsx("h3", { style: { margin: 0 }, children: "System Console" }), _jsx("button", { type: "button", className: "action-btn", onClick: onClose, title: "\uB2EB\uAE30", children: "\u2715" })] }), _jsxs("div", { className: "admin-console-shell", children: [_jsx("nav", { className: "admin-console-tree", "aria-label": "System Console", children: ADMIN_NAV.map((section) => (_jsxs("div", { className: "admin-console-tree-section", children: [_jsx("div", { className: "admin-console-tree-heading", children: section.section }), section.items.map((item) => (_jsxs("button", { type: "button", className: "admin-console-tree-item", "aria-selected": tab === item.tab, "aria-current": tab === item.tab ? "page" : undefined, onClick: () => setTab(item.tab), title: item.label, children: [_jsx("span", { children: item.label }), _jsx("small", { children: TAB_LABELS[item.tab] })] }, item.tab)))] }, section.section))) }), _jsxs("section", { className: "admin-console-panel", children: [_jsxs("div", { className: "admin-console-panel-heading", children: [_jsxs("div", { children: [_jsx("span", { className: "admin-console-panel-kicker", children: activeNavItem?.section ?? "System Console" }), _jsx("strong", { children: activeNavItem?.item.label ?? TAB_LABELS[tab] })] }), _jsx("span", { className: "admin-pill", children: TAB_LABELS[tab] })] }), error && _jsx("div", { className: "login-error", style: { margin: "0 0 12px" }, children: error }), freshPAT && (_jsxs("div", { className: "reveal-card", children: [_jsx("div", { style: { fontWeight: 600 }, children: "\uD1A0\uD070\uC774 \uC0DD\uC131\uB418\uC5C8\uC2B5\uB2C8\uB2E4. \uC9C0\uAE08 \uBCF5\uC0AC\uD574 \uB450\uC138\uC694. \uC774\uD6C4\uC5D0\uB294 \uB2E4\uC2DC \uBCFC \uC218 \uC5C6\uC2B5\uB2C8\uB2E4." }), _jsx("code", { className: "reveal-code", children: freshPAT.token }), _jsx("button", { type: "button", className: "btn-ghost", onClick: () => setFreshPAT(null), children: "\uD655\uC778" })] })), freshIncomingURL && (_jsxs("div", { className: "reveal-card", children: [_jsx("div", { style: { fontWeight: 600 }, children: "\uC778\uCEE4\uBC0D \uC6F9\uD6C5 URL\uC774 \uC0DD\uC131\uB418\uC5C8\uC2B5\uB2C8\uB2E4. \uC774 URL\uC744 \uACF5\uC720\uD558\uBA74 \uB204\uAD6C\uB098 \uBA54\uC2DC\uC9C0\uB97C \uBCF4\uB0BC \uC218 \uC788\uC2B5\uB2C8\uB2E4." }), _jsx("code", { className: "reveal-code", children: freshIncomingURL }), _jsx("button", { type: "button", className: "btn-ghost", onClick: () => setFreshIncomingURL(null), children: "\uD655\uC778" })] })), tab === "bots" && (_jsxs("div", { className: "integrations-body", children: [_jsxs("div", { className: "integrations-create", children: [_jsx("input", { className: "field-input", placeholder: "username (\uC601\uC18C\uBB38\uC790/\uC22B\uC790)", value: newBotName, onChange: (e) => setNewBotName(e.target.value) }), _jsx("input", { className: "field-input", placeholder: "\uD45C\uC2DC \uC774\uB984", value: newBotDisplay, onChange: (e) => setNewBotDisplay(e.target.value) }), _jsx("input", { className: "field-input", placeholder: "\uC124\uBA85 (\uC635\uC158)", value: newBotDesc, onChange: (e) => setNewBotDesc(e.target.value) }), _jsx("button", { className: "btn-primary", onClick: onCreateBot, style: { width: "auto", padding: "0 14px", height: 38 }, children: "\uBD07 \uB9CC\uB4E4\uAE30" })] }), _jsxs("ul", { className: "integrations-list", children: [bots.length === 0 && _jsx("li", { className: "chat-empty", style: { padding: 12 }, children: "\uB4F1\uB85D\uB41C \uBD07\uC774 \uC5C6\uC2B5\uB2C8\uB2E4." }), bots.map((b) => (_jsxs("li", { className: "integrations-row", children: [_jsxs("div", { style: { flex: 1 }, children: [_jsxs("div", { style: { fontWeight: 600 }, children: ["@", b.username] }), _jsx("div", { style: { color: "var(--muted)", fontSize: 12 }, children: b.description || "—" }), botTokens[b.user_id] && (_jsx("div", { style: { marginTop: 6 }, children: botTokens[b.user_id].length === 0
+    return (_jsxs("main", { className: "admin-page", children: [_jsxs("div", { className: "integrations-panel admin-page-frame", children: [_jsxs("header", { className: "integrations-header", children: [_jsx("h3", { style: { margin: 0 }, children: "System Console" }), _jsx("button", { type: "button", className: "action-btn", onClick: onClose, title: "\uB2EB\uAE30", children: "\u2715" })] }), _jsxs("div", { className: "admin-console-topbar", children: [_jsxs("div", { className: "admin-scope-chip", children: [_jsx("span", { children: "Organization" }), _jsx("strong", { children: organizationName })] }), _jsxs("div", { className: "admin-scope-chip", children: [_jsx("span", { children: "Workspace Scope" }), _jsx("strong", { children: workspaceScope })] }), _jsx("input", { className: "field-input admin-console-search", value: adminSearch, onChange: (e) => setAdminSearch(e.target.value), placeholder: "Search members, channels, apps, logs", "aria-label": "Search admin data" }), _jsxs("div", { className: "admin-account-chip", children: [_jsx("span", { children: currentUser?.username ?? "admin" }), _jsx("small", { children: currentUser?.roles ?? "system_user" })] })] }), _jsxs("div", { className: "admin-console-shell", children: [_jsx("nav", { className: "admin-console-tree", "aria-label": "System Console", children: ADMIN_NAV.map((section) => {
+                                    const collapsed = collapsedSections[section.section] === true;
+                                    return (_jsxs("div", { className: "admin-console-tree-section", children: [_jsxs("button", { type: "button", className: "admin-console-tree-heading", "aria-expanded": !collapsed, onClick: () => setCollapsedSections((prev) => ({
+                                                    ...prev,
+                                                    [section.section]: !prev[section.section],
+                                                })), children: [_jsx("span", { children: section.section }), _jsx("small", { children: collapsed ? "+" : "−" })] }), !collapsed && section.items.map((item) => {
+                                                const disabled = !canAccessTab(item.tab);
+                                                return (_jsxs("button", { type: "button", className: "admin-console-tree-item", "aria-selected": tab === item.tab, "aria-current": tab === item.tab ? "page" : undefined, "aria-disabled": disabled, disabled: disabled, onClick: () => setTab(item.tab), title: disabled ? "권한이 필요합니다" : item.label, children: [_jsx("span", { children: item.label }), _jsx("small", { children: TAB_LABELS[item.tab] })] }, item.tab));
+                                            })] }, section.section));
+                                }) }), _jsxs("section", { className: "admin-console-panel", children: [_jsxs("div", { className: "admin-console-panel-heading", children: [_jsxs("div", { children: [_jsx("span", { className: "admin-console-panel-kicker", children: activeNavItem?.section ?? "System Console" }), _jsx("strong", { children: activeNavItem?.item.label ?? TAB_LABELS[tab] })] }), _jsx("span", { className: "admin-pill", children: TAB_LABELS[tab] })] }), error && _jsx("div", { className: "login-error", style: { margin: "0 0 12px" }, children: error }), adminDetail && (_jsxs("aside", { className: "admin-detail-panel", "aria-label": "Admin detail", children: [_jsxs("div", { className: "admin-detail-panel-head", children: [_jsxs("div", { children: [_jsx("span", { children: "Detail" }), _jsx("strong", { children: adminDetail.title })] }), _jsx("button", { type: "button", className: "action-btn", onClick: () => setAdminDetail(null), title: "Close detail", children: "\u2715" })] }), _jsx("p", { children: adminDetail.subtitle }), _jsx("dl", { children: adminDetail.rows.map((row) => (_jsxs("div", { children: [_jsx("dt", { children: row.label }), _jsx("dd", { children: row.value })] }, row.label))) })] })), freshPAT && (_jsxs("div", { className: "reveal-card", children: [_jsx("div", { style: { fontWeight: 600 }, children: "\uD1A0\uD070\uC774 \uC0DD\uC131\uB418\uC5C8\uC2B5\uB2C8\uB2E4. \uC9C0\uAE08 \uBCF5\uC0AC\uD574 \uB450\uC138\uC694. \uC774\uD6C4\uC5D0\uB294 \uB2E4\uC2DC \uBCFC \uC218 \uC5C6\uC2B5\uB2C8\uB2E4." }), _jsx("code", { className: "reveal-code", children: freshPAT.token }), _jsx("button", { type: "button", className: "btn-ghost", onClick: () => setFreshPAT(null), children: "\uD655\uC778" })] })), freshIncomingURL && (_jsxs("div", { className: "reveal-card", children: [_jsx("div", { style: { fontWeight: 600 }, children: "\uC778\uCEE4\uBC0D \uC6F9\uD6C5 URL\uC774 \uC0DD\uC131\uB418\uC5C8\uC2B5\uB2C8\uB2E4. \uC774 URL\uC744 \uACF5\uC720\uD558\uBA74 \uB204\uAD6C\uB098 \uBA54\uC2DC\uC9C0\uB97C \uBCF4\uB0BC \uC218 \uC788\uC2B5\uB2C8\uB2E4." }), _jsx("code", { className: "reveal-code", children: freshIncomingURL }), _jsx("button", { type: "button", className: "btn-ghost", onClick: () => setFreshIncomingURL(null), children: "\uD655\uC778" })] })), tab === "org" && (_jsxs("div", { className: "integrations-body", children: [_jsxs("div", { className: "integrations-create admin-toolbar", children: [_jsx("button", { type: "button", className: "btn-ghost", style: { width: "auto", padding: "0 12px", height: 34 }, onClick: refresh, children: "\uC870\uC9C1 \uC0C8\uB85C\uACE0\uCE68" }), _jsx("span", { className: isSystemAdmin ? "admin-pill ok" : "admin-pill", children: isSystemAdmin ? "Org Owner" : "Admin" })] }), _jsxs("div", { className: "admin-summary-grid", children: [_jsxs("div", { className: "admin-kv", children: [_jsx("span", { children: "Organization" }), _jsx("strong", { children: organizationName })] }), _jsxs("div", { className: "admin-kv", children: [_jsx("span", { children: "Members" }), _jsx("strong", { children: users.length })] }), _jsxs("div", { className: "admin-kv", children: [_jsx("span", { children: "Workspaces" }), _jsx("strong", { children: teams.length })] }), _jsxs("div", { className: "admin-kv", children: [_jsx("span", { children: "System Roles" }), _jsx("strong", { children: roles.length })] })] }), _jsxs("table", { className: "admin-data-table", children: [_jsx("thead", { children: _jsxs("tr", { children: [_jsx("th", { children: "Area" }), _jsx("th", { children: "Status" }), _jsx("th", { children: "Controls" }), _jsx("th", { children: "Audit" })] }) }), _jsx("tbody", { children: [
+                                                            ["Members", `${users.length} loaded`, "Deactivate, reactivate, role review", "user.*"],
+                                                            ["Workspaces", `${teams.length} visible`, "Scope, invites, workspace settings", "team.*"],
+                                                            ["Apps", `${pluginRows.length + bots.length} installed/requested`, "Approve, enable, disable", "plugin.* / bot.*"],
+                                                            ["Security", "policy probes", "SSO, MFA, sessions, license", "system.*"],
+                                                        ].map(([area, status, controls, audit]) => (_jsxs("tr", { tabIndex: 0, onClick: () => openDetail({
+                                                                title: area,
+                                                                subtitle: "Administrative operating area",
+                                                                rows: [
+                                                                    { label: "Status", value: status },
+                                                                    { label: "Controls", value: controls },
+                                                                    { label: "Audit Filter", value: audit },
+                                                                ],
+                                                            }), children: [_jsx("td", { children: area }), _jsx("td", { children: _jsx("span", { className: "admin-pill ok", children: status }) }), _jsx("td", { children: controls }), _jsx("td", { children: _jsx("code", { children: audit }) })] }, area))) })] })] })), tab === "workspaces" && (_jsxs("div", { className: "integrations-body", children: [_jsxs("div", { className: "integrations-create admin-toolbar", children: [_jsx("button", { type: "button", className: "btn-ghost", style: { width: "auto", padding: "0 12px", height: 34 }, onClick: refresh, children: "\uC6CC\uD06C\uC2A4\uD398\uC774\uC2A4 \uC0C8\uB85C\uACE0\uCE68" }), _jsx("span", { className: "admin-pill", children: "server paginated target" })] }), _jsxs("table", { className: "admin-data-table", children: [_jsx("thead", { children: _jsxs("tr", { children: [_jsx("th", { children: "Workspace" }), _jsx("th", { children: "Visibility" }), _jsx("th", { children: "Created" }), _jsx("th", { children: "Status" })] }) }), _jsxs("tbody", { children: [filteredTeams.length === 0 && (_jsx("tr", { children: _jsx("td", { colSpan: 4, className: "admin-empty-cell", children: "\uC6CC\uD06C\uC2A4\uD398\uC774\uC2A4\uAC00 \uC5C6\uAC70\uB098 \uAC80\uC0C9 \uACB0\uACFC\uAC00 \uC5C6\uC2B5\uB2C8\uB2E4." }) })), filteredTeams.map((team) => (_jsxs("tr", { tabIndex: 0, onClick: () => openDetail({
+                                                                    title: team.display_name,
+                                                                    subtitle: team.name,
+                                                                    rows: [
+                                                                        { label: "ID", value: team.id },
+                                                                        { label: "Visibility", value: team.type === "O" ? "open" : "invite only" },
+                                                                        { label: "Created", value: new Date(team.create_at).toLocaleString() },
+                                                                    ],
+                                                                }), children: [_jsx("td", { children: team.display_name }), _jsx("td", { children: team.type === "O" ? "Open" : "Private" }), _jsx("td", { children: new Date(team.create_at).toLocaleDateString() }), _jsx("td", { children: _jsx("span", { className: "admin-pill ok", children: "active" }) })] }, team.id)))] })] })] })), tab === "channels" && (_jsxs("div", { className: "integrations-body", children: [_jsxs("div", { className: "integrations-create admin-toolbar", children: [_jsx("button", { type: "button", className: "btn-ghost", style: { width: "auto", padding: "0 12px", height: 34 }, onClick: refresh, children: "\uCC44\uB110 \uC0C8\uB85C\uACE0\uCE68" }), _jsxs("span", { className: "admin-pill", children: [filteredChannels.length, " rows"] })] }), _jsxs("table", { className: "admin-data-table", children: [_jsx("thead", { children: _jsxs("tr", { children: [_jsx("th", { children: "Channel" }), _jsx("th", { children: "Type" }), _jsx("th", { children: "Created" }), _jsx("th", { children: "Status" })] }) }), _jsxs("tbody", { children: [filteredChannels.length === 0 && (_jsx("tr", { children: _jsx("td", { colSpan: 4, className: "admin-empty-cell", children: "\uCC44\uB110\uC774 \uC5C6\uAC70\uB098 \uAC80\uC0C9 \uACB0\uACFC\uAC00 \uC5C6\uC2B5\uB2C8\uB2E4." }) })), filteredChannels.map((channel) => {
+                                                                const archived = (channel.delete_at ?? 0) > 0;
+                                                                return (_jsxs("tr", { tabIndex: 0, onClick: () => openDetail({
+                                                                        title: channel.display_name || channel.name,
+                                                                        subtitle: `#${channel.name}`,
+                                                                        rows: [
+                                                                            { label: "ID", value: channel.id },
+                                                                            { label: "Team", value: channel.team_id },
+                                                                            { label: "Type", value: channel.type },
+                                                                            { label: "Status", value: archived ? "archived" : "active" },
+                                                                        ],
+                                                                    }), children: [_jsx("td", { children: channel.display_name || channel.name }), _jsx("td", { children: channel.type === "O" ? "Public" : channel.type === "P" ? "Private" : "Direct" }), _jsx("td", { children: new Date(channel.create_at).toLocaleDateString() }), _jsx("td", { children: _jsx("span", { className: archived ? "admin-pill danger" : "admin-pill ok", children: archived ? "archived" : "active" }) })] }, channel.id));
+                                                            })] })] })] })), tab === "apps" && (_jsxs("div", { className: "integrations-body", children: [_jsxs("div", { className: "integrations-create admin-toolbar", children: [_jsx("button", { type: "button", className: "btn-ghost", style: { width: "auto", padding: "0 12px", height: 34 }, onClick: refresh, children: "\uC571 \uC0C8\uB85C\uACE0\uCE68" }), _jsx("span", { className: "admin-pill ok", children: "approval workflow ready" })] }), _jsxs("table", { className: "admin-data-table", children: [_jsx("thead", { children: _jsxs("tr", { children: [_jsx("th", { children: "App" }), _jsx("th", { children: "Kind" }), _jsx("th", { children: "Approval" }), _jsx("th", { children: "Scope" })] }) }), _jsxs("tbody", { children: [filteredPlugins.length === 0 && bots.length === 0 && (_jsx("tr", { children: _jsx("td", { colSpan: 4, className: "admin-empty-cell", children: "\uC571 \uB610\uB294 \uD50C\uB7EC\uADF8\uC778\uC774 \uC5C6\uC2B5\uB2C8\uB2E4." }) })), filteredPlugins.map((plugin, idx) => {
+                                                                const pluginId = String(plugin.id ?? plugin.plugin_id ?? `plugin-${idx}`);
+                                                                const state = pluginStateByID[pluginId] ?? String(plugin.state ?? "unknown");
+                                                                return (_jsxs("tr", { tabIndex: 0, onClick: () => openDetail({
+                                                                        title: String(plugin.name ?? pluginId),
+                                                                        subtitle: pluginId,
+                                                                        rows: [
+                                                                            { label: "Kind", value: "Plugin" },
+                                                                            { label: "State", value: state },
+                                                                            { label: "Version", value: String(plugin.version ?? "dev") },
+                                                                        ],
+                                                                    }), children: [_jsx("td", { children: String(plugin.name ?? pluginId) }), _jsx("td", { children: "Plugin" }), _jsx("td", { children: _jsx("span", { className: state === "running" || state === "enabled" ? "admin-pill ok" : "admin-pill", children: state }) }), _jsx("td", { children: "system" })] }, pluginId));
+                                                            }), bots
+                                                                .filter((bot) => !query || bot.username.toLowerCase().includes(query) || (bot.description ?? "").toLowerCase().includes(query))
+                                                                .map((bot) => (_jsxs("tr", { tabIndex: 0, onClick: () => openDetail({
+                                                                    title: `@${bot.username}`,
+                                                                    subtitle: bot.user_id,
+                                                                    rows: [
+                                                                        { label: "Kind", value: "Bot" },
+                                                                        { label: "Approval", value: "approved" },
+                                                                        { label: "Description", value: bot.description || "-" },
+                                                                    ],
+                                                                }), children: [_jsxs("td", { children: ["@", bot.username] }), _jsx("td", { children: "Bot" }), _jsx("td", { children: _jsx("span", { className: "admin-pill ok", children: "approved" }) }), _jsx("td", { children: "tokens" })] }, bot.user_id)))] })] })] })), tab === "bots" && (_jsxs("div", { className: "integrations-body", children: [_jsxs("div", { className: "integrations-create", children: [_jsx("input", { className: "field-input", placeholder: "username (\uC601\uC18C\uBB38\uC790/\uC22B\uC790)", value: newBotName, onChange: (e) => setNewBotName(e.target.value) }), _jsx("input", { className: "field-input", placeholder: "\uD45C\uC2DC \uC774\uB984", value: newBotDisplay, onChange: (e) => setNewBotDisplay(e.target.value) }), _jsx("input", { className: "field-input", placeholder: "\uC124\uBA85 (\uC635\uC158)", value: newBotDesc, onChange: (e) => setNewBotDesc(e.target.value) }), _jsx("button", { className: "btn-primary", onClick: onCreateBot, style: { width: "auto", padding: "0 14px", height: 38 }, children: "\uBD07 \uB9CC\uB4E4\uAE30" })] }), _jsxs("ul", { className: "integrations-list", children: [bots.length === 0 && _jsx("li", { className: "chat-empty", style: { padding: 12 }, children: "\uB4F1\uB85D\uB41C \uBD07\uC774 \uC5C6\uC2B5\uB2C8\uB2E4." }), bots.map((b) => (_jsxs("li", { className: "integrations-row", children: [_jsxs("div", { style: { flex: 1 }, children: [_jsxs("div", { style: { fontWeight: 600 }, children: ["@", b.username] }), _jsx("div", { style: { color: "var(--muted)", fontSize: 12 }, children: b.description || "—" }), botTokens[b.user_id] && (_jsx("div", { style: { marginTop: 6 }, children: botTokens[b.user_id].length === 0
                                                                             ? _jsx("span", { style: { color: "var(--muted)", fontSize: 12 }, children: "\uBC1C\uAE09\uB41C \uD1A0\uD070 \uC5C6\uC74C" })
                                                                             : (_jsx("ul", { className: "pat-list", children: botTokens[b.user_id].map((t) => (_jsxs("li", { children: [_jsx("span", { children: t.description || "(설명없음)" }), _jsx("span", { style: { color: "var(--muted)", fontSize: 11, marginLeft: 8 }, children: t.revoked_at ? "취소됨" : "활성" }), !t.revoked_at && (_jsx("button", { type: "button", className: "action-btn", onClick: () => onRevokePAT(t.id, b.user_id), children: "\uD83D\uDDD1" }))] }, t.id))) })) }))] }), _jsxs("div", { style: { display: "flex", gap: 6, flexWrap: "wrap", justifyContent: "flex-end" }, children: [_jsx("button", { className: "btn-ghost", style: { width: "auto", padding: "0 10px", height: 30 }, onClick: () => onLoadTokens(b.user_id), children: "\uD1A0\uD070 \uC870\uD68C" }), _jsx("button", { className: "btn-ghost", style: { width: "auto", padding: "0 10px", height: 30 }, onClick: () => onCreatePAT(b.user_id), children: "\uC0C8 \uD1A0\uD070" }), _jsx("button", { className: "btn-ghost", style: { width: "auto", padding: "0 10px", height: 30, color: "var(--danger)" }, onClick: () => onDisableBot(b.user_id), children: "\uBE44\uD65C\uC131\uD654" })] })] }, b.user_id)))] })] })), tab === "incoming" && (_jsxs("div", { className: "integrations-body", children: [_jsxs("div", { className: "integrations-create", children: [_jsxs("select", { className: "field-input", value: newIn.channel_id, onChange: (e) => setNewIn((prev) => ({ ...prev, channel_id: e.target.value })), children: [_jsx("option", { value: "", children: "\uCC44\uB110 \uC120\uD0DD\u2026" }), nonDMChannels.map((c) => (_jsxs("option", { value: c.id, children: ["#", c.display_name] }, c.id)))] }), _jsx("input", { className: "field-input", placeholder: "\uD45C\uC2DC \uC774\uB984 (\uBD07 \uC774\uB984)", value: newIn.display_name, onChange: (e) => setNewIn((p) => ({ ...p, display_name: e.target.value })) }), _jsx("input", { className: "field-input", placeholder: "\uC624\uBC84\uB77C\uC774\uB4DC username (\uC635\uC158)", value: newIn.username, onChange: (e) => setNewIn((p) => ({ ...p, username: e.target.value })) }), _jsx("input", { className: "field-input", placeholder: "\uC544\uC774\uCF58 URL (\uC635\uC158)", value: newIn.icon_url, onChange: (e) => setNewIn((p) => ({ ...p, icon_url: e.target.value })) }), _jsxs("label", { style: { display: "flex", alignItems: "center", gap: 6 }, children: [_jsx("input", { type: "checkbox", checked: newIn.channel_locked, onChange: (e) => setNewIn((p) => ({ ...p, channel_locked: e.target.checked })) }), _jsx("span", { style: { fontSize: 13 }, children: "\uCC44\uB110 \uACE0\uC815" })] }), _jsx("button", { className: "btn-primary", onClick: onCreateIncoming, style: { width: "auto", padding: "0 14px", height: 38 }, children: "\uC0DD\uC131" })] }), _jsxs("ul", { className: "integrations-list", children: [incoming.length === 0 && _jsx("li", { className: "chat-empty", style: { padding: 12 }, children: "\uC778\uCEE4\uBC0D \uC6F9\uD6C5 \uC5C6\uC74C." }), incoming.map((hk) => (_jsxs("li", { className: "integrations-row", children: [_jsxs("div", { style: { flex: 1 }, children: [_jsx("div", { style: { fontWeight: 600 }, children: hk.display_name || "(이름없음)" }), _jsxs("div", { style: { color: "var(--muted)", fontSize: 12 }, children: ["\uCC44\uB110 ", hk.channel_id, " \u00B7 \uC7A0\uAE08 ", hk.channel_locked ? "ON" : "OFF"] }), _jsx("code", { className: "reveal-code", style: { marginTop: 4, padding: "2px 6px", fontSize: 11 }, children: `${window.location.origin}/hooks/${hk.id}` })] }), _jsx("button", { className: "btn-ghost", style: { width: "auto", padding: "0 10px", height: 30, color: "var(--danger)" }, onClick: () => onDeleteIncoming(hk.id), children: "\uC0AD\uC81C" })] }, hk.id)))] })] })), tab === "outgoing" && (_jsxs("div", { className: "integrations-body", children: [_jsxs("div", { className: "integrations-create", children: [_jsxs("select", { className: "field-input", value: newOut.channel_id, onChange: (e) => setNewOut((p) => ({ ...p, channel_id: e.target.value })), children: [_jsx("option", { value: "", children: "\uCC44\uB110 (\uBE44\uC6B0\uBA74 \uD300 \uC804\uCCB4)" }), nonDMChannels.map((c) => (_jsxs("option", { value: c.id, children: ["#", c.display_name] }, c.id)))] }), _jsx("input", { className: "field-input", placeholder: "\uD2B8\uB9AC\uAC70 \uB2E8\uC5B4 (\uC27C\uD45C\uB85C \uAD6C\uBD84)", value: newOut.trigger_words, onChange: (e) => setNewOut((p) => ({ ...p, trigger_words: e.target.value })) }), _jsx("input", { className: "field-input", placeholder: "\uCF5C\uBC31 URL (\uACF5\uBC31/\uC27C\uD45C\uB85C \uAD6C\uBD84)", value: newOut.callback_urls, onChange: (e) => setNewOut((p) => ({ ...p, callback_urls: e.target.value })) }), _jsxs("select", { className: "field-input", value: newOut.trigger_when, onChange: (e) => setNewOut((p) => ({ ...p, trigger_when: Number(e.target.value) })), children: [_jsx("option", { value: 0, children: "\uCCAB \uB2E8\uC5B4 \uC77C\uCE58" }), _jsx("option", { value: 1, children: "\uC5B4\uB514\uB4E0 \uD3EC\uD568" })] }), _jsx("input", { className: "field-input", placeholder: "\uD45C\uC2DC \uC774\uB984 (\uC635\uC158)", value: newOut.display_name, onChange: (e) => setNewOut((p) => ({ ...p, display_name: e.target.value })) }), _jsx("button", { className: "btn-primary", onClick: onCreateOutgoing, style: { width: "auto", padding: "0 14px", height: 38 }, children: "\uC0DD\uC131" })] }), _jsxs("ul", { className: "integrations-list", children: [outgoing.length === 0 && _jsx("li", { className: "chat-empty", style: { padding: 12 }, children: "\uC544\uC6C3\uACE0\uC789 \uC6F9\uD6C5 \uC5C6\uC74C." }), outgoing.map((hk) => (_jsxs("li", { className: "integrations-row", children: [_jsxs("div", { style: { flex: 1 }, children: [_jsx("div", { style: { fontWeight: 600 }, children: hk.display_name || "(이름없음)" }), _jsxs("div", { style: { color: "var(--muted)", fontSize: 12 }, children: ["\uD2B8\uB9AC\uAC70: ", hk.trigger_words.join(", ") || "(없음)", " \u00B7 \uCF5C\uBC31 ", hk.callback_urls.length, "\uAC1C"] })] }), _jsx("button", { className: "btn-ghost", style: { width: "auto", padding: "0 10px", height: 30, color: "var(--danger)" }, onClick: () => onDeleteOutgoing(hk.id), children: "\uC0AD\uC81C" })] }, hk.id)))] })] })), tab === "emoji" && (_jsxs("div", { className: "integrations-body", children: [_jsxs("div", { className: "integrations-create", children: [_jsx("input", { className: "field-input", placeholder: "\uC774\uB984 (\uC601\uC18C\uBB38\uC790/\uC22B\uC790/_/-)", value: newEmojiName, onChange: (e) => setNewEmojiName(e.target.value.toLowerCase()), style: { flex: "1 1 180px" } }), _jsx("input", { type: "file", accept: "image/png,image/jpeg,image/gif,image/webp", onChange: (e) => setNewEmojiFile(e.target.files?.[0] ?? null) }), _jsx("button", { className: "btn-primary", onClick: onCreateEmoji, disabled: !newEmojiName || !newEmojiFile, style: { width: "auto", padding: "0 14px", height: 38 }, children: "\uC5C5\uB85C\uB4DC" })] }), _jsxs("ul", { className: "integrations-list emoji-grid", children: [emojis.length === 0 && _jsx("li", { className: "chat-empty", style: { padding: 12 }, children: "\uB4F1\uB85D\uB41C \uC774\uBAA8\uC9C0\uAC00 \uC5C6\uC2B5\uB2C8\uB2E4." }), emojis.map((e) => (_jsxs("li", { className: "emoji-tile", children: [_jsx("img", { src: api.emojiImageURL(token ?? "", e.id), alt: e.name }), _jsxs("div", { className: "emoji-tile-name", title: `:${e.name}:`, children: [":", e.name, ":"] }), _jsx("button", { type: "button", className: "btn-ghost", style: { width: "auto", padding: "0 8px", height: 26, color: "var(--danger)", fontSize: 11 }, onClick: () => onDeleteEmoji(e.id), children: "\uC0AD\uC81C" })] }, e.id)))] })] })), tab === "invites" && (_jsx("div", { className: "integrations-body", children: !currentTeamId ? (_jsx("div", { className: "chat-empty", style: { padding: 12 }, children: "\uD300\uC744 \uBA3C\uC800 \uC120\uD0DD\uD558\uBA74 \uCD08\uB300 \uB9C1\uD06C\uB97C \uBC1C\uAE09\uD560 \uC218 \uC788\uC2B5\uB2C8\uB2E4." })) : (_jsxs(_Fragment, { children: [_jsxs("div", { className: "integrations-create", children: [_jsxs("label", { style: { display: "flex", alignItems: "center", gap: 6, fontSize: 13 }, children: ["\uCD5C\uB300 \uC0AC\uC6A9 \uD69F\uC218", _jsxs("select", { className: "field-input", style: { width: 120 }, value: inviteMaxUses, onChange: (e) => setInviteMaxUses(Number(e.target.value)), children: [_jsx("option", { value: 1, children: "1\uD68C" }), _jsx("option", { value: 5, children: "5\uD68C" }), _jsx("option", { value: 25, children: "25\uD68C" }), _jsx("option", { value: 0, children: "\uBB34\uC81C\uD55C" })] })] }), _jsxs("label", { style: { display: "flex", alignItems: "center", gap: 6, fontSize: 13 }, children: ["\uB9CC\uB8CC", _jsx("select", { className: "field-input", style: { width: 120 }, value: inviteTTLSeconds, onChange: (e) => setInviteTTLSeconds(Number(e.target.value)), children: INVITE_TTL_CHOICES.map((c) => (_jsx("option", { value: c.seconds, children: c.label }, c.seconds))) })] }), _jsx("button", { className: "btn-primary", onClick: onCreateInvite, style: { width: "auto", padding: "0 14px", height: 38 }, children: "\uCD08\uB300 \uB9C1\uD06C \uC0DD\uC131" })] }), _jsxs("ul", { className: "integrations-list", children: [invites.length === 0 && (_jsx("li", { className: "chat-empty", style: { padding: 12 }, children: "\uD65C\uC131 \uCD08\uB300 \uB9C1\uD06C\uAC00 \uC5C6\uC2B5\uB2C8\uB2E4." })), invites.map((inv) => {
                                                             const remaining = inv.max_uses === 0
@@ -715,7 +851,7 @@ export function IntegrationsPanel({ channels, currentTeamId, onClose, }) {
                                                                 : `${inv.max_uses - inv.use_count} / ${inv.max_uses}`;
                                                             const expires = new Date(inv.expires_at).toLocaleString();
                                                             return (_jsxs("li", { className: "integrations-row", children: [_jsxs("div", { style: { flex: 1, minWidth: 0 }, children: [_jsx("div", { style: { fontWeight: 600, fontSize: 12, wordBreak: "break-all" }, children: inv.url }), _jsxs("div", { style: { color: "var(--muted)", fontSize: 12, marginTop: 2 }, children: ["\uB0A8\uC740 \uC0AC\uC6A9 ", remaining, " \u00B7 \uB9CC\uB8CC ", expires] })] }), _jsxs("div", { style: { display: "flex", gap: 6, flexWrap: "wrap", justifyContent: "flex-end" }, children: [_jsx("button", { type: "button", className: "btn-ghost", style: { width: "auto", padding: "0 10px", height: 30 }, onClick: () => onCopyInvite(inv.url), children: "\uBCF5\uC0AC" }), _jsx("button", { type: "button", className: "btn-ghost", style: { width: "auto", padding: "0 10px", height: 30, color: "var(--danger)" }, onClick: () => onRevokeInvite(inv.id), children: "\uBB34\uD6A8\uD654" })] })] }, inv.id));
-                                                        })] })] })) })), tab === "users" && (_jsx("div", { className: "integrations-body", children: _jsxs("ul", { className: "integrations-list", children: [users.length === 0 && (_jsx("li", { className: "chat-empty", style: { padding: 12 }, children: "\uB4F1\uB85D\uB41C \uC0AC\uC6A9\uC790\uAC00 \uC5C6\uC2B5\uB2C8\uB2E4." })), users.map((u) => {
+                                                        })] })] })) })), tab === "users" && (_jsx("div", { className: "integrations-body", children: _jsxs("ul", { className: "integrations-list", children: [filteredUsers.length === 0 && (_jsx("li", { className: "chat-empty", style: { padding: 12 }, children: "\uB4F1\uB85D\uB41C \uC0AC\uC6A9\uC790\uAC00 \uC5C6\uC2B5\uB2C8\uB2E4." })), filteredUsers.map((u) => {
                                                     const inactive = (u.delete_at ?? 0) > 0;
                                                     return (_jsxs("li", { className: "integrations-row", style: inactive ? { opacity: 0.55 } : undefined, children: [_jsxs("div", { style: { flex: 1 }, children: [_jsxs("div", { style: { fontWeight: 600 }, children: ["@", u.username, inactive && (_jsx("span", { style: { marginLeft: 8, color: "var(--danger)", fontSize: 11 }, children: "\uBE44\uD65C\uC131" }))] }), _jsxs("div", { style: { color: "var(--muted)", fontSize: 12 }, children: [u.email, " \u00B7 ", u.roles || "system_user"] })] }), inactive ? (_jsx("button", { type: "button", className: "btn-ghost", style: { width: "auto", padding: "0 10px", height: 30 }, onClick: () => onReactivateUser(u.id), children: "\uD65C\uC131\uD654" })) : (_jsx("button", { type: "button", className: "btn-ghost", style: { width: "auto", padding: "0 10px", height: 30, color: "var(--danger)" }, onClick: () => onDeactivateUser(u.id, u.username), children: "\uBE44\uD65C\uC131\uD654" }))] }, u.id));
                                                 })] }) })), tab === "auth" && (_jsxs("div", { className: "integrations-body", children: [_jsxs("div", { className: "integrations-create admin-toolbar", children: [_jsx("button", { type: "button", className: "btn-ghost", style: { width: "auto", padding: "0 12px", height: 34 }, onClick: refresh, children: "\uC778\uC99D \uC0C8\uB85C\uACE0\uCE68" }), _jsx("span", { className: "admin-pill ok", children: "Mattermost API" })] }), _jsx("div", { className: "admin-summary-grid", children: authRows.map((row) => (_jsxs("div", { className: "admin-kv", children: [_jsx("span", { children: row.label }), _jsxs("strong", { children: [row.count !== undefined ? `${row.count} · ` : "", row.status] })] }, row.key))) }), _jsxs("ul", { className: "integrations-list", children: [authRows.length === 0 && (_jsx("li", { className: "chat-empty", style: { padding: 12 }, children: "\uC778\uC99D \uC0C1\uD0DC\uB97C \uBD88\uB7EC\uC624\uC9C0 \uC54A\uC558\uC2B5\uB2C8\uB2E4." })), authRows.map((row) => (_jsx("li", { className: "integrations-row", children: _jsxs("div", { style: { flex: 1, minWidth: 0 }, children: [_jsxs("div", { style: { display: "flex", alignItems: "center", gap: 8, fontWeight: 600 }, children: [row.label, _jsx("span", { className: `admin-pill ${row.tone ?? ""}`.trim(), children: row.status })] }), _jsxs("div", { style: { color: "var(--muted)", fontSize: 12, marginTop: 2 }, children: [row.detail, row.count !== undefined && ` · ${row.count} rows`] })] }) }, row.key)))] })] })), tab === "system" && (_jsxs("div", { className: "integrations-body", children: [_jsxs("div", { className: "integrations-create admin-toolbar", children: [_jsx("button", { type: "button", className: "btn-ghost", style: { width: "auto", padding: "0 12px", height: 34 }, onClick: refresh, children: "\uC0C8\uB85C\uACE0\uCE68" }), _jsx("button", { type: "button", className: "btn-ghost", style: { width: "auto", padding: "0 12px", height: 34 }, onClick: onReloadConfig, children: "\uC124\uC815 \uB9AC\uB85C\uB4DC" }), _jsx("button", { type: "button", className: "btn-ghost", style: {
