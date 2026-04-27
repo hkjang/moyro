@@ -249,6 +249,33 @@ system status/config/logs, plugin lifecycle controls, role permission browse,
 job creation/cancel smoke controls, and the compliance/policy compatibility
 surface.
 
+## Parallel Workspace Progress
+
+Working-tree audit on 2026-04-27, including concurrent Phase 25-30 API
+compatibility work in progress:
+
+- Official API v4 endpoints: 539
+- Local routed endpoints: 511
+- Matched endpoint shapes: 462
+- Missing official endpoint shapes: 77
+- Local-only endpoint shapes: 49
+- Route-shape coverage: 85.71%
+
+This is a working-tree measurement, not a clean release baseline. The current
+admin-focused slice adds Mattermost access-control policy route shapes and UI
+probes:
+
+- `POST /api/v4/access_control_policies/search`
+- `PUT /api/v4/access_control_policies`
+- `PUT /api/v4/access_control_policies/activate`
+- `GET|DELETE /api/v4/access_control_policies/{policy_id}`
+- `GET /api/v4/access_control_policies/{policy_id}/activate`
+- `POST /api/v4/access_control_policies/{policy_id}/assign`
+- `DELETE /api/v4/access_control_policies/{policy_id}/unassign`
+- `GET|POST /api/v4/access_control_policies/{policy_id}/resources/channels`
+- CEL helper routes for autocomplete, check, test, requester validation, and
+  visual AST.
+
 ## Admin Console UX Direction
 
 The admin surface is moving toward a Mattermost-style System Console:

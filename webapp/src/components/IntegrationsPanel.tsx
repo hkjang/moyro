@@ -97,7 +97,7 @@ const ADMIN_NAV: { section: string; items: { tab: Tab; label: string }[] }[] = [
     section: "Compliance",
     items: [
       { tab: "audit", label: "Logging / Audit" },
-      { tab: "policies", label: "Data Retention / Governance" },
+      { tab: "policies", label: "Access Control / Governance" },
     ],
   },
 ];
@@ -275,6 +275,8 @@ export function IntegrationsPanel({
           remoteClusters,
           groups,
           schemes,
+          accessControl,
+          accessControlFields,
         ] = await Promise.all([
           adminApi.getDataRetentionPolicy(token),
           adminApi.listDataRetentionPolicies(token),
@@ -284,9 +286,23 @@ export function IntegrationsPanel({
           adminApi.listRemoteClusters(token),
           adminApi.listGroups(token),
           adminApi.listSchemes(token),
+          adminApi.searchAccessControlPolicies(token),
+          adminApi.listAccessControlCELFields(token),
         ]);
+        const accessControlPolicies = Array.isArray(accessControl.policies)
+          ? accessControl.policies
+          : [];
+        const accessControlCount = Number(accessControl.total_count ?? accessControlPolicies.length);
         setGlobalRetentionPolicy(globalRetention);
         setPolicyRows([
+          {
+            key: "access-control",
+            label: "Access Control",
+            status: accessControlCount > 0 ? "policies" : "ready",
+            detail: `CEL fields ${accessControlFields.length}`,
+            count: accessControlCount,
+            tone: "ok",
+          },
           {
             key: "data-retention",
             label: "Data Retention",

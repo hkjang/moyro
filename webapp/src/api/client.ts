@@ -834,6 +834,12 @@ export type AdminJob = {
 
 export type AdminCompatRecord = Record<string, unknown>;
 
+export type AdminAccessControlSearchResult = {
+  policies?: AdminCompatRecord[];
+  total_count?: number;
+  [key: string]: unknown;
+};
+
 // ---- Phase 12 API extensions ----
 //
 // Mutating the frozen `api` literal above would force a reorganisation of
@@ -1022,6 +1028,13 @@ export const adminApi = {
     request<AdminCompatRecord>(token, "/content_flagging/config"),
   listContentFlaggingFields: (token: string) =>
     request<AdminCompatRecord[]>(token, "/content_flagging/fields"),
+  searchAccessControlPolicies: (token: string) =>
+    request<AdminAccessControlSearchResult>(token, "/access_control_policies/search", {
+      method: "POST",
+      body: { term: "", page: 0, per_page: 50 },
+    }),
+  listAccessControlCELFields: (token: string) =>
+    request<AdminCompatRecord[]>(token, "/access_control_policies/cel/autocomplete/fields"),
 };
 
 export function openWebSocket(token: string): WebSocket {

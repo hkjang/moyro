@@ -53,6 +53,9 @@ than a chat-adjacent utility drawer.
 - Compliance policy probes intentionally call Mattermost route shapes:
   data retention, content flagging, compliance reports, groups, schemes, remote
   clusters, and shared channels.
+- Access Control / Governance now probes `access_control_policies` search and
+  CEL autocomplete fields so the admin UI tracks Mattermost enterprise policy
+  capabilities without requiring a full policy engine yet.
 - Enterprise-only features that do not have backing services should remain
   compatible disabled surfaces until real storage and workflows exist.
 

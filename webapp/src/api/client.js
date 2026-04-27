@@ -398,6 +398,11 @@ export const adminApi = {
     listComplianceReports: (token) => request(token, "/compliance/reports"),
     getContentFlaggingConfig: (token) => request(token, "/content_flagging/config"),
     listContentFlaggingFields: (token) => request(token, "/content_flagging/fields"),
+    searchAccessControlPolicies: (token) => request(token, "/access_control_policies/search", {
+        method: "POST",
+        body: { term: "", page: 0, per_page: 50 },
+    }),
+    listAccessControlCELFields: (token) => request(token, "/access_control_policies/cel/autocomplete/fields"),
 };
 export function openWebSocket(token) {
     const scheme = window.location.protocol === "https:" ? "wss" : "ws";
