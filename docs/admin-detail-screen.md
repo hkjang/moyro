@@ -48,6 +48,8 @@ Core principles:
 ## Current Implementation
 
 - `IntegrationsPanel` now renders as a full-page `admin-page`.
+- The Admin page uses the scoped Well & Good visual system from
+  `docs/admin-design-rules.md`.
 - Navigation is reorganized around Organization, Directory, Apps, Security, and
   Operations.
 - Organization, Workspaces, Channels, and Apps have table-based admin list
