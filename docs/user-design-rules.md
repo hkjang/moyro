@@ -12,6 +12,8 @@ pleasant for long chat sessions.
 - Reading first: messages use soft depth, compact metadata, and generous line
   height.
 - Calm navigation: sidebar rows are quiet by default and clear when active.
+- Daily panels first: left navigation and RHS thread panels should prioritize
+  scan speed, stable widths, sticky account controls, and readable badges.
 - Focused composition: the composer is visually stable and easy to return to.
 - Restrained accents: green for primary action, indigo for secondary depth,
   coral/red only for attention or destructive states.
@@ -30,3 +32,18 @@ User-specific CSS variables live under `.chat-shell`:
 The chat workspace remaps existing shared variables such as `--bg`, `--fg`,
 `--muted`, `--accent`, and input colors inside `.chat-shell`, so existing
 components inherit the cleaner visual language without JSX churn.
+
+## Panel Rules
+
+- Left sidebar uses a stable desktop width and grouped section dividers so
+  teams, saved/scheduled shortcuts, favorites, channels, and DMs scan quickly.
+- Active sidebar rows must be stronger than hover rows and include both color
+  and shape cues for accessibility.
+- Sidebar account/status controls stay visually anchored at the bottom on
+  desktop, but become static on tablet/mobile to avoid trapping scroll space.
+- Unread, mention, scheduled, and favorite affordances must remain compact and
+  legible without resizing rows.
+- RHS thread panels use full-width message rows, a clear root/replies divider,
+  a compact sticky-feeling header, and a stable composer area.
+- Mobile and tablet layouts keep the sidebar as a top navigation pane and turn
+  RHS into a focused overlay rather than shrinking message content too far.
