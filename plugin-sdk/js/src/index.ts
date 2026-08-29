@@ -28,7 +28,7 @@ declare global {
 
 export function registerPlugin(id: string, plugin: PluginClass): void {
   if (typeof window === "undefined" || !window.registerPlugin) {
-    throw new Error("Moddle plugin runtime not available");
+    throw new Error("moyro plugin runtime not available");
   }
   window.registerPlugin(id, plugin);
 }

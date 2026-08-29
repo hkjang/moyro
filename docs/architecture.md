@@ -1,6 +1,6 @@
 # Architecture
 
-Moddle is a small monorepo with a Go backend and a React web client. The server
+moyro is a small monorepo with a Go backend and a React web client. The server
 owns compatibility with Mattermost-style `/api/v4` HTTP endpoints, WebSocket
 events, webhooks, slash commands, and server plugin hooks. The webapp owns the
 end-user chat experience and a lightweight web plugin registry.
@@ -24,7 +24,7 @@ flowchart LR
 
 ## Server
 
-Entry point: `server/cmd/moddle/main.go`.
+Entry point: `server/cmd/moyro/main.go`.
 
 The process loads config, opens PostgreSQL, runs schema migration, bootstraps a
 default team/channel, starts the WebSocket hub, optional Redis fanout, plugin

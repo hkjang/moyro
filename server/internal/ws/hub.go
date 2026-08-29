@@ -9,10 +9,10 @@ import (
 )
 
 type Event struct {
-	Event string         `json:"event"`
-	Data  map[string]any `json:"data"`
-	Broadcast Broadcast   `json:"broadcast"`
-	Seq   int64          `json:"seq"`
+	Event     string         `json:"event"`
+	Data      map[string]any `json:"data"`
+	Broadcast Broadcast      `json:"broadcast"`
+	Seq       int64          `json:"seq"`
 }
 
 type Broadcast struct {
@@ -26,6 +26,12 @@ type Client struct {
 	UserID string
 	Conn   *websocket.Conn
 	Send   chan []byte
+
+	// credential/authenticate are intentionally private: they exist only so
+	// the connection writer can periodically revalidate the exact session
+	// that opened this socket. They must never be serialized or logged.
+	credential   string
+	authenticate TokenAuthenticator
 }
 
 // Publisher is an optional sink that `Broadcast` pushes every event to
@@ -36,6 +42,11 @@ type Client struct {
 type Publisher interface {
 	Publish(ev Event)
 }
+
+// AudienceResolver returns the users allowed to receive a channel- or
+// team-scoped event. Scoped events fail closed when membership cannot be
+// resolved. User-targeted and global events bypass this lookup.
+type AudienceResolver func(context.Context, Broadcast) (map[string]struct{}, error)
 
 type Hub struct {
 	mu      sync.RWMutex
@@ -55,6 +66,9 @@ type Hub struct {
 	// pub is the optional cross-instance publisher. Set via SetPublisher;
 	// read under mu.RLock so hot-swapping during tests is safe.
 	pub Publisher
+
+	// audience enforces the authorization boundary for channel/team events.
+	audience AudienceResolver
 }
 
 func NewHub() *Hub {
@@ -77,7 +91,7 @@ func (h *Hub) IsOnline(userID string) bool {
 
 // ClientCount reports the number of currently connected sockets (NOT
 // distinct users — a single user with three tabs counts as three). Used
-// by the Prometheus `moddle_ws_clients` gauge.
+// by the Prometheus `moyro_ws_clients` gauge.
 func (h *Hub) ClientCount() int {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
@@ -90,6 +104,13 @@ func (h *Hub) ClientCount() int {
 func (h *Hub) SetPublisher(p Publisher) {
 	h.mu.Lock()
 	h.pub = p
+	h.mu.Unlock()
+}
+
+// SetAudienceResolver installs the membership lookup used during fan-out.
+func (h *Hub) SetAudienceResolver(resolver AudienceResolver) {
+	h.mu.Lock()
+	h.audience = resolver
 	h.mu.Unlock()
 }
 
@@ -185,12 +206,28 @@ func (h *Hub) Run(ctx context.Context) {
 			h.seq++
 			ev.Seq = h.seq
 			raw, _ := json.Marshal(ev)
-			h.fanout(ev, raw)
+			h.fanout(ctx, ev, raw)
 		}
 	}
 }
 
-func (h *Hub) fanout(ev Event, raw []byte) {
+func (h *Hub) fanout(ctx context.Context, ev Event, raw []byte) {
+	h.mu.RLock()
+	audienceResolver := h.audience
+	h.mu.RUnlock()
+
+	var audience map[string]struct{}
+	if ev.Broadcast.UserID == "" && (ev.Broadcast.ChannelID != "" || ev.Broadcast.TeamID != "") {
+		if audienceResolver == nil {
+			return
+		}
+		resolved, err := audienceResolver(ctx, ev.Broadcast)
+		if err != nil {
+			return
+		}
+		audience = resolved
+	}
+
 	h.mu.RLock()
 	defer h.mu.RUnlock()
 
@@ -208,6 +245,11 @@ func (h *Hub) fanout(ev Event, raw []byte) {
 	for c := range h.clients {
 		if _, skip := omit[c.UserID]; skip {
 			continue
+		}
+		if audience != nil {
+			if _, allowed := audience[c.UserID]; !allowed {
+				continue
+			}
 		}
 		trySend(c, raw)
 	}

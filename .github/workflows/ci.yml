@@ -1,0 +1,74 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version-file: server/go.mod
+          cache-dependency-path: server/go.sum
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: webapp/package-lock.json
+      - name: Install web dependencies
+        working-directory: webapp
+        run: npm ci
+      - name: Audit production web dependencies
+        working-directory: webapp
+        run: |
+          npm audit --omit=dev --audit-level=high
+          npm audit --audit-level=high
+      - name: Type-check and build webapp
+        working-directory: webapp
+        run: |
+          npm run typecheck
+          npm run build
+      - name: Test server
+        working-directory: server
+        run: |
+          go test -race ./...
+          go vet ./...
+          go run golang.org/x/vuln/cmd/govulncheck@v1.7.0 ./...
+      - name: Test Go plugin SDK
+        working-directory: plugin-sdk/go
+        run: |
+          go test -race ./...
+          go vet ./...
+      - name: Build service image
+        run: |
+          docker build \
+            --build-arg VERSION=ci \
+            --build-arg COMMIT="${GITHUB_SHA}" \
+            --build-arg BUILD_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            --tag moyro:ci \
+            .
+      - name: Install Chromium for product-page tests
+        working-directory: webapp
+        run: npx playwright install --with-deps chromium
+      - name: Verify routed pages, refresh, mobile layout, and browser errors
+        env:
+          MOYRO_E2E_PORT: "18065"
+        run: |
+          docker pull postgres:16-alpine@sha256:cf78e76683b9ca8c5733cbbdce6c9262b45b6767934dd0a95e671f9a0fc20685
+          bash scripts/verify-product-ui.sh moyro:ci "${RUNNER_TEMP}/moyro-screens"
+      - name: Verify GitHub Pages assets and structured data
+        run: node scripts/verify-pages.mjs

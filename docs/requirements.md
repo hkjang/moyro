@@ -1,6 +1,6 @@
-# Moddle — Mattermost 호환 채팅 플랫폼 개발 요건서
+# moyro — Mattermost 호환 채팅 플랫폼 개발 요건서
 
-> 코드명: RelayChat · 제품명: **Moddle** · 설계 전략: *Mattermost Compatible Platform*
+> 코드명: moyro · 제품명: **moyro** · 설계 전략: *Mattermost Compatible Platform*
 
 ## 1. 프로젝트 목표
 
@@ -16,13 +16,13 @@
 
 | 구분        | 제안명                         |
 | --------- | --------------------------- |
-| 제품명       | Moddle                      |
-| 서버명       | Moddle Server               |
-| 웹앱명       | Moddle Web                  |
-| 플러그인 SDK  | Moddle Plugin SDK           |
-| API 호환 계층 | Moddle MM Compatibility API |
-| 앱스토어      | Moddle Marketplace          |
-| CLI       | moddlectl                   |
+| 제품명       | moyro                      |
+| 서버명       | moyro Server               |
+| 웹앱명       | moyro Web                  |
+| 플러그인 SDK  | moyro Plugin SDK           |
+| API 호환 계층 | moyro MM Compatibility API |
+| 앱스토어      | moyro Marketplace          |
+| CLI       | moyroctl                   |
 
 ## 3. 호환 목표
 
@@ -163,7 +163,7 @@ OAuth 2.0 + SSO + MFA(선택), 토큰 분리 관리, RBAC, TLS·저장 암호화
 
 ## 17. 최종 추천
 
-- 최종 제품명: **Moddle**
+- 최종 제품명: **moyro**
 - 전략: Compatible Platform (Clone X)
 - 1차: REST v4 + WebSocket + 웹앱 플러그인 일부
 - 2차: 서버 플러그인 RPC Host

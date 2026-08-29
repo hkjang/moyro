@@ -3,7 +3,6 @@ param(
     [switch]$SkipInfra,
     [switch]$NoServer,
     [switch]$NoWeb,
-    [int]$ServerPort = 8065,
     [int]$WebPort = 5173
 )
 
@@ -12,8 +11,8 @@ $ErrorActionPreference = "Stop"
 $Root = Resolve-Path (Join-Path $PSScriptRoot "..")
 $ServerDir = Join-Path $Root "server"
 $WebappDir = Join-Path $Root "webapp"
-$PluginDir = Join-Path $Root "plugins"
 $ComposeFile = Join-Path $Root "deploy\docker\compose.dev.yaml"
+$ServerPort = 8065
 
 function Resolve-NpmCmd {
     $cmd = Get-Command npm.cmd -ErrorAction SilentlyContinue
@@ -76,11 +75,11 @@ function Get-ProcessById {
     return Get-CimInstance Win32_Process -Filter ("ProcessId = {0}" -f $ProcessId) -ErrorAction SilentlyContinue
 }
 
-function Test-GoRunModdleProcess {
+function Test-GoRunMoyroProcess {
     param([Parameter(Mandatory = $true)]$Process)
 
     $exeName = [IO.Path]::GetFileName($Process.ExecutablePath)
-    if ($exeName -ne "moddle.exe") {
+    if ($exeName -ne "moyro.exe") {
         return $false
     }
 
@@ -89,7 +88,7 @@ function Test-GoRunModdleProcess {
         return $false
     }
 
-    return $parent.CommandLine -match 'go(\.exe)?"?\s+run\s+(\./|\.\\)?cmd[\\/]moddle'
+    return $parent.CommandLine -match 'go(\.exe)?"?\s+run\s+(\./|\.\\)?cmd[\\/]moyro'
 }
 
 function Clear-RepoOwnedPort {
@@ -103,14 +102,14 @@ function Clear-RepoOwnedPort {
     $rootPath = [IO.Path]::GetFullPath($Root).TrimEnd("\")
     $isRepoProcess = (Test-ContainsPath -Text $process.ExecutablePath -Path $rootPath) -or
         (Test-ContainsPath -Text $process.CommandLine -Path $rootPath) -or
-        (Test-GoRunModdleProcess -Process $process)
+        (Test-GoRunMoyroProcess -Process $process)
 
     if (-not $isRepoProcess) {
         $owner = if ($process.ExecutablePath) { $process.ExecutablePath } else { $process.CommandLine }
         throw "Port $Port is already in use by PID $($process.ProcessId): $owner"
     }
 
-    Write-Host "Stopping existing RelayChat process on port $Port (PID $($process.ProcessId))..."
+    Write-Host "Stopping existing moyro process on port $Port (PID $($process.ProcessId))..."
     Stop-Process -Id $process.ProcessId -Force
     Start-Sleep -Milliseconds 700
 }
@@ -140,23 +139,25 @@ if (-not $SkipInfra) {
 if (-not $NoServer) {
     Clear-RepoOwnedPort -Port $ServerPort
     $serverCommand = @"
-`$env:MODDLE_LISTEN = $(Quote-PSString ":$ServerPort")
-`$env:MODDLE_PLUGIN_DIR = $(Quote-PSString $PluginDir)
-go run ./cmd/moddle
+`$env:POSTGRES_DSN = $(Quote-PSString "postgres://moyro:moyro@localhost:5433/moyro?sslmode=disable")
+`$env:BOOTSTRAP_ADMIN = $(Quote-PSString "admin@moyro.local")
+`$env:BOOTSTRAP_ADMIN_PASSWORD = $(Quote-PSString "MoyroDev!2026")
+`$env:ENCRYPTION_KEY = $(Quote-PSString "bW95cm8tZGV2LWVuY3J5cHRpb24ta2V5LTMyLWJ5dGU=")
+go run ./cmd/moyro
 "@
-    Start-DevWindow -Title "Moddle Server" -WorkingDirectory $ServerDir -Command $serverCommand
+    Start-DevWindow -Title "moyro Server" -WorkingDirectory $ServerDir -Command $serverCommand
 }
 
 if (-not $NoWeb) {
     $npm = Resolve-NpmCmd
     $webCommand = "& $(Quote-PSString $npm) run dev -- --host 127.0.0.1 --port $WebPort"
-    Start-DevWindow -Title "Moddle Webapp" -WorkingDirectory $WebappDir -Command $webCommand
+    Start-DevWindow -Title "moyro Webapp" -WorkingDirectory $WebappDir -Command $webCommand
 }
 
 Write-Host ""
 Write-Host "Dev environment requested."
 Write-Host "Server: http://localhost:$ServerPort"
 Write-Host "Webapp: http://localhost:$WebPort"
-Write-Host "Dev login: webuser / P@ssw0rd1"
+Write-Host "Bootstrap admin: admin@moyro.local / MoyroDev!2026"
 Write-Host ""
 Write-Host "Use -SkipInfra when Docker services are already running."

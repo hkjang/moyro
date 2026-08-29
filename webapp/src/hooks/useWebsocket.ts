@@ -25,6 +25,7 @@ export interface UseWebsocketResult {
 /** Close code used when the React component unmounts (logout / token
  *  change). The reconnect logic checks this code and skips reopening. */
 export const WS_CLOSE_LOGOUT = 4001;
+const WS_AUTH_SEQ = 1;
 
 export function useWebsocket(
   token: string | null,
@@ -39,6 +40,7 @@ export function useWebsocket(
   const retryTimerRef = useRef<number | null>(null);
   const attemptsRef = useRef(0);
   const tokenRef = useRef<string | null>(null);
+  const authenticatedRef = useRef(false);
   const onMessageRef = useRef(onMessage);
   const openedOnceRef = useRef(false); // tracks "have we ever connected?"
   const closedByUserRef = useRef(false);
@@ -71,27 +73,51 @@ export function useWebsocket(
 
     function open() {
       if (!tokenRef.current) return;
-      const ws = openWebSocket(tokenRef.current);
+      const ws = openWebSocket();
       wsRef.current = ws;
       ws.addEventListener("open", () => {
         if (wsRef.current !== ws) return;
-        attemptsRef.current = 0;
-        setAttempts(0);
-        setStatus("connected");
-        if (openedOnceRef.current) {
-          // Only bump on *re*opens so ChatView's reconciler doesn't fire
-          // on the initial boot (where nothing needs reconciling).
-          setReconnectSeq((n) => n + 1);
+        const currentToken = tokenRef.current;
+        if (!currentToken) {
+          ws.close(WS_CLOSE_LOGOUT, "missing token");
+          return;
         }
-        openedOnceRef.current = true;
+        // Browsers cannot attach Authorization headers to the WebSocket
+        // upgrade. Authenticate in the first frame instead of leaking the
+        // bearer through the URL/query string.
+        ws.send(JSON.stringify({
+          seq: WS_AUTH_SEQ,
+          action: "authentication_challenge",
+          data: { token: currentToken },
+        }));
       });
       ws.addEventListener("message", (ev) => {
         if (wsRef.current !== ws) return;
+        if (!authenticatedRef.current) {
+          try {
+            const reply = JSON.parse(ev.data as string) as { status?: string; seq_reply?: number };
+            if (reply.status !== "OK" || reply.seq_reply !== WS_AUTH_SEQ) return;
+          } catch {
+            return;
+          }
+          authenticatedRef.current = true;
+          attemptsRef.current = 0;
+          setAttempts(0);
+          setStatus("connected");
+          if (openedOnceRef.current) {
+            // Only bump on *re*opens so ChatView's reconciler doesn't fire
+            // on the initial boot (where nothing needs reconciling).
+            setReconnectSeq((n) => n + 1);
+          }
+          openedOnceRef.current = true;
+          return;
+        }
         onMessageRef.current(ev);
       });
       ws.addEventListener("close", (ev) => {
         if (wsRef.current !== ws) return;
         wsRef.current = null;
+        authenticatedRef.current = false;
         if (closedByUserRef.current || ev.code === WS_CLOSE_LOGOUT) {
           setStatus("offline");
           return;
@@ -123,6 +149,7 @@ export function useWebsocket(
       clearOpenTimer();
       const ws = wsRef.current;
       wsRef.current = null;
+      authenticatedRef.current = false;
       if (ws) {
         try { ws.close(WS_CLOSE_LOGOUT, "logout"); } catch { /* ignore */ }
       }
@@ -133,7 +160,7 @@ export function useWebsocket(
 
   function send(data: string) {
     const ws = wsRef.current;
-    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    if (!ws || ws.readyState !== WebSocket.OPEN || !authenticatedRef.current) return;
     try { ws.send(data); } catch { /* socket just closed, drop */ }
   }
 

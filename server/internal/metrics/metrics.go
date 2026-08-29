@@ -20,10 +20,10 @@ import (
 type Registry struct {
 	reg *prometheus.Registry
 
-	httpDuration  *prometheus.HistogramVec
-	postsCreated  prometheus.Counter
-	wsClients     prometheus.Gauge
-	webhookDepth  prometheus.Gauge
+	httpDuration *prometheus.HistogramVec
+	postsCreated prometheus.Counter
+	wsClients    prometheus.Gauge
+	webhookDepth prometheus.Gauge
 }
 
 // package-level singleton — single-process server, no isolation needed.
@@ -40,20 +40,20 @@ func New() *Registry {
 
 	r := &Registry{reg: reg}
 	r.httpDuration = prometheus.NewHistogramVec(prometheus.HistogramOpts{
-		Name:    "moddle_http_request_duration_seconds",
+		Name:    "moyro_http_request_duration_seconds",
 		Help:    "HTTP request duration in seconds, labelled by route pattern + method + status.",
 		Buckets: prometheus.DefBuckets,
 	}, []string{"path", "method", "status"})
 	r.postsCreated = prometheus.NewCounter(prometheus.CounterOpts{
-		Name: "moddle_posts_created_total",
+		Name: "moyro_posts_created_total",
 		Help: "Total number of posts successfully created (excludes rejected / errored).",
 	})
 	r.wsClients = prometheus.NewGauge(prometheus.GaugeOpts{
-		Name: "moddle_ws_clients",
+		Name: "moyro_ws_clients",
 		Help: "Currently connected WebSocket clients (not distinct users).",
 	})
 	r.webhookDepth = prometheus.NewGauge(prometheus.GaugeOpts{
-		Name: "moddle_webhook_queue_depth",
+		Name: "moyro_webhook_queue_depth",
 		Help: "Length of the outgoing webhook dispatcher's job queue.",
 	})
 	reg.MustRegister(r.httpDuration, r.postsCreated, r.wsClients, r.webhookDepth)

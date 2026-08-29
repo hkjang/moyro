@@ -1,0 +1,180 @@
+name: Release offline image
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Existing v-prefixed tag to release
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ inputs.version || github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Resolve and validate version
+        id: version
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          INPUT_VERSION: ${{ inputs.version }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          if [[ "${EVENT_NAME}" == "workflow_dispatch" ]]; then
+            version="${INPUT_VERSION}"
+          else
+            version="${REF_NAME}"
+          fi
+          if [[ ! "${version}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]; then
+            echo "version must look like v1.2.3" >&2
+            exit 1
+          fi
+          git rev-parse --verify "refs/tags/${version}" >/dev/null
+          commit="$(git rev-list -n 1 "refs/tags/${version}")"
+          echo "version=${version}" >> "${GITHUB_OUTPUT}"
+          echo "archive=moyro-${version}.tar.gz" >> "${GITHUB_OUTPUT}"
+          echo "commit=${commit}" >> "${GITHUB_OUTPUT}"
+
+      - name: Check out release tag
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: git checkout --detach "refs/tags/${VERSION}"
+
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version-file: server/go.mod
+          cache-dependency-path: server/go.sum
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: webapp/package-lock.json
+
+      - name: Test Go modules
+        run: |
+          (cd server && go test -race ./... && go vet ./...)
+          (cd plugin-sdk/go && go test -race ./... && go vet ./...)
+
+      - name: Scan reachable Go vulnerabilities
+        working-directory: server
+        run: go run golang.org/x/vuln/cmd/govulncheck@v1.7.0 ./...
+
+      - name: Verify web dependencies and types
+        working-directory: webapp
+        run: |
+          npm ci
+          npm audit --omit=dev --audit-level=high
+          npm audit --audit-level=high
+          npm run typecheck
+
+      - name: Build release image
+        id: image
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          COMMIT: ${{ steps.version.outputs.commit }}
+          IMAGE_TAR: ${{ runner.temp }}/moyro-release-image.tar
+        run: |
+          set -euo pipefail
+          # Derive metadata from the immutable tag commit so rerunning a tag
+          # cannot change the image solely because the workflow ran later.
+          build_date="$(git show -s --format=%cI "${COMMIT}")"
+          source_date_epoch="$(git show -s --format=%ct "${COMMIT}")"
+          docker build \
+            --platform linux/amd64 \
+            --provenance=false \
+            --build-arg TARGETOS=linux \
+            --build-arg TARGETARCH=amd64 \
+            --build-arg VERSION="${VERSION}" \
+            --build-arg COMMIT="${COMMIT}" \
+            --build-arg BUILD_DATE="${build_date}" \
+            --build-arg SOURCE_DATE_EPOCH="${source_date_epoch}" \
+            --tag "moyro:${VERSION}" \
+            .
+          docker save --output "${IMAGE_TAR}" "moyro:${VERSION}"
+          echo "tar=${IMAGE_TAR}" >> "${GITHUB_OUTPUT}"
+
+      - name: Verify GitHub Pages release assets
+        run: node scripts/verify-pages.mjs
+
+      - name: Verify release user interface
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          MOYRO_E2E_PORT: "18065"
+        run: |
+          (cd webapp && npx playwright install --with-deps chromium)
+          docker pull postgres:16-alpine@sha256:cf78e76683b9ca8c5733cbbdce6c9262b45b6767934dd0a95e671f9a0fc20685
+          bash scripts/verify-product-ui.sh "moyro:${VERSION}" "${RUNNER_TEMP}/moyro-release-screens"
+
+      - name: Export compressed Docker image
+        env:
+          ARCHIVE: ${{ steps.version.outputs.archive }}
+          IMAGE_TAR: ${{ steps.image.outputs.tar }}
+        run: |
+          set -euo pipefail
+          gzip -n -9 < "${IMAGE_TAR}" > "${ARCHIVE}"
+
+      - name: Verify offline archive
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          COMMIT: ${{ steps.version.outputs.commit }}
+          ARCHIVE: ${{ steps.version.outputs.archive }}
+        run: |
+          EXPECTED_COMMIT="${COMMIT}" bash scripts/verify-release.sh "moyro:${VERSION}" "${ARCHIVE}"
+
+      - name: Create or update GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.version }}
+          ARCHIVE: ${{ steps.version.outputs.archive }}
+          COMMIT: ${{ steps.version.outputs.commit }}
+        run: |
+          set -euo pipefail
+          digest="$(sha256sum "${ARCHIVE}" | awk '{print $1}')"
+          if gh release view "${VERSION}" >/dev/null 2>&1; then
+            if gh release view "${VERSION}" --json assets --jq '.assets[].name' | grep -Fxq "${ARCHIVE}"; then
+              existing_dir="$(mktemp -d)"
+              gh release download "${VERSION}" --pattern "${ARCHIVE}" --dir "${existing_dir}"
+              env -u GH_TOKEN EXPECTED_COMMIT="${COMMIT}" bash scripts/verify-release.sh \
+                "moyro:${VERSION}" "${existing_dir}/${ARCHIVE}"
+              digest="$(sha256sum "${existing_dir}/${ARCHIVE}" | awk '{print $1}')"
+            else
+              gh release upload "${VERSION}" "${ARCHIVE}"
+            fi
+            notes="$(printf 'Offline image: `%s`\n\nLoad with `docker load < %s` after transfer to the offline network.\n\nSHA-256: `%s`\n' "moyro:${VERSION}" "${ARCHIVE}" "${digest}")"
+            gh release edit "${VERSION}" --title "moyro ${VERSION}" --notes "${notes}"
+          else
+            notes="$(printf 'Offline image: `%s`\n\nLoad with `docker load < %s` after transfer to the offline network.\n\nSHA-256: `%s`\n' "moyro:${VERSION}" "${ARCHIVE}" "${digest}")"
+            gh release create "${VERSION}" "${ARCHIVE}" \
+              --title "moyro ${VERSION}" \
+              --verify-tag \
+              --notes "${notes}"
+          fi
+
+          while IFS= read -r asset; do
+            if [[ -n "${asset}" && "${asset}" != "${ARCHIVE}" ]]; then
+              gh release delete-asset "${VERSION}" "${asset}" --yes
+            fi
+          done < <(gh release view "${VERSION}" --json assets --jq '.assets[].name')
+
+          remaining_assets="$(gh release view "${VERSION}" --json assets --jq '.assets[].name')"
+          if [[ "${remaining_assets}" != "${ARCHIVE}" ]]; then
+            echo "release must contain exactly ${ARCHIVE}" >&2
+            exit 1
+          fi

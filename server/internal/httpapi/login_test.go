@@ -1,6 +1,34 @@
 package httpapi
 
-import "testing"
+import (
+	"net/http"
+	"net/http/httptest"
+	"testing"
+)
+
+func TestExtractBearerUsesAuthorizationHeaderOnly(t *testing.T) {
+	queryOnly := httptest.NewRequest(http.MethodGet, "http://moyro.local/api/v4/users/me?access_token=query-secret", nil)
+	if got := extractBearer(queryOnly); got != "" {
+		t.Fatalf("query credential was accepted: %q", got)
+	}
+
+	header := httptest.NewRequest(http.MethodGet, "http://moyro.local/api/v4/users/me?access_token=query-secret", nil)
+	header.Header.Set("Authorization", "Bearer header-secret")
+	if got := extractBearer(header); got != "header-secret" {
+		t.Fatalf("header credential = %q, want header-secret", got)
+	}
+}
+
+func TestWebsocketRejectsURLCredential(t *testing.T) {
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "http://moyro.local/api/v4/websocket?access_token=query-secret", nil)
+
+	(&handlers{}).websocket(recorder, request)
+
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusBadRequest)
+	}
+}
 
 func TestLoginReqIdentifier(t *testing.T) {
 	tests := []struct {

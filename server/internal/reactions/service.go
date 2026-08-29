@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/moddle/moddle/server/internal/store"
+	"github.com/hkjang/moyro/server/internal/store"
 )
 
 type Reaction struct {

@@ -1,5 +1,5 @@
 // Package redisfanout connects the local `ws.Hub` to a Redis pub/sub
-// channel so events created on one Moddle instance reach clients connected
+// channel so events created on one moyro instance reach clients connected
 // to sibling instances behind a load balancer. The wire format is an
 // envelope (`{origin, event}`) rather than the raw `ws.Event` to keep the
 // origin-instance identifier off the wire to browsers.
@@ -32,12 +32,12 @@ import (
 	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
 
-	"github.com/moddle/moddle/server/internal/ws"
+	"github.com/hkjang/moyro/server/internal/ws"
 )
 
-// Channel is the Redis pub/sub channel name. Hard-coded so all Moddle
+// Channel is the Redis pub/sub channel name. Hard-coded so all moyro
 // instances pointing at the same Redis see each other without a config.
-const Channel = "moddle.ws"
+const Channel = "moyro.ws"
 
 // envelope wraps a `ws.Event` for the wire so the origin-instance id can
 // ride along without polluting the Event struct that goes out to browsers.

@@ -14,12 +14,12 @@ const (
 	CoreProtocolVersion = 1
 	AppProtocolVersion  = 1
 
-	MagicCookieKey   = "MODDLE_PLUGIN"
-	MagicCookieValue = "moddle.v1"
+	MagicCookieKey   = "MOYRO_PLUGIN"
+	MagicCookieValue = "moyro.v1"
 
 	// RPC service name registered via net/rpc. Mirrors the Mattermost
 	// convention of a single service per plugin.
-	ServiceName = "Moddle"
+	ServiceName = "Moyro"
 )
 
 // Raw is the wire payload for every hook. We push JSON bytes through a thin

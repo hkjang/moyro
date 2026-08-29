@@ -6,7 +6,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/moddle/moddle/server/internal/config"
+	"github.com/hkjang/moyro/server/internal/config"
 )
 
 func TestGetClientConfig(t *testing.T) {

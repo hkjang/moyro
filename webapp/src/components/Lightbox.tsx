@@ -4,11 +4,13 @@
 // thumbnail to see it larger" rather than a full media viewer. Escape
 // closes, clicks on the backdrop (but not the image) close.
 import { useEffect } from "react";
+import { AuthenticatedImage } from "./AuthenticatedMedia";
 
 export function Lightbox({
-  src, alt, onClose,
+  token, path, alt, onClose,
 }: {
-  src: string;
+  token: string;
+  path: string;
   alt?: string;
   onClose: () => void;
 }) {
@@ -22,9 +24,10 @@ export function Lightbox({
 
   return (
     <div className="lightbox-backdrop" onClick={onClose}>
-      <img
+      <AuthenticatedImage
+        token={token}
+        path={path}
         className="lightbox-image"
-        src={src}
         alt={alt ?? ""}
         onClick={(e) => e.stopPropagation()}
       />

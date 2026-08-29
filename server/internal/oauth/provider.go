@@ -17,13 +17,14 @@ import (
 	"net/url"
 	"strings"
 
-	"github.com/moddle/moddle/server/internal/config"
+	"github.com/hkjang/moyro/server/internal/config"
 )
 
 // UserInfo is the normalised identity returned by every provider. Some
 // fields may be empty depending on the provider's scopes / response.
 type UserInfo struct {
 	Subject       string // provider-local user id (stable)
+	Username      string // preferred provider username (may be blank)
 	Email         string // RFC-5322 email; may be blank on GitHub without user:email scope
 	EmailVerified bool   // provider assertion — do NOT trust for security decisions alone
 	Name          string // display name (may be blank)
@@ -31,8 +32,8 @@ type UserInfo struct {
 }
 
 type Provider interface {
-	Name() string                                         // "google" | "github"
-	AuthURL(state, redirectURL string) string             // where to send the user's browser
+	Name() string                             // "google" | "github"
+	AuthURL(state, redirectURL string) string // where to send the user's browser
 	Exchange(ctx context.Context, code, redirectURL string) (*UserInfo, error)
 }
 
@@ -102,8 +103,8 @@ func NewState() (string, error) {
 var ErrExchangeFailed = errors.New("oauth exchange failed")
 
 // resolveRedirect returns the explicit override if present, otherwise it
-// composes one from PublicBaseURL so a fresh dev install works with only
-// MODDLE_OAUTH_{PROVIDER}_CLIENT_ID/SECRET set.
+// composes one from PublicBaseURL so an administrator only needs to provide
+// the provider credentials in the service settings page.
 func resolveRedirect(publicBase, explicit, provider string) string {
 	if explicit != "" {
 		return explicit

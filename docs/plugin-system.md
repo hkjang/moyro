@@ -1,12 +1,28 @@
 # Plugin System
 
-Moddle has two extension surfaces: server plugins and web plugins. Both are
+moyro has two extension surfaces: server plugins and web plugins. Both are
 intentionally small right now, but their shapes follow Mattermost concepts.
 
 ## Server Plugins
 
-Server plugins are discovered from `MODDLE_PLUGIN_DIR` and loaded by
-`server/internal/pluginhost`.
+Server plugins are discovered from the fixed local plugin directory and loaded
+by `server/internal/pluginhost`. The location is not an application runtime
+environment variable.
+
+### v0.1.0 trust boundary
+
+Native server plugins are operator-provisioned, fully trusted code in v0.1.0.
+They execute with the same service UID and share the container process
+namespace, data volume, and network. The launcher supplies only the handshake
+cookie in the plugin command environment as defense-in-depth hygiene, but that
+does not create a sandbox or isolate service secrets from a malicious binary.
+
+Install only reviewed binaries through a controlled image or volume-provisioning
+process. Runtime upload, Marketplace installation, signing enforcement, and
+per-plugin permissions are not available in this release. If an unreviewed
+plugin has run, treat the PostgreSQL credential, bootstrap password, and root
+encryption key as potentially exposed and follow the operator's credential
+rotation and recovery procedure.
 
 Manifest files:
 
@@ -32,6 +48,12 @@ Runtime flow:
 3. Plugin writes a HashiCorp-style handshake line to stdout.
 4. Host connects over `net/rpc`.
 5. Hook payloads travel as JSON inside a small raw gob envelope.
+
+The current protocol identity is `MOYRO_PLUGIN=moyro.v1` with the `Moyro`
+RPC service name. Plugin binaries compiled against the earlier pre-moyro
+cookie or service name cannot complete the handshake and must be rebuilt with
+the current Go SDK. This is source-level portability, not binary ABI
+compatibility with Mattermost or an earlier development snapshot.
 
 Supported server hook surface:
 

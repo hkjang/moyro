@@ -5,6 +5,7 @@
 // the change surgical and good enough for a typical <500-entry list).
 import { useEffect, useMemo, useRef, useState } from "react";
 import { api, type Emoji } from "@/api/client";
+import { AuthenticatedImage } from "./AuthenticatedMedia";
 
 type Props = {
   token: string;
@@ -108,14 +109,14 @@ export function EmojiPicker({ token, quick, onPick, onClose }: Props) {
           placeholder="커스텀 이모지 검색…"
           value={q}
           onChange={(e) => setQ(e.target.value)}
-          style={{ height: 30, fontSize: 12 }}
+          style={{ height: 30, fontSize: 13 }}
         />
       </div>
       <div className="emoji-picker-custom">
         {loading ? (
-          <div className="chat-empty" style={{ padding: 8, fontSize: 12 }}>불러오는 중…</div>
+          <div className="chat-empty" style={{ padding: 8, fontSize: 13 }}>불러오는 중…</div>
         ) : filtered.length === 0 ? (
-          <div className="chat-empty" style={{ padding: 8, fontSize: 12 }}>
+          <div className="chat-empty" style={{ padding: 8, fontSize: 13 }}>
             {q ? "일치하는 이모지 없음" : "커스텀 이모지 없음"}
           </div>
         ) : (
@@ -127,7 +128,7 @@ export function EmojiPicker({ token, quick, onPick, onClose }: Props) {
               onClick={() => onPick(e.name)}
               title={`:${e.name}:`}
             >
-              <img src={api.emojiImageURL(token, e.id)} alt={e.name} />
+              <AuthenticatedImage token={token} path={api.emojiImagePath(e.id)} alt={e.name} />
             </button>
           ))
         )}

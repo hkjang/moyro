@@ -1,6 +1,6 @@
 openapi: 3.1.0
 info:
-  title: Moddle MM Compatibility API
+  title: moyro MM Compatibility API
   version: 0.1.0
   description: |
     Mattermost v4 호환 API. 필드명과 경로는 Mattermost REST API v4와 최대한 일치시켜

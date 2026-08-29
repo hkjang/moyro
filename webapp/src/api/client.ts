@@ -1,8 +1,14 @@
 const BASE = "/api/v4";
+const MOYRO_BASE = "/api/moyro/v1";
 
 type FetchOpts = Omit<RequestInit, "body"> & { body?: unknown };
 
-async function request<T>(token: string | null, path: string, opts: FetchOpts = {}): Promise<T> {
+async function requestFrom<T>(
+  base: string,
+  token: string | null,
+  path: string,
+  opts: FetchOpts = {},
+): Promise<T> {
   const headers = new Headers(opts.headers);
   const hasBody = opts.body !== undefined;
   if (hasBody && !(opts.body instanceof FormData)) {
@@ -19,7 +25,7 @@ async function request<T>(token: string | null, path: string, opts: FetchOpts = 
     body = JSON.stringify(opts.body);
   }
 
-  const res = await fetch(`${BASE}${path}`, { ...opts, headers, body });
+  const res = await fetch(`${base}${path}`, { ...opts, headers, body });
   if (!res.ok) {
     const err = await res.json().catch(() => ({ message: res.statusText }));
     throw new Error(err.message ?? `HTTP ${res.status}`);
@@ -27,6 +33,52 @@ async function request<T>(token: string | null, path: string, opts: FetchOpts = 
   if (res.status === 204) return undefined as T;
   const text = await res.text();
   return (text ? JSON.parse(text) : (undefined as unknown)) as T;
+}
+
+async function request<T>(token: string | null, path: string, opts: FetchOpts = {}): Promise<T> {
+  return requestFrom<T>(BASE, token, path, opts);
+}
+
+async function moyroRequest<T>(token: string | null, path: string, opts: FetchOpts = {}): Promise<T> {
+  return requestFrom<T>(MOYRO_BASE, token, path, opts);
+}
+
+// Media bytes are fetched with an Authorization header and converted to a
+// short-lived blob URL by the rendering component. Restrict callers to known
+// read-only media surfaces so a post cannot turn an arbitrary same-origin API
+// path into a credentialed fetch.
+function isAuthenticatedMediaPath(path: string): boolean {
+  if (!path.startsWith(`${BASE}/`)) return false;
+  let parsed: URL;
+  try {
+    parsed = new URL(path, "https://moyro.invalid");
+  } catch {
+    return false;
+  }
+  if (parsed.origin !== "https://moyro.invalid" || parsed.hash) return false;
+  const pathname = parsed.pathname;
+  const noQuery = parsed.search === "";
+  if (/^\/api\/v4\/files\/[^/]+(?:\/thumbnail)?$/.test(pathname)) return noQuery;
+  if (/^\/api\/v4\/emoji\/[^/]+\/image$/.test(pathname)) return noQuery;
+  if (/^\/api\/v4\/users\/[^/]+\/image$/.test(pathname)) {
+    return [...parsed.searchParams.keys()].every((key) => key === "v") && parsed.searchParams.getAll("v").length <= 1;
+  }
+  if (pathname === "/api/v4/link_preview_image") {
+    return [...parsed.searchParams.keys()].every((key) => key === "url") && parsed.searchParams.getAll("url").length === 1;
+  }
+  return false;
+}
+
+async function authenticatedMediaBlob(token: string, path: string): Promise<Blob> {
+  if (!token) throw new Error("missing media credential");
+  if (!isAuthenticatedMediaPath(path)) throw new Error("invalid authenticated media path");
+  const headers = new Headers({ Authorization: `Bearer ${token}` });
+  const res = await fetch(path, { headers });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ message: res.statusText }));
+    throw new Error(err.message ?? `HTTP ${res.status}`);
+  }
+  return res.blob();
 }
 
 // ---- Types ----
@@ -281,6 +333,29 @@ export type SystemPing = {
   status: string;
   ActiveSearchBackend?: string;
   oauth_providers?: string[];
+  version?: string;
+  build_hash?: string;
+  build_date?: string;
+};
+
+export type SystemInfo = {
+  name: string;
+  version: string;
+  build_hash?: string;
+  build_date?: string;
+  oidc_enabled?: boolean;
+  oidc_provider_name?: string;
+  approval_enabled?: boolean;
+  local_signup_enabled?: boolean;
+};
+
+export type ClientConfig = {
+  Version?: string;
+  BuildNumber?: string;
+  BuildDate?: string;
+  BuildHash?: string;
+  SiteName?: string;
+  [key: string]: string | undefined;
 };
 
 export const api = {
@@ -304,6 +379,7 @@ export const api = {
     }),
   me: (token: string) => request<User>(token, "/users/me"),
   ping: () => request<SystemPing>(null, "/system/ping"),
+  clientConfig: () => request<ClientConfig>(null, "/config/client"),
   logout: (token: string) =>
     request<{ status: string }>(token, "/users/logout", { method: "POST" }),
 
@@ -347,7 +423,7 @@ export const api = {
   // URL for any user's avatar. When picture is empty the server 404s and
   // the consumer <img onError> falls back to initials. We include update_at
   // as the cache-buster so a new upload invalidates the browser cache.
-  userImageURL: (userId: string, version?: number | string) => {
+  userImagePath: (userId: string, version?: number | string) => {
     const suffix = version !== undefined ? `?v=${encodeURIComponent(String(version))}` : "";
     return `${BASE}/users/${encodeURIComponent(userId)}/image${suffix}`;
   },
@@ -452,10 +528,9 @@ export const api = {
     );
   },
 
-  // Phase 18: link preview image proxy URL builder. Kept as a URL (not a
-  // fetch) because the browser embeds it in <img src> — the <img> does
-  // the GET and bypasses our JSON request wrapper.
-  linkPreviewImageURL: (rawURL: string) =>
+  // Phase 18: protected link-preview image proxy. The rendering component
+  // fetches this path with Authorization and exposes only a blob URL to DOM.
+  linkPreviewImagePath: (rawURL: string) =>
     `${BASE}/link_preview_image?url=${encodeURIComponent(rawURL)}`,
 
   // Phase 19: scheduled messages. createScheduledPost returns the fresh
@@ -657,12 +732,11 @@ export const api = {
   },
   fileInfo: (token: string, fileId: string) =>
     request<FileInfo>(token, `/files/${fileId}/info`),
-  fileDownloadURL: (token: string, fileId: string) =>
-    // Direct link used in <a href>/<img src>. Token is passed as query arg since
-    // the <a href> download flow can't set Authorization headers.
-    `${BASE}/files/${fileId}?access_token=${encodeURIComponent(token)}`,
-  fileThumbnailURL: (token: string, fileId: string) =>
-    `${BASE}/files/${fileId}/thumbnail?access_token=${encodeURIComponent(token)}`,
+  fileDownloadPath: (fileId: string) =>
+    `${BASE}/files/${encodeURIComponent(fileId)}`,
+  fileThumbnailPath: (fileId: string) =>
+    `${BASE}/files/${encodeURIComponent(fileId)}/thumbnail`,
+  authenticatedMediaBlob,
 
   // Custom emojis. Creation uses multipart (so we can't reuse the JSON
   // helper), List/delete are plain JSON.
@@ -676,8 +750,8 @@ export const api = {
   },
   deleteEmoji: (token: string, emojiId: string) =>
     request<{ status: string }>(token, `/emoji/${emojiId}`, { method: "DELETE" }),
-  emojiImageURL: (token: string, emojiId: string) =>
-    `${BASE}/emoji/${emojiId}/image?access_token=${encodeURIComponent(token)}`,
+  emojiImagePath: (emojiId: string) =>
+    `${BASE}/emoji/${encodeURIComponent(emojiId)}/image`,
 
   // ---- Phase 16: invites (self-signup preview) ----
   //
@@ -1045,9 +1119,9 @@ export const adminApi = {
     request<AdminCompatRecord[]>(token, "/access_control_policies/cel/autocomplete/fields"),
 };
 
-export function openWebSocket(token: string): WebSocket {
+export function openWebSocket(): WebSocket {
   const scheme = window.location.protocol === "https:" ? "wss" : "ws";
-  const url = `${scheme}://${window.location.host}/api/v4/websocket?access_token=${encodeURIComponent(token)}`;
+  const url = `${scheme}://${window.location.host}/api/v4/websocket`;
   return new WebSocket(url);
 }
 
@@ -1097,7 +1171,7 @@ export const prefsApi = {
 // ---- Phase 21: Mattermost-compat user / team / channel / post helpers ----
 //
 // These all mirror official Mattermost v4 endpoint shapes so the eventual
-// goal of plugging the official desktop/mobile client into Moddle moves
+// goal of plugging the official desktop/mobile client into moyro moves
 // closer with each release.
 
 export type ChannelStats = {
@@ -1392,4 +1466,377 @@ export const customProfileApi = {
       `/users/${encodeURIComponent(userId)}/custom_profile_attributes`,
       { method: "PATCH", body: values },
     ),
+};
+
+// ---- Moyro-native management API ---------------------------------------
+// These endpoints intentionally live outside the Mattermost compatibility
+// surface. They back product-specific settings while `/api/v4` remains a
+// stable compatibility boundary for existing clients and integrations.
+
+export type SecretConfigured = { configured: boolean };
+
+export type OIDCProviderSettings = {
+  id?: string;
+  kind: "keycloak";
+  name: string;
+  enabled: boolean;
+  issuer_url: string;
+  client_id: string;
+  client_secret?: string;
+  client_secret_state?: SecretConfigured;
+  scopes: string[];
+  username_claim: string;
+  email_claim: string;
+  allow_signup: boolean;
+  require_verified_email: boolean;
+  ca_certificate_pem?: string;
+  redirect_url?: string;
+  discovery_status?: "unknown" | "ready" | "error";
+  last_tested_at?: number;
+};
+
+export type AIProviderSettings = {
+  id?: string;
+  name: string;
+  enabled: boolean;
+  api_type: "openai-compatible" | "openai";
+  base_url: string;
+  model: string;
+  api_key?: string;
+  api_key_state?: SecretConfigured;
+  streaming_default: boolean;
+  context_window_tokens: number;
+  max_output_tokens: number;
+  timeout_seconds: number;
+  status?: "unknown" | "ready" | "error";
+  last_tested_at?: number;
+};
+
+export type KeyPolicySettings = {
+  enabled: boolean;
+  allowed_scopes: string[];
+  default_scopes: string[];
+  default_ttl_days: number;
+  max_ttl_days: number;
+  rotation_days: number;
+  rotation_grace_hours: number;
+  allow_personal_keys: boolean;
+  allow_scope_self_service: boolean;
+};
+
+export type SiteSettings = {
+  site_name: string;
+  public_base_url: string;
+  allowed_outgoing_hosts: string[];
+  local_signup_enabled: boolean;
+};
+
+export type RBACPermission = {
+  name: string;
+  description: string;
+  resource_type: string;
+  built_in: boolean;
+};
+
+export type EffectivePermissions = {
+  permissions: string[];
+};
+
+export type RBACRole = {
+  id: string;
+  name: string;
+  display_name: string;
+  description: string;
+  scope_type: string;
+  built_in: boolean;
+  permissions: string[];
+  revision: number;
+  create_at: number;
+  update_at: number;
+};
+
+export type MCPSettings = {
+  enabled: boolean;
+  transport: "streamable-http";
+  endpoint_path: string;
+  allowed_tools: string[];
+  allowed_resources: string[];
+  required_scopes: string[];
+};
+
+export type ApprovalPolicy = {
+  id?: string;
+  name: string;
+  enabled: boolean;
+  protected_actions: string[];
+  reviewer_roles: string[];
+  require_rejection_reason: boolean;
+  allow_self_approval: boolean;
+  expires_after_hours: number;
+};
+
+export type ApprovalRequest = {
+  id: string;
+  policy_id: string;
+  action_type: string;
+  requester_id: string;
+  team_id: string;
+  resource_type: string;
+  resource_id: string;
+  payload?: unknown;
+  status: string;
+  idempotency_key?: string;
+  create_at: number;
+  update_at: number;
+  decided_at: number;
+  executed_at: number;
+  expires_at: number;
+};
+
+export type PersonalAPIKey = {
+  id: string;
+  name: string;
+  prefix: string;
+  scopes: string[];
+  status: "active" | "grace" | "revoked" | "expired";
+  created_at: number;
+  last_used_at?: number;
+  expires_at?: number;
+};
+
+export type PersonalAPIKeySecret = PersonalAPIKey & { secret: string };
+
+export type AdminAPIKey = {
+  id: string;
+  user_id: string;
+  username: string;
+  email: string;
+  name: string;
+  prefix: string;
+  kind: "user" | "service" | "mcp";
+  status: "active" | "grace" | "revoked" | "expired";
+  scopes: string[];
+  created_at: number;
+  last_used_at: number;
+  expires_at: number;
+  revoked_at: number;
+};
+
+export type PersonalAIPreferences = {
+  enabled: boolean;
+  provider_id?: string;
+  model?: string;
+  streaming: boolean;
+  max_output_tokens: number;
+  temperature: number;
+};
+
+export type AICompletionRequest = {
+  model?: string;
+  messages: { role: "system" | "user" | "assistant"; content: string }[];
+  max_output_tokens?: number;
+  temperature?: number;
+  stream?: true;
+};
+
+export const publicMoyroApi = {
+  systemInfo: () => moyroRequest<SystemInfo>(null, "/system/info"),
+};
+
+export const moyroAdminApi = {
+  getSettings: <T>(token: string, section: "site" | "key-policy" | "mcp") =>
+    moyroRequest<T>(token, `/admin/settings/${encodeURIComponent(section)}`),
+  patchSettings: <T>(token: string, section: "site" | "key-policy" | "mcp", value: T) =>
+    moyroRequest<T>(token, `/admin/settings/${encodeURIComponent(section)}`, {
+      method: "PATCH",
+      body: value,
+    }),
+
+  listPermissions: (token: string) =>
+    moyroRequest<RBACPermission[]>(token, "/admin/permissions"),
+  listRoles: (token: string) =>
+    moyroRequest<RBACRole[]>(token, "/admin/roles"),
+  patchRole: (token: string, id: string, value: { permissions: string[]; revision: number }) =>
+    moyroRequest<RBACRole>(token, `/admin/roles/${encodeURIComponent(id)}`, {
+      method: "PATCH",
+      body: value,
+    }),
+
+  listAPIKeys: (token: string, page = 0, perPage = 100) =>
+    moyroRequest<AdminAPIKey[]>(
+      token,
+      `/admin/api-keys?page=${encodeURIComponent(String(page))}&per_page=${encodeURIComponent(String(perPage))}`,
+    ),
+  revokeAPIKey: (token: string, id: string) =>
+    moyroRequest<void>(token, `/admin/api-keys/${encodeURIComponent(id)}`, {
+      method: "DELETE",
+    }),
+
+  listOIDCProviders: (token: string) =>
+    moyroRequest<OIDCProviderSettings[]>(token, "/admin/oidc/providers"),
+  createOIDCProvider: (token: string, value: OIDCProviderSettings) =>
+    moyroRequest<OIDCProviderSettings>(token, "/admin/oidc/providers", {
+      method: "POST",
+      body: value,
+    }),
+  patchOIDCProvider: (token: string, id: string, value: Partial<OIDCProviderSettings>) =>
+    moyroRequest<OIDCProviderSettings>(token, `/admin/oidc/providers/${encodeURIComponent(id)}`, {
+      method: "PATCH",
+      body: value,
+    }),
+  testOIDCProvider: (token: string, value: OIDCProviderSettings) =>
+    moyroRequest<{ ok: boolean; issuer?: string; message?: string }>(
+      token,
+      "/admin/oidc/providers/test",
+      { method: "POST", body: value },
+    ),
+
+  listAIProviders: (token: string) =>
+    moyroRequest<AIProviderSettings[]>(token, "/admin/ai/providers"),
+  createAIProvider: (token: string, value: AIProviderSettings) =>
+    moyroRequest<AIProviderSettings>(token, "/admin/ai/providers", {
+      method: "POST",
+      body: value,
+    }),
+  patchAIProvider: (token: string, id: string, value: Partial<AIProviderSettings>) =>
+    moyroRequest<AIProviderSettings>(token, `/admin/ai/providers/${encodeURIComponent(id)}`, {
+      method: "PATCH",
+      body: value,
+    }),
+  testAIProvider: (token: string, value: AIProviderSettings) =>
+    moyroRequest<{ ok: boolean; model?: string; message?: string }>(
+      token,
+      "/admin/ai/providers/test",
+      { method: "POST", body: value },
+    ),
+
+  listApprovalPolicies: (token: string) =>
+    moyroRequest<ApprovalPolicy[]>(token, "/admin/approval-policies"),
+  createApprovalPolicy: (token: string, value: ApprovalPolicy) =>
+    moyroRequest<ApprovalPolicy>(token, "/admin/approval-policies", {
+      method: "POST",
+      body: value,
+    }),
+  patchApprovalPolicy: (token: string, id: string, value: Partial<ApprovalPolicy>) =>
+    moyroRequest<ApprovalPolicy>(token, `/admin/approval-policies/${encodeURIComponent(id)}`, {
+      method: "PATCH",
+      body: value,
+    }),
+};
+
+export const moyroMeApi = {
+  getPermissions: (token: string) =>
+    moyroRequest<EffectivePermissions>(token, "/me/permissions"),
+  listApprovalRequests: (token: string, status = "") =>
+    moyroRequest<ApprovalRequest[]>(
+      token,
+      `/me/approval-requests${status ? `?status=${encodeURIComponent(status)}` : ""}`,
+    ),
+  getAIPreferences: (token: string) =>
+    moyroRequest<PersonalAIPreferences>(token, "/me/ai-preferences"),
+  patchAIPreferences: (token: string, value: PersonalAIPreferences) =>
+    moyroRequest<PersonalAIPreferences>(token, "/me/ai-preferences", {
+      method: "PATCH",
+      body: value,
+    }),
+  listAPIKeys: (token: string) =>
+    moyroRequest<PersonalAPIKey[]>(token, "/me/api-keys"),
+  createAPIKey: (
+    token: string,
+    value: { name: string; scopes: string[]; ttl_days?: number },
+  ) =>
+    moyroRequest<PersonalAPIKeySecret>(token, "/me/api-keys", {
+      method: "POST",
+      body: value,
+    }),
+  patchAPIKey: (token: string, id: string, value: { name?: string; scopes?: string[] }) =>
+    moyroRequest<PersonalAPIKey>(token, `/me/api-keys/${encodeURIComponent(id)}`, {
+      method: "PATCH",
+      body: value,
+    }),
+  deleteAPIKey: (token: string, id: string) =>
+    moyroRequest<void>(token, `/me/api-keys/${encodeURIComponent(id)}`, {
+      method: "DELETE",
+    }),
+  rotateAPIKey: (token: string, id: string) =>
+    moyroRequest<PersonalAPIKeySecret>(token, `/me/api-keys/${encodeURIComponent(id)}/rotate`, {
+      method: "POST",
+    }),
+  streamAICompletion: async (
+    token: string,
+    value: AICompletionRequest,
+    onDelta: (delta: string) => void,
+    signal?: AbortSignal,
+  ): Promise<void> => {
+    const res = await fetch(`${MOYRO_BASE}/me/ai/completions`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+        Accept: "text/event-stream",
+      },
+      body: JSON.stringify({ ...value, stream: true }),
+      signal,
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ message: res.statusText }));
+      throw new Error(err.message ?? `HTTP ${res.status}`);
+    }
+    if (!res.body) throw new Error("streaming response body is unavailable");
+
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    const emitData = (data: string) => {
+      if (!data || data === "[DONE]") return;
+      try {
+        const parsed = JSON.parse(data) as {
+          delta?: string | { text?: string; content?: string };
+          content?: string;
+          choices?: { delta?: { content?: string }; text?: string }[];
+        };
+        const delta = typeof parsed.delta === "string"
+          ? parsed.delta
+          : parsed.delta?.text
+            ?? parsed.delta?.content
+            ?? parsed.choices?.[0]?.delta?.content
+            ?? parsed.choices?.[0]?.text
+            ?? parsed.content
+            ?? "";
+        if (delta) onDelta(delta);
+      } catch {
+        onDelta(data);
+      }
+    };
+    while (true) {
+      const { value: chunk, done } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(chunk, { stream: true });
+      const lines = buffer.split(/\r?\n/);
+      buffer = lines.pop() ?? "";
+      for (const line of lines) {
+        if (!line.startsWith("data:")) continue;
+        emitData(line.slice(5).trim());
+      }
+    }
+    const tail = buffer.trim();
+    if (tail.startsWith("data:")) emitData(tail.slice(5).trim());
+  },
+};
+
+export const moyroReviewApi = {
+  listApprovalRequests: (token: string, status = "") =>
+    moyroRequest<ApprovalRequest[]>(
+      token,
+      `/reviews/approval-requests${status ? `?status=${encodeURIComponent(status)}` : ""}`,
+    ),
+  decideApprovalRequest: (
+    token: string,
+    id: string,
+    value: { decision: "approve" | "reject"; reason: string },
+  ) => moyroRequest<ApprovalRequest>(
+    token,
+    `/reviews/approval-requests/${encodeURIComponent(id)}/decision`,
+    { method: "POST", body: value },
+  ),
 };

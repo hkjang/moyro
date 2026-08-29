@@ -11,7 +11,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/moddle/moddle/server/internal/store"
+	"github.com/hkjang/moyro/server/internal/store"
 )
 
 type Service struct{ db *store.DB }
@@ -54,9 +54,12 @@ func (s *Service) ListIDs(ctx context.Context, userID string, limit, offset int)
 		offset = 0
 	}
 	rows, err := s.db.Pool.Query(ctx, `
-		SELECT post_id FROM saved_posts
-		WHERE user_id=$1
-		ORDER BY create_at DESC
+		SELECT sp.post_id
+		FROM saved_posts sp
+		JOIN posts p ON p.id=sp.post_id AND p.delete_at=0
+		JOIN channel_members cm ON cm.channel_id=p.channel_id AND cm.user_id=sp.user_id
+		WHERE sp.user_id=$1
+		ORDER BY sp.create_at DESC
 		LIMIT $2 OFFSET $3
 	`, userID, limit, offset)
 	if err != nil {
@@ -83,7 +86,11 @@ func (s *Service) IsSavedBulk(ctx context.Context, userID string, postIDs []stri
 		return out, nil
 	}
 	rows, err := s.db.Pool.Query(ctx, `
-		SELECT post_id FROM saved_posts WHERE user_id=$1 AND post_id = ANY($2)
+		SELECT sp.post_id
+		FROM saved_posts sp
+		JOIN posts p ON p.id=sp.post_id AND p.delete_at=0
+		JOIN channel_members cm ON cm.channel_id=p.channel_id AND cm.user_id=sp.user_id
+		WHERE sp.user_id=$1 AND sp.post_id = ANY($2)
 	`, userID, postIDs)
 	if err != nil {
 		return nil, err

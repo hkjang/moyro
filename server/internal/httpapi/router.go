@@ -9,35 +9,41 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
-	"github.com/moddle/moddle/server/internal/audit"
-	"github.com/moddle/moddle/server/internal/auth"
-	"github.com/moddle/moddle/server/internal/bots"
-	"github.com/moddle/moddle/server/internal/channels"
-	"github.com/moddle/moddle/server/internal/commands"
-	"github.com/moddle/moddle/server/internal/config"
-	"github.com/moddle/moddle/server/internal/emojis"
-	"github.com/moddle/moddle/server/internal/files"
-	"github.com/moddle/moddle/server/internal/invites"
-	"github.com/moddle/moddle/server/internal/links"
-	"github.com/moddle/moddle/server/internal/metrics"
-	"github.com/moddle/moddle/server/internal/oauth"
-	"github.com/moddle/moddle/server/internal/pat"
-	"github.com/moddle/moddle/server/internal/pluginhost"
-	"github.com/moddle/moddle/server/internal/posts"
-	"github.com/moddle/moddle/server/internal/preferences"
-	"github.com/moddle/moddle/server/internal/ratelimit"
-	"github.com/moddle/moddle/server/internal/reactions"
-	"github.com/moddle/moddle/server/internal/reminders"
-	"github.com/moddle/moddle/server/internal/savedposts"
-	"github.com/moddle/moddle/server/internal/scheduled"
-	"github.com/moddle/moddle/server/internal/sidebar"
-	"github.com/moddle/moddle/server/internal/slashcmd"
-	"github.com/moddle/moddle/server/internal/store"
-	"github.com/moddle/moddle/server/internal/teams"
-	"github.com/moddle/moddle/server/internal/threads"
-	"github.com/moddle/moddle/server/internal/userstatus"
-	"github.com/moddle/moddle/server/internal/webhooks"
-	"github.com/moddle/moddle/server/internal/ws"
+	"github.com/hkjang/moyro/server/internal/audit"
+	"github.com/hkjang/moyro/server/internal/auth"
+	"github.com/hkjang/moyro/server/internal/bookmarks"
+	"github.com/hkjang/moyro/server/internal/bots"
+	"github.com/hkjang/moyro/server/internal/channels"
+	"github.com/hkjang/moyro/server/internal/commands"
+	"github.com/hkjang/moyro/server/internal/config"
+	"github.com/hkjang/moyro/server/internal/customprofile"
+	"github.com/hkjang/moyro/server/internal/emojis"
+	"github.com/hkjang/moyro/server/internal/files"
+	"github.com/hkjang/moyro/server/internal/invites"
+	"github.com/hkjang/moyro/server/internal/links"
+	"github.com/hkjang/moyro/server/internal/metrics"
+	"github.com/hkjang/moyro/server/internal/oauth"
+	"github.com/hkjang/moyro/server/internal/pat"
+	"github.com/hkjang/moyro/server/internal/pluginhost"
+	"github.com/hkjang/moyro/server/internal/postacks"
+	"github.com/hkjang/moyro/server/internal/posts"
+	"github.com/hkjang/moyro/server/internal/preferences"
+	"github.com/hkjang/moyro/server/internal/ratelimit"
+	"github.com/hkjang/moyro/server/internal/reactions"
+	"github.com/hkjang/moyro/server/internal/registration"
+	"github.com/hkjang/moyro/server/internal/reminders"
+	"github.com/hkjang/moyro/server/internal/savedposts"
+	"github.com/hkjang/moyro/server/internal/scheduled"
+	"github.com/hkjang/moyro/server/internal/sidebar"
+	"github.com/hkjang/moyro/server/internal/slashcmd"
+	"github.com/hkjang/moyro/server/internal/store"
+	"github.com/hkjang/moyro/server/internal/teams"
+	"github.com/hkjang/moyro/server/internal/threads"
+	"github.com/hkjang/moyro/server/internal/tos"
+	"github.com/hkjang/moyro/server/internal/userstatus"
+	"github.com/hkjang/moyro/server/internal/webhooks"
+	"github.com/hkjang/moyro/server/internal/webui"
+	"github.com/hkjang/moyro/server/internal/ws"
 )
 
 // Backend bundles the HTTP handler with the background workers the router
@@ -49,6 +55,7 @@ type Backend struct {
 	Router    http.Handler
 	Scheduled *scheduled.Worker
 	Reminders *reminders.Worker
+	Approvals *ApprovalExecutor
 }
 
 // NewRouter is the legacy entry point — returns just the http.Handler.
@@ -61,12 +68,14 @@ func NewRouter(cfg *config.Config, db *store.DB, hub *ws.Hub, host *pluginhost.H
 // workers. Workers are wired but NOT started — the caller decides when to
 // start them (main.go attaches them to its shutdown context).
 func New(cfg *config.Config, db *store.DB, hub *ws.Hub, host *pluginhost.Host, logger *slog.Logger) *Backend {
+	hub.SetAudienceResolver(ws.DatabaseAudienceResolver(db))
 	authSvc := auth.New(db, cfg.JWTSecret, cfg.TokenTTL)
 	teamSvc := teams.New(db)
 	channelSvc := channels.New(db)
 	postSvc := posts.New(db)
 	reactionSvc := reactions.New(db)
-	// Pick file backend based on MODDLE_FILE_BACKEND. Anything other than
+	// Pick the fixed offline-safe filesystem backend by default. A future
+	// database setting may select an administrator-configured S3 endpoint.
 	// "s3" (incl. empty / "fs") keeps the local filesystem impl. An S3
 	// dial failure falls back to FS with a warning — the plan explicitly
 	// calls fail-open for infra hiccups so the server still boots.
@@ -90,6 +99,7 @@ func New(cfg *config.Config, db *store.DB, hub *ws.Hub, host *pluginhost.Host, l
 	oauthReg := oauth.NewRegistry(cfg)
 	oauthIdent := oauth.NewIdentityStore(db, authSvc)
 	inviteSvc := invites.New(db)
+	registrationSvc := registration.New(db)
 	savedSvc := savedposts.New(db)
 	// Phase 19: scheduled messages + post reminders. Services are cheap
 	// DB wrappers; their Workers are started from main so they live with
@@ -106,6 +116,18 @@ func New(cfg *config.Config, db *store.DB, hub *ws.Hub, host *pluginhost.Host, l
 	// Phase 24: thread membership store. One row per (user, root); team_id
 	// denormalised so "mark all in team read" doesn't have to walk posts.
 	threadSvc := threads.New(db)
+	// Phase 29: channel bookmarks (pinned URL + file links above the
+	// message stream). Channel-scoped, soft-deleted, sort-orderable.
+	bookmarkSvc := bookmarks.New(db)
+	// Phase 32: custom profile attributes (admin-defined extra fields on
+	// every user's profile). Two tables — fields + values; values are
+	// raw JSONB so future field types round-trip without a migration.
+	customProfileSvc := customprofile.New(db)
+	// Phase 33: post acknowledgements + terms-of-service durability. Both
+	// were Phase 28 in-memory stubs; now real schema-backed services so a
+	// server restart no longer wipes ack state or the active TOS body.
+	postacksSvc := postacks.New(db)
+	tosSvc := tos.New(db)
 	// Phase 18: link preview fetcher. Nil when disabled; handlers check
 	// for nil before kicking off the async fetch so a feature-flagged-off
 	// deploy skips the goroutine entirely.
@@ -125,7 +147,7 @@ func New(cfg *config.Config, db *store.DB, hub *ws.Hub, host *pluginhost.Host, l
 	}
 	outDispatcher := webhooks.NewDispatcher(outgoingSvc, postSvc, teamOf, logger, 16, cfg.AllowedOutgoingHosts)
 
-	// Feed the moddle_webhook_queue_depth prometheus gauge on a slow tick.
+	// Feed the moyro_webhook_queue_depth prometheus gauge on a slow tick.
 	// Running inside NewRouter keeps the dispatcher from knowing about
 	// metrics at the type level; the goroutine lives for the process.
 	go func() {
@@ -137,36 +159,48 @@ func New(cfg *config.Config, db *store.DB, hub *ws.Hub, host *pluginhost.Host, l
 	}()
 
 	h := &handlers{
-		cfg:        cfg,
-		auth:       authSvc,
-		teams:      teamSvc,
-		channels:   channelSvc,
-		posts:      postSvc,
-		reactions:  reactionSvc,
-		files:      fileSvc,
-		status:     statusSvc,
-		audit:      auditSvc,
-		slash:      slashSvc,
-		bots:       botSvc,
-		incoming:   incomingSvc,
-		outgoing:   outgoingSvc,
-		outDisp:    outDispatcher,
-		emojis:     emojiSvc,
-		oauthReg:   oauthReg,
-		oauthIdent: oauthIdent,
-		invites:    inviteSvc,
-		saved:      savedSvc,
-		links:      linkSvc,
-		scheduled:  scheduledSvc,
-		reminders:  reminderSvc,
-		prefs:      prefsSvc,
-		sidebar:    sidebarSvc,
-		commands:   commandSvc,
-		threads:    threadSvc,
-		hub:        hub,
-		host:       host,
-		logger:     logger,
+		cfg:          cfg,
+		auth:         authSvc,
+		teams:        teamSvc,
+		channels:     channelSvc,
+		posts:        postSvc,
+		reactions:    reactionSvc,
+		files:        fileSvc,
+		status:       statusSvc,
+		audit:        auditSvc,
+		slash:        slashSvc,
+		bots:         botSvc,
+		incoming:     incomingSvc,
+		outgoing:     outgoingSvc,
+		outDisp:      outDispatcher,
+		emojis:       emojiSvc,
+		oauthReg:     oauthReg,
+		oauthIdent:   oauthIdent,
+		invites:      inviteSvc,
+		registration: registrationSvc,
+		saved:        savedSvc,
+		links:        linkSvc,
+		scheduled:    scheduledSvc,
+		reminders:    reminderSvc,
+		prefs:        prefsSvc,
+		sidebar:      sidebarSvc,
+		commands:     commandSvc,
+		threads:      threadSvc,
+		bookmarks:    bookmarkSvc,
+		customProf:   customProfileSvc,
+		postacks:     postacksSvc,
+		tos:          tosSvc,
+		hub:          hub,
+		host:         host,
+		logger:       logger,
 	}
+	nativeCtx, nativeCancel := context.WithTimeout(context.Background(), 15*time.Second)
+	if native, err := newNativeServices(nativeCtx, cfg, db, h, logger); err != nil {
+		logger.Warn("moyro management services unavailable", "err", err)
+	} else {
+		h.native = native
+	}
+	nativeCancel()
 
 	// Auto-presence: drive the user's status from socket lifecycle, but
 	// never overwrite an explicitly chosen state (DND/away). SetAuto's
@@ -212,6 +246,10 @@ func New(cfg *config.Config, db *store.DB, hub *ws.Hub, host *pluginhost.Host, l
 	// Per-IP login limiter: 1 req/s sustained, burst 5. Slows brute-force
 	// password guessing without disturbing an honest user who mistypes.
 	loginLimiter := ratelimit.New(1, 5)
+	// Account creation performs bcrypt work and writes several rows. Keep a
+	// separate, tighter bucket so opening local signup cannot be used as a
+	// cheap CPU or database exhaustion primitive.
+	signupLimiter := ratelimit.New(0.2, 3)
 	// Per-IP incoming-webhook limiter: public surface, must be tight.
 	hookIPLimiter := ratelimit.New(5, 10)
 	// Per-IP OAuth limiter: the login kickoff is cheap but the callback
@@ -221,9 +259,12 @@ func New(cfg *config.Config, db *store.DB, hub *ws.Hub, host *pluginhost.Host, l
 
 	r := chi.NewRouter()
 	r.Use(middleware.RequestID)
-	r.Use(middleware.RealIP)
+	// Do not trust X-Forwarded-For, X-Real-IP, or True-Client-IP by default.
+	// The four-variable runtime contract has no trusted-proxy allow-list, so
+	// accepting those headers from a directly exposed container would let an
+	// attacker rotate the rate-limit and audit address at will. Peer
+	// RemoteAddr remains the authoritative address in v0.1.0.
 	r.Use(middleware.Recoverer)
-	r.Use(middleware.Timeout(30 * time.Second))
 	r.Use(requestLog(logger))
 	// Prometheus HTTP duration histogram. Registered after chi's route
 	// resolver so RoutePattern() is available for the path label.
@@ -246,6 +287,7 @@ func New(cfg *config.Config, db *store.DB, hub *ws.Hub, host *pluginhost.Host, l
 	patMW := pat.With(botSvc, SetUserIDOnContext)
 
 	r.Route("/api/v4", func(r chi.Router) {
+		r.Use(middleware.Timeout(30 * time.Second))
 		r.Get("/system/ping", h.ping)
 		r.Get("/config/client", h.getClientConfig)
 		r.Get("/license/client", h.getClientLicense)
@@ -259,7 +301,7 @@ func New(cfg *config.Config, db *store.DB, hub *ws.Hub, host *pluginhost.Host, l
 		r.With(oauthIPLimiter.Middleware(ratelimit.ClientIP)).
 			Get("/oauth/{provider}/callback", h.oauthCallback)
 
-		r.Post("/users", h.register)
+		r.With(signupLimiter.Middleware(ratelimit.ClientIP)).Post("/users", h.register)
 		r.With(loginLimiter.Middleware(ratelimit.ClientIP)).Post("/users/login", h.login)
 
 		// Public invite preview. Reveals only the team display name + basic
@@ -267,6 +309,26 @@ func New(cfg *config.Config, db *store.DB, hub *ws.Hub, host *pluginhost.Host, l
 		// Rate-limited per-IP because this is unauthenticated surface.
 		r.With(loginLimiter.Middleware(ratelimit.ClientIP)).
 			Get("/invites/{inviteID}", h.getInvite)
+
+		// Phase 27 — Mattermost API v4 compatibility wave 7.
+		//
+		// Pillar C — Email verify + password reset stubs. Public surface
+		// (no auth) since Mattermost's spec puts these on the unauthenticated
+		// path — that's the "I forgot my password" flow. Rate-limited per-IP
+		// to prevent enumeration. Currently 200 OK stubs because we don't
+		// run an SMTP-driven verify/reset path yet. Single-line registration
+		// form so the audit regex picks them up cleanly.
+		r.Group(func(r chi.Router) {
+			r.Use(loginLimiter.Middleware(ratelimit.ClientIP))
+			r.Post("/users/email/verify", h.verifyUserEmail)
+			r.Post("/users/email/verify/send", h.sendUserEmailVerification)
+			r.Post("/users/password/reset", h.consumePasswordReset)
+			r.Post("/users/password/reset/send", h.sendPasswordResetEmail)
+			// Public invite preview alias. Mattermost ships both
+			// `/invites/{id}` and `/teams/invite/{id}` shapes; aliasing
+			// to the same handler avoids handler drift.
+			r.Get("/teams/invite/{inviteID}", h.getInvite)
+		})
 
 		r.Group(func(r chi.Router) {
 			r.Use(patMW)
@@ -537,12 +599,425 @@ func New(cfg *config.Config, db *store.DB, hub *ws.Hub, host *pluginhost.Host, l
 			// rewinding the read marker).
 			r.Post("/users/{userID}/posts/{postID}/set_unread", h.setPostUnread)
 
-			// Phase 28: interactive dialog compatibility. These are
+			// Phase 25 — Mattermost API v4 compatibility wave 5.
+			//
+			// Pillar A — Channel + team member roles + per-member
+			// notify_props peer-write. Handlers do their own admin gate
+			// (channel_admin / team_admin / system_admin); the chi route
+			// itself sits inside the auth chain so JWT presence is
+			// enforced.
+			r.Put("/channels/{channelID}/members/{userID}/roles", h.setChannelMemberRoles)
+			r.Put("/channels/{channelID}/members/{userID}/schemeRoles", h.setChannelMemberRoles)
+			r.Put("/channels/{channelID}/members/{userID}/notify_props", h.setChannelMemberNotifyProps)
+			r.Put("/teams/{teamID}/members/{userID}/roles", h.setTeamMemberRoles)
+			r.Put("/teams/{teamID}/members/{userID}/schemeRoles", h.setTeamMemberRoles)
+
+			// Pillar B — Session revocation HTTP fallbacks. The /me/
+			// variants in /users/me/sessions cover the bearer-token-owner
+			// case; these accept an explicit user param so admins can
+			// peer-revoke without spoofing the target's bearer.
+			r.Post("/users/{userID}/sessions/revoke", h.revokeUserSession)
+			r.Post("/users/{userID}/sessions/revoke/all", h.revokeAllUserSessions)
+			r.Post("/users/sessions/revoke/all", h.revokeAllSessionsGlobal)
+
+			// Pillar C — Typing HTTP fallback for headless clients.
+			r.Post("/users/{userID}/typing", h.postUserTyping)
+
+			// Pillar D — Thread set_unread (rewinds last_viewed_at on
+			// the thread to (anchor.create_at - 1)).
+			r.Post("/users/{userID}/teams/{teamID}/threads/{rootID}/set_unread/{postID}", h.setThreadUnread)
+
+			// Pillar E — Promote / demote (system_user ⇄ system_guest).
+			// Admin-only; self-demotion is rejected to avoid lock-out.
+			r.Post("/users/{userID}/promote", h.promoteUser)
+			r.Post("/users/{userID}/demote", h.demoteUser)
+
+			// Pillar F — Reminder URL alias + recent-custom-status stub.
+			r.Post("/users/{userID}/posts/{postID}/reminder", h.createUserPostReminder)
+			r.Post("/users/{userID}/status/custom/recent/delete", h.deleteRecentCustomStatus)
+
+			// Phase 26 — Mattermost API v4 compatibility wave 6 (auth chain).
+			//
+			// Pillar D — Channel + group bulk hydrate. Both are
+			// caller-scoped (results gated by membership / public
+			// visibility), so they live in the regular auth chain
+			// rather than the admin block.
+			r.Post("/teams/{teamID}/channels/ids", h.channelsByIDsInTeam)
+			r.Post("/users/group_channels", h.listMyGroupChannels)
+
+			// Pillar B — Team admin restore + invite shape.
+			// Both handlers do their own callerCanAdminTeam gate.
+			r.Post("/teams/{teamID}/regenerate_invite_id", h.regenerateTeamInviteID)
+			r.Post("/teams/{teamID}/invite/email", h.inviteTeamMembersByEmail)
+
+			// Pillar C — Posts move + restore. Move requires
+			// channel_admin on BOTH source and destination; restore
+			// requires channel_admin on the post's channel. Handlers
+			// run their own callerCanAdminChannel gate.
+			r.Post("/posts/{postID}/move", h.movePost)
+			r.Post("/posts/{postID}/restore/{revID}", h.restorePost)
+
+			// Phase 27 — Mattermost API v4 compatibility wave 7
+			// (auth chain).
+			//
+			// Pillar B — Posts compat. Action button dispatch is a
+			// stub (no interactive integrations server-side yet);
+			// ids/reactions hydrates a batch of posts' reactions
+			// gated on per-post channel membership.
+			r.Post("/posts/{postID}/actions/{actionID}", h.doPostAction)
+			r.Post("/posts/ids/reactions", h.postsByIDsReactions)
+
+			// Pillar E — Notifications ack + flagged posts. The ack
+			// endpoint is a stub for mobile push receipts; the
+			// flagged-posts route shells over the existing saved-
+			// posts store (Mattermost's "flagged" concept maps 1:1
+			// to our bookmarks).
+			r.Post("/notifications/ack", h.ackNotification)
+			r.Get("/users/{userID}/posts/flagged", h.listFlaggedPosts)
+
+			// Phase 28 — interactive dialog compatibility. These are
 			// auth-chain routes because slash commands and post actions
-			// can open or submit dialogs on behalf of regular users.
+			// can open/submit dialogs on behalf of regular users.
 			r.Post("/actions/dialogs/open", h.openDialog)
 			r.Post("/actions/dialogs/lookup", h.lookupDialog)
 			r.Post("/actions/dialogs/submit", h.submitDialog)
+
+			// Phase 28 (wave 8) — Mattermost API v4 compatibility.
+			// Five pillars covering post acks, terms of service, MFA,
+			// bulk channel members, and admin-edge stubs. All zero-
+			// schema; most are 200-OK stubs that exist so the official
+			// client doesn't 404 on probe.
+			//
+			// Pillar A — Post acknowledgments. Three endpoints; storage
+			// not yet modeled, so ack/unack audit and 200, list returns [].
+			r.Post("/users/{userID}/posts/{postID}/ack", h.ackPost)
+			r.Delete("/users/{userID}/posts/{postID}/ack", h.unackPost)
+			r.Get("/posts/{postID}/acknowledgements", h.listPostAcknowledgements)
+
+			// Pillar B — Terms of Service. Three endpoints with tiny
+			// in-memory state; survives a hot path without needing a
+			// schema change. Real durable enforcement lands later.
+			r.Get("/terms_of_service", h.getTermsOfService)
+			r.Post("/terms_of_service", h.updateTermsOfService)
+			r.Get("/users/{userID}/terms_of_service", h.getUserTermsOfServiceStatus)
+			r.Post("/users/{userID}/terms_of_service", h.acceptTermsOfService)
+
+			// Pillar C — MFA stubs. Three endpoints; we don't ship MFA
+			// yet but the official client probes these on the settings
+			// page. checkUserMFA is anti-oracle (always returns
+			// mfa_required:false regardless of whether the login_id
+			// resolves to a real user).
+			r.Post("/users/mfa", h.checkUserMFA)
+			r.Put("/users/{userID}/mfa", h.setUserMFA)
+			r.Post("/users/{userID}/mfa/generate", h.generateUserMFA)
+
+			// Pillar D — Bulk channel member add. One endpoint; wraps
+			// the existing single-user Join in a loop with per-member
+			// error reporting.
+			r.Put("/channels/{channelID}/members", h.bulkAddChannelMembers)
+
+			// Pillar E — Admin-edge stubs. setUserAuthMethod is the
+			// admin force-rotate auth provider stub; listKnownUsers is
+			// the union of users sharing channels with the caller.
+			r.Put("/users/{userID}/auth", h.setUserAuthMethod)
+			r.Get("/users/known", h.listKnownUsers)
+
+			// Phase 29 (wave 9) — Mattermost API v4 compatibility.
+			// Five pillars: channel bookmarks (real feature, new table),
+			// admin diagnostics stubs, hooks GET, team channel scopes,
+			// and misc usage/redirect stubs.
+			//
+			// Pillar A — Channel bookmarks. Channel-scoped pinned URL
+			// + file links above the message stream. Five endpoints
+			// (list/create/patch/delete/reorder); soft-delete via the
+			// service. Members can read+create+edit+reorder; only the
+			// owner or a channel admin can delete.
+			r.Get("/channels/{channelID}/bookmarks", h.listChannelBookmarks)
+			r.Post("/channels/{channelID}/bookmarks", h.createChannelBookmark)
+			r.Patch("/channels/{channelID}/bookmarks/{bookmarkID}", h.patchChannelBookmark)
+			r.Delete("/channels/{channelID}/bookmarks/{bookmarkID}", h.deleteChannelBookmark)
+			r.Post("/channels/{channelID}/bookmarks/{bookmarkID}/sort_order", h.reorderChannelBookmark)
+
+			// Pillar C — Hooks GET. Admin-only single-hook lookup so
+			// the integrations tab can pre-fill a patch form with the
+			// row's current values. Webhook update endpoints from
+			// Phase 24 expect callers to read first, then PUT.
+			r.Get("/hooks/incoming/{hookID}", h.getIncomingHook)
+			r.Get("/hooks/outgoing/{hookID}", h.getOutgoingHook)
+
+			// Pillar D — Team channel scopes. Listings used by the
+			// admin console + channel-picker overlays. Private + deleted
+			// scopes; search_autocomplete is a URL-shape alias of the
+			// Phase 21 POST /teams/{tid}/channels/search.
+			r.Get("/teams/{teamID}/channels/private", h.listTeamPrivateChannels)
+			r.Get("/teams/{teamID}/channels/deleted", h.listTeamDeletedChannels)
+			r.Get("/teams/{teamID}/channels/search_autocomplete", h.searchAutocompleteTeamChannels)
+
+			// Pillar E — Usage + redirect stubs. usage/posts and
+			// usage/storage are real (cheap aggregate queries);
+			// limits/server is a constants-only response (we don't
+			// enforce caps); redirect_location echoes the URL (no
+			// SSRF gateway); image is a thin wrapper over the existing
+			// link-preview proxy.
+			r.Get("/usage/posts", h.getUsagePosts)
+			r.Get("/usage/storage", h.getUsageStorage)
+			r.Get("/limits/server", h.getServerLimits)
+			r.Get("/redirect_location", h.getRedirectLocation)
+			r.Get("/image", h.getProxiedImage)
+
+			// Pillar B — Admin diagnostics. The route shapes remain for
+			// compatibility, but unsupported probes return 501 AppErrors
+			// instead of false green-check successes.
+			r.Group(func(r chi.Router) {
+				r.Use(h.requireRole("system_admin"))
+				r.Post("/email/test", h.adminTestEmail)
+				r.Post("/notifications/test", h.adminTestNotifications)
+				r.Post("/file/s3_test", h.adminTestS3)
+				r.Post("/site_url/test", h.adminTestSiteURL)
+				r.Post("/elasticsearch/test", h.adminTestElasticsearch)
+				r.Post("/elasticsearch/purge_indexes", h.adminPurgeElasticsearch)
+				r.Post("/bleve/purge_indexes", h.adminPurgeBleve)
+				r.Post("/caches/invalidate", h.adminInvalidateCaches)
+				r.Post("/database/recycle", h.adminRecycleDB)
+				r.Post("/integrity", h.adminCheckIntegrity)
+			})
+
+			// Phase 30 (wave 10) — Mattermost API v4 compatibility.
+			// Five pillars: team destructive aliases, channel views
+			// stubs, channel admin, reports/admin stats stubs, login
+			// fallbacks. All chosen from the back of the audit's
+			// missing-endpoint list to stay clear of codex's compat
+			// handler files.
+			//
+			// Pillar A — Team destructive aliases. Each handler does
+			// its own role check; mixed-scope (DELETE /teams/invites/
+			// email is global system_admin, kick-member is team_admin
+			// or self-leave).
+			r.Delete("/teams/{teamID}", h.deleteTeam)
+			r.Delete("/teams/{teamID}/members/{userID}", h.removeTeamMember)
+			r.Delete("/teams/{teamID}/image", h.deleteTeamImage)
+			r.Post("/teams/{teamID}/image", h.uploadTeamImage)
+			r.Get("/teams/{teamID}/image", h.getTeamImage)
+			r.Delete("/teams/invites/email", h.revokeTeamEmailInvites)
+
+			// Pillar B — Channel views stubs. Saved-views feature
+			// doesn't have storage yet; endpoints exist so the
+			// official client's "Saved views" UI doesn't 404. Member-
+			// gated reads, owner-or-admin writes (handlers enforce).
+			r.Get("/channels/{channelID}/views", h.listChannelViews)
+			r.Post("/channels/{channelID}/views", h.createChannelView)
+			r.Get("/channels/{channelID}/views/{viewID}", h.getChannelView)
+			r.Patch("/channels/{channelID}/views/{viewID}", h.patchChannelView)
+			r.Delete("/channels/{channelID}/views/{viewID}", h.deleteChannelView)
+			r.Get("/channels/{channelID}/views/{viewID}/posts", h.listChannelViewPosts)
+			r.Post("/channels/{channelID}/views/{viewID}/sort_order", h.reorderChannelView)
+
+			// Pillar C — Channel admin operations. Mix of real-ish
+			// (timezones, by-name lookup) and stubs (moderations,
+			// scheme, move). All handlers do their own gates.
+			r.Get("/channels/{channelID}/timezones", h.listChannelTimezones)
+			r.Get("/channels/{channelID}/moderations", h.getChannelModerations)
+			r.Put("/channels/{channelID}/moderations/patch", h.patchChannelModerations)
+			r.Put("/channels/{channelID}/scheme", h.setChannelScheme)
+			r.Post("/channels/{channelID}/move", h.moveChannel)
+			r.Get("/teams/name/{teamName}/channels/name/{channelName}", h.getTeamChannelByName)
+
+			// Pillar E — Login fallbacks. login_type is anti-oracle
+			// (always returns "email"); the rest are admin-self
+			// stubs.
+			r.Post("/users/login/switch", h.loginSwitch)
+			r.Post("/users/login/type", h.loginType)
+			r.Post("/users/login/cws", h.loginCWS)
+			r.Post("/users/login/sso/code-exchange", h.loginSSOCodeExchange)
+			r.Post("/users/{userID}/email/verify/member", h.adminVerifyMemberEmail)
+
+			// Pillar D — Reports + admin stats stubs (admin-only).
+			r.Group(func(r chi.Router) {
+				r.Use(h.requireRole("system_admin"))
+				r.Get("/users/invalid_emails", h.getInvalidEmails)
+				r.Get("/users/stats/filtered", h.getFilteredUserStats)
+				r.Get("/reports/users", h.getReportsUsers)
+				r.Get("/reports/users/count", h.getReportsUsersCount)
+				r.Post("/reports/users/export", h.exportReportsUsers)
+				r.Post("/reports/posts", h.reportPosts)
+				r.Get("/channels", h.listAllChannels)
+			})
+
+			// Phase 31 (wave 11) — Mattermost API v4 compatibility.
+			// Six pillars: bot icons, thread expansions, files
+			// search/info, uploads multipart stubs, channel group +
+			// posts unread, group-aware listings + misc admin.
+			//
+			// Pillar A — Bot icons (3 endpoints, stubs — no storage).
+			r.Get("/bots/{botUserID}/icon", h.getBotIcon)
+			r.Post("/bots/{botUserID}/icon", h.uploadBotIcon)
+			r.Delete("/bots/{botUserID}/icon", h.deleteBotIcon)
+
+			// Pillar B — Thread expansions (3 endpoints — DELETE
+			// follow + GET membership/mention-counts). Self/admin
+			// gated by handlers.
+			r.Delete("/users/{userID}/teams/{teamID}/threads/{threadID}/following", h.unfollowThread)
+			r.Get("/users/{userID}/teams/{teamID}/threads/{threadID}", h.getThreadMembership)
+			r.Get("/users/{userID}/teams/{teamID}/threads/mention_counts", h.getThreadMentionCounts)
+
+			// Pillar C — Files (3 endpoints, mix real + stub).
+			r.Get("/posts/{postID}/files/info", h.getPostFilesInfo)
+			r.Post("/files/search", h.searchFiles)
+			r.Post("/teams/{teamID}/files/search", h.searchTeamFiles)
+
+			// Pillar D — Uploads multipart stubs (4 endpoints — we
+			// don't model resumable upload sessions yet).
+			r.Post("/uploads", h.initUploadSession)
+			r.Get("/uploads/{uploadID}", h.getUploadSession)
+			r.Post("/uploads/{uploadID}", h.uploadChunk)
+			r.Get("/users/{userID}/uploads", h.listUserUploads)
+
+			// Pillar E — Channels group + posts unread (3 endpoints
+			// — group create real via EnsureGroup, posts/unread
+			// real, search stub).
+			r.Post("/channels/group", h.createGroupChannel)
+			r.Post("/channels/group/search", h.searchGroupChannels)
+			r.Get("/users/{userID}/channels/{channelID}/posts/unread", h.getChannelPostsUnread)
+
+			// Pillar F — Group-aware listings + misc admin (7
+			// endpoints — most are stubs returning empty/zero
+			// since we don't model LDAP groups).
+			r.Get("/channels/{channelID}/member_counts_by_group", h.getChannelMemberCountsByGroup)
+			r.Get("/channels/{channelID}/members_minus_group_members", h.getChannelMembersMinusGroup)
+			r.Get("/teams/{teamID}/members_minus_group_members", h.getTeamMembersMinusGroup)
+			r.Delete("/users/status/custom/recent", h.clearRecentCustomStatuses)
+			r.Delete("/users/{userID}/status/custom/recent", h.clearRecentCustomStatuses)
+			r.Post("/teams/{teamID}/invite-guests/email", h.inviteGuestsByEmail)
+			r.Put("/channels/{channelID}/members/{userID}/autotranslation", h.setMemberAutotranslation)
+			r.Group(func(r chi.Router) {
+				r.Use(h.requireRole("system_admin"))
+				r.Post("/users/bulk_delete", h.bulkDeleteUsers)
+				r.Delete("/users", h.bulkDeleteUsers)
+			})
+
+			// Phase 32 (wave 12) — Mattermost API v4 compatibility.
+			// Six pillars: A (audit-regex restructure of Phase 27 routes),
+			// B (custom profile attributes — only real schema work in
+			// Phase 32), C (recaps stubs), D (AI/agents stubs), E (OAuth
+			// apps + outgoing connections stubs), F (cloud + IP filter +
+			// imports/exports + misc admin stubs).
+
+			// Pillar B — Custom profile attributes (7 endpoints — real
+			// schema, real CRUD against custom_profile_fields +
+			// custom_profile_values tables).
+			r.Get("/custom_profile_attributes/fields", h.listCustomProfileFields)
+			r.Patch("/custom_profile_attributes/values", h.patchCustomProfileValuesGlobal)
+			r.Get("/users/{userID}/custom_profile_attributes", h.getUserCustomProfileValues)
+			r.Patch("/users/{userID}/custom_profile_attributes", h.patchUserCustomProfileValues)
+
+			// Pillar C — Recaps (6 endpoints — in-memory LRU stubs).
+			// Real impl would persist recap rows; current stubs satisfy
+			// the official client's "AI recap" UI without 404s.
+			r.Get("/recaps", h.listRecaps)
+			r.Get("/recaps/{recapID}", h.getRecap)
+			r.Post("/recaps", h.createRecap)
+			r.Delete("/recaps/{recapID}", h.deleteRecap)
+			r.Post("/recaps/{recapID}/read", h.markRecapRead)
+			r.Post("/recaps/{recapID}/regenerate", h.regenerateRecap)
+
+			// Pillar E — OAuth apps caller-facing routes (3 endpoints).
+			// /info strips the secret; /authorized is per-user; /register
+			// is a stub for the self-serve "register an app" flow.
+			r.Get("/oauth/apps/{appID}/info", h.getOAuthAppInfo)
+			r.Get("/users/{userID}/oauth/apps/authorized", h.listAuthorizedOAuthApps)
+			r.Post("/oauth/apps/register", h.registerOAuthApp)
+
+			// Pillar F — Posts burn/reveal/rewrite (3 endpoints + 3
+			// official-shape aliases — stubs; real burn would do a
+			// delayed delete + audit, real rewrite would route through
+			// an LLM).
+			r.Post("/posts/{postID}/burn", h.burnPost)
+			r.Delete("/posts/{postID}/burn", h.burnPost)
+			r.Get("/posts/{postID}/reveal", h.revealPost)
+			r.Post("/posts/{postID}/rewrite", h.rewritePost)
+			r.Post("/posts/rewrite", h.rewritePost)
+
+			// Pillar F — Misc auth-chain stubs (channel/team-scoped).
+			r.Get("/users/{userID}/channels/managed_categories", h.listManagedCategories)
+			r.Get("/teams/{teamID}/channels/managed_categories", h.listManagedCategories)
+			r.Get("/channels/{channelID}/access_control/attributes", h.channelAccessControlAttrs)
+			r.Get("/channels/{channelID}/common_teams", h.channelCommonTeams)
+			r.Post("/channels/{channelID}/common_teams", h.channelCommonTeams)
+			r.Post("/client_perf", h.postClientPerf)
+			r.Get("/permissions/ancillary", h.postPermissionsAncillary)
+			r.Post("/permissions/ancillary", h.postPermissionsAncillary)
+			r.Post("/teams/{teamID}/invite/email", h.inviteTeamMembersFromBody)
+			r.Post("/teams/members/invite", h.inviteTeamMembersFromBody)
+			r.Get("/custom_profile_attributes/group", h.listCustomProfileFields)
+
+			// Pillar F admin sub-group — system_admin-only stubs.
+			r.Group(func(r chi.Router) {
+				r.Use(h.requireRole("system_admin"))
+
+				// Pillar B admin paths — field create/patch/delete.
+				r.Post("/custom_profile_attributes/fields", h.createCustomProfileField)
+				r.Patch("/custom_profile_attributes/fields/{fieldID}", h.patchCustomProfileField)
+				r.Delete("/custom_profile_attributes/fields/{fieldID}", h.deleteCustomProfileField)
+
+				// Pillar D — AI/Agents/LLM (5 endpoints).
+				r.Get("/agents", h.listAIAgents)
+				r.Get("/agents/status", h.getAIAgentsStatus)
+				r.Get("/ai/agents", h.listAIAgentsAlt)
+				r.Get("/ai/services", h.listAIServices)
+				r.Get("/llm/services", h.listLLMServices)
+				r.Get("/llmservices", h.listLLMServices)
+
+				// Pillar E — OAuth apps admin (5 endpoints) +
+				// outgoing connections (6 endpoints).
+				r.Get("/oauth/apps", h.listOAuthApps)
+				r.Post("/oauth/apps", h.createOAuthApp)
+				r.Get("/oauth/apps/{appID}", h.getOAuthApp)
+				r.Put("/oauth/apps/{appID}", h.updateOAuthApp)
+				r.Delete("/oauth/apps/{appID}", h.deleteOAuthApp)
+				r.Post("/oauth/apps/{appID}/regen_secret", h.regenOAuthAppSecret)
+				r.Get("/oauth/outgoing_connections", h.listOAuthOutgoing)
+				r.Post("/oauth/outgoing_connections", h.createOAuthOutgoing)
+				r.Get("/oauth/outgoing_connections/{connectionID}", h.getOAuthOutgoing)
+				r.Put("/oauth/outgoing_connections/{connectionID}", h.updateOAuthOutgoing)
+				r.Delete("/oauth/outgoing_connections/{connectionID}", h.deleteOAuthOutgoing)
+				r.Post("/oauth/outgoing_connections/validate", h.validateOAuthOutgoing)
+
+				// Pillar F — Cloud billing (14 endpoints).
+				r.Get("/cloud/check-cws-connection", h.cloudCheckCWS)
+				r.Get("/cloud/customer", h.cloudGetCustomer)
+				r.Put("/cloud/customer", h.cloudPutCustomer)
+				r.Put("/cloud/customer/address", h.cloudPutCustomerAddress)
+				r.Get("/cloud/installation", h.cloudGetInstallation)
+				r.Get("/cloud/limits", h.cloudGetLimits)
+				r.Get("/cloud/preview-modal-data", h.cloudGetPreviewModalData)
+				r.Get("/cloud/preview/modal_data", h.cloudGetPreviewModalData)
+				r.Get("/cloud/products", h.cloudGetProducts)
+				r.Get("/cloud/subscription", h.cloudGetSubscription)
+				r.Get("/cloud/subscription/invoices", h.cloudGetSubscriptionInvoices)
+				r.Get("/cloud/subscription/invoices/{invoiceID}/pdf", h.cloudGetSubscriptionInvoicePDF)
+				r.Post("/cloud/payment", h.cloudPostPayment)
+				r.Post("/cloud/payment/confirm", h.cloudConfirmPayment)
+				r.Post("/cloud/webhook", h.cloudWebhook)
+
+				// Pillar F — IP filtering (3 endpoints).
+				r.Get("/ip_filtering", h.listIPFiltering)
+				r.Get("/ip_filtering/my_ip", h.getMyIP)
+				r.Post("/ip_filtering", h.saveIPFiltering)
+
+				// Pillar F — Imports/Exports (5 endpoints).
+				r.Get("/imports", h.listImports)
+				r.Delete("/imports/{importName}", h.deleteImport)
+				r.Get("/exports", h.listExports)
+				r.Get("/exports/{exportName}", h.getExport)
+				r.Delete("/exports/{exportName}", h.deleteExport)
+
+				// Pillar F — Misc admin (8 endpoints).
+				r.Post("/restart", h.restartServer)
+				r.Post("/teams/{teamID}/import", h.postTeamImport)
+				r.Put("/teams/{teamID}/scheme", h.putTeamScheme)
+				r.Get("/analytics/old", h.analyticsOld)
+				r.Post("/users/{userID}/image", h.adminUploadUserImage)
+			})
 
 			r.Post("/commands/execute", h.executeCommand)
 
@@ -780,16 +1255,138 @@ func New(cfg *config.Config, db *store.DB, hub *ws.Hub, host *pluginhost.Host, l
 				r.Delete("/commands/{commandID}", h.deleteCommand)
 				r.Put("/commands/{commandID}/regen_token", h.regenCommandToken)
 				r.Put("/commands/{commandID}/move", h.moveCommand)
+
+				// Phase 26 — Mattermost API v4 compatibility wave 6
+				// (admin-only block).
+				//
+				// Pillar A — PAT operator surface. Admin-only because
+				// disable/enable/revoke/search across ALL tokens is an
+				// ops surface; per-user self-issue lives outside this
+				// block above as /users/{userID}/tokens.
+				r.Post("/users/tokens/disable", h.disableUserToken)
+				r.Post("/users/tokens/enable", h.enableUserToken)
+				r.Post("/users/tokens/revoke", h.revokeUserTokenByBody)
+				r.Post("/users/tokens/search", h.searchUserTokens)
+
+				// Pillar B — Team restore. Mirrors channel restore
+				// already in this admin block.
+				r.Post("/teams/{teamID}/restore", h.restoreTeam)
+
+				// Pillar E — Convert user to bot + reset failed login
+				// attempts. The reset endpoint is a stub (we don't
+				// track failed attempts) but exists for client parity.
+				r.Post("/users/{userID}/convert_to_bot", h.convertUserToBot)
+				r.Post("/users/{userID}/reset_failed_attempts", h.resetUserFailedAttempts)
+
+				// Pillar F — Outgoing webhook token rotation.
+				r.Post("/hooks/outgoing/{hookID}/regen_token", h.regenerateOutgoingWebhookToken)
+
+				// Phase 27 — Mattermost API v4 compatibility wave 7
+				// (admin-only block).
+				//
+				// Pillar A — Bot lifecycle. Existing
+				// `DELETE /bots/{id}` handles soft-delete; this block
+				// adds the POST-shaped aliases the official admin
+				// console uses, plus enable / convert_to_user / assign
+				// / single-id GET.
+				r.Get("/bots/{botID}", h.getBot)
+				r.Post("/bots/{botID}/disable", h.disableBotByPost)
+				r.Post("/bots/{botID}/enable", h.enableBot)
+				r.Post("/bots/{botID}/convert_to_user", h.convertBotToUser)
+				r.Post("/bots/{botID}/assign/{userID}", h.assignBotOwner)
+
+				// Pillar B (admin slice) — Ephemeral post authoring.
+				// Admin-only because letting any user spawn a fake
+				// post visible only to one peer is a phishing vector.
+				r.Post("/posts/ephemeral", h.createEphemeralPost)
+
+				// Pillar D — User tokens GET. Admin-only because
+				// listing every PAT in the system or peeking at a
+				// stranger's token row is purely an ops surface.
+				r.Get("/users/tokens", h.listAllUserTokens)
+				r.Get("/users/tokens/{tokenID}", h.getUserToken)
 			})
 		})
 	})
 
+	// Moyro-native product surface. It intentionally remains separate from
+	// the Mattermost compatibility boundary. Long-running AI and MCP streams
+	// do not inherit the generic 30-second REST timeout.
+	r.Route("/api/moyro/v1", func(r chi.Router) {
+		r.Get("/system/info", h.nativeSystemInfo)
+		r.With(oauthIPLimiter.Middleware(ratelimit.ClientIP), middleware.Timeout(30*time.Second)).
+			Get("/auth/oidc/login", h.nativeOIDCLogin)
+		r.With(oauthIPLimiter.Middleware(ratelimit.ClientIP), middleware.Timeout(30*time.Second)).
+			Get("/auth/oidc/callback", h.nativeOIDCCallback)
+
+		r.Group(func(r chi.Router) {
+			r.Use(nativeBearerOnly)
+			r.Use(h.nativeAPIKeyMiddleware)
+			r.Use(patMW)
+			r.Use(h.requireAuth)
+
+			// Streaming uses the provider's administrator-configured timeout
+			// and propagates browser cancellation to the upstream request.
+			r.With(h.nativeRequire("use_ai")).Post("/me/ai/completions", h.nativeAICompletion)
+
+			r.With(middleware.Timeout(30 * time.Second)).Group(func(r chi.Router) {
+				r.Get("/me/permissions", h.getNativeEffectivePermissions)
+				r.With(h.nativeRequire("manage_own_api_keys")).Get("/me/api-keys", h.listPersonalAPIKeys)
+				r.With(h.nativeRequire("manage_own_api_keys")).Post("/me/api-keys", h.createPersonalAPIKey)
+				r.With(h.nativeRequire("manage_own_api_keys")).Patch("/me/api-keys/{keyID}", h.patchPersonalAPIKey)
+				r.With(h.nativeRequire("manage_own_api_keys")).Delete("/me/api-keys/{keyID}", h.revokePersonalAPIKey)
+				r.With(h.nativeRequire("manage_own_api_keys")).Post("/me/api-keys/{keyID}/rotate", h.rotatePersonalAPIKey)
+				r.With(h.nativeRequire("use_ai")).Get("/me/ai-preferences", h.getPersonalAIPreferences)
+				r.With(h.nativeRequire("use_ai")).Patch("/me/ai-preferences", h.patchPersonalAIPreferences)
+				r.With(h.nativeRequire("request_approval")).Post("/me/approval-requests", h.submitNativeApproval)
+				r.Get("/me/approval-requests", h.listMyApprovalRequests)
+				// Review permission is team-scoped. The list and decision handlers
+				// resolve each request's team/channel before authorizing it; a
+				// scope-less middleware check would incorrectly reject team_lead.
+				r.Get("/reviews/approval-requests", h.listReviewApprovalRequests)
+				r.Post("/reviews/approval-requests/{requestID}/decision", h.decideNativeApproval)
+
+				r.With(h.nativeRequireSettingsSection).Get("/admin/settings/{section}", h.getNativeSettings)
+				r.With(h.nativeRequireSettingsSection).Patch("/admin/settings/{section}", h.patchNativeSettings)
+				r.With(h.nativeRequire("manage_oidc")).Get("/admin/oidc/providers", h.listNativeOIDCProviders)
+				r.With(h.nativeRequire("manage_oidc")).Post("/admin/oidc/providers", h.saveNativeOIDCProvider)
+				r.With(h.nativeRequire("manage_oidc")).Patch("/admin/oidc/providers/{providerID}", h.saveNativeOIDCProvider)
+				r.With(h.nativeRequire("manage_oidc")).Post("/admin/oidc/providers/test", h.testNativeOIDCProvider)
+				r.With(h.nativeRequire("manage_ai")).Get("/admin/ai/providers", h.listNativeAIProviders)
+				r.With(h.nativeRequire("manage_ai")).Post("/admin/ai/providers", h.saveNativeAIProvider)
+				r.With(h.nativeRequire("manage_ai")).Patch("/admin/ai/providers/{providerID}", h.saveNativeAIProvider)
+				r.With(h.nativeRequire("manage_ai")).Post("/admin/ai/providers/test", h.testNativeAIProvider)
+				r.With(h.nativeRequire("manage_approval_policies")).Get("/admin/approval-policies", h.listNativeApprovalPolicies)
+				r.With(h.nativeRequire("manage_approval_policies")).Post("/admin/approval-policies", h.saveNativeApprovalPolicy)
+				r.With(h.nativeRequire("manage_approval_policies")).Patch("/admin/approval-policies/{policyID}", h.saveNativeApprovalPolicy)
+				r.With(h.nativeRequire("manage_roles")).Get("/admin/permissions", h.listNativePermissions)
+				r.With(h.nativeRequire("manage_roles")).Get("/admin/roles", h.listNativeRoles)
+				r.With(h.nativeRequire("manage_roles")).Patch("/admin/roles/{roleID}", h.patchNativeRole)
+				r.With(h.nativeRequire("manage_api_keys")).Get("/admin/api-keys", h.listAdminAPIKeys)
+				r.With(h.nativeRequire("manage_api_keys")).Delete("/admin/api-keys/{keyID}", h.revokeAdminAPIKey)
+			})
+		})
+	})
+
+	if h.native != nil && h.native.mcp != nil {
+		r.With(nativeBearerOnly, h.nativeAPIKeyMiddleware, h.requireAuth, h.nativeMCPGate).Handle("/mcp", h.native.mcp.Handler())
+	} else {
+		r.HandleFunc("/mcp", func(w http.ResponseWriter, _ *http.Request) {
+			writeError(w, http.StatusServiceUnavailable, "api.moyro.mcp.unavailable", "MCP service is unavailable")
+		})
+	}
+
 	r.HandleFunc("/api/v4/websocket", h.websocket)
+	if ui, err := webui.New(webui.DefaultRoot); err != nil {
+		logger.Warn("production web UI unavailable", "root", webui.DefaultRoot, "err", err)
+	} else {
+		r.NotFound(ui.ServeHTTP)
+	}
 
 	scheduledWorker := scheduled.NewWorker(scheduledSvc, postSvc, fileSvc, hub, logger)
 	remindersWorker := reminders.NewWorker(reminderSvc, postSvc, hub, logger)
 
-	return &Backend{Router: r, Scheduled: scheduledWorker, Reminders: remindersWorker}
+	return &Backend{Router: r, Scheduled: scheduledWorker, Reminders: remindersWorker, Approvals: newApprovalExecutor(h.native, logger)}
 }
 
 func requestLog(logger *slog.Logger) func(http.Handler) http.Handler {

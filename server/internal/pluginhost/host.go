@@ -10,7 +10,7 @@ import (
 	"runtime"
 	"sync"
 
-	"github.com/moddle/moddle/server/internal/rpcbridge"
+	"github.com/hkjang/moyro/server/internal/rpcbridge"
 )
 
 type Plugin struct {

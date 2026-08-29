@@ -1,9 +1,12 @@
-# Moddle (RelayChat)
+# moyro
 
-Moddle is a Mattermost-compatible chat platform. The product goal is not a
-pixel-for-pixel clone; it is a practical compatibility layer that can run
-Mattermost-style clients, bots, webhooks, slash commands, and plugins while
-remaining small enough to evolve quickly.
+moyro is a Mattermost-compatible chat platform. The product goal is not a
+pixel-for-pixel clone; it is a practical compatibility layer for
+Mattermost-style clients, bots, webhooks, slash commands, and extension
+concepts while remaining small enough to evolve quickly. Existing Mattermost
+server plugin binaries are not ABI-compatible with moyro's native plugin host.
+
+Product site: <https://hkjang.github.io/moyro/>
 
 ## What Is Here
 
@@ -22,11 +25,14 @@ remaining small enough to evolve quickly.
 - Posts, threads, edits, deletes, pins, reactions, markdown, mentions
 - File upload/download, thumbnails, custom emoji, image lightbox
 - WebSocket events with reconnect reconciliation and unread counters
-- Search, saved posts, public channel discovery, link previews
+- Search, saved posts, public channel discovery, and a link-preview foundation
+  (outbound previews are disabled by the offline-safe v0.1.0 runtime)
 - Incoming/outgoing webhooks, slash commands, bots, personal access tokens
-- OAuth provider hooks, invite links, audit logs, metrics, email digest worker
+- OAuth compatibility hooks, limited-use invite links, audit logs, and metrics
 - Scheduled messages and post reminders
-- Server plugin host with Mattermost-style RPC hook surface
+- Server plugin host with Mattermost-style RPC hook surface; v0.1.0 loads fully
+  trusted, operator-provisioned native plugins at startup and does not claim
+  sandboxing, secret isolation, or runtime lifecycle updates
 - Web plugin registry/runtime skeleton
 
 ## Quick Start
@@ -53,7 +59,7 @@ Run the server:
 
 ```powershell
 Set-Location server
-go run ./cmd/moddle
+go run ./cmd/moyro
 ```
 
 Run the web app:
@@ -67,10 +73,26 @@ Set-Location webapp
 The server listens on `http://localhost:8065` by default. The Vite web app
 uses its configured dev proxy for `/api/v4`.
 
-In Vite development mode the web login screen auto-signs in as
-`webuser / P@ssw0rd1`, creating that dev account once if needed. See
-[Development Guide](docs/development.md) for overrides and how to disable it
-while testing auth flows.
+The launcher provides the four required server variables and bootstraps
+`admin@moyro.local` with the development-only password printed by the script.
+See the [Development Guide](docs/development.md) for details.
+
+## Offline Deployment
+
+Published releases contain one loadable service image archive named
+`moyro-v<version>.tar.gz`. PostgreSQL is intentionally external and is reached
+through `POSTGRES_DSN`; the application itself needs exactly four environment
+variables. See the [Offline Deployment Guide](docs/offline-deployment.md) for
+the complete load, run, backup, and upgrade procedure. A redacted four-key
+template is available at [`deploy/docker/moyro.env.example`](deploy/docker/moyro.env.example).
+
+The supported v0.1.0 topology is one moyro application container connected to
+external PostgreSQL, with uploads on the local `/var/lib/moyro` volume. SMTP,
+S3, Redis fan-out, outbound link previews, multi-replica operation, and runtime
+plugin installation or enable/disable are not supported in this release.
+Native plugin executables placed in the image or data volume are fully trusted
+operator code, not sandboxed extensions. Keycloak OIDC additionally requires
+the canonical public Site URL to be saved before the provider is enabled.
 
 ## Verification
 
@@ -103,11 +125,19 @@ powershell -ExecutionPolicy Bypass -File scripts\audit-mattermost-api.ps1 -Outpu
 ## Documentation
 
 - [Documentation Index](docs/index.md)
+- [Product Site](https://hkjang.github.io/moyro/)
+- [Product and Technical Specification](docs/moyro-product-spec.md)
+- [Implementation and Verification Checklist](docs/moyro-build-checklist.md)
 - [Architecture](docs/architecture.md)
 - [Development Guide](docs/development.md)
 - [Plugin System](docs/plugin-system.md)
 - [Mattermost API Compatibility](docs/mattermost-api-compatibility.md)
 - [Roadmap](docs/roadmap.md)
+- [Offline Deployment](docs/offline-deployment.md)
+- [User Guide](docs/guides/user-guide.html)
+- [Administrator Guide](docs/guides/admin-guide.html)
+- [Brand Assets](docs/assets/brand/README.md) — canonical SVG mark and wordmark,
+  favicon, PWA icons, and the social sharing card
 
 The older [requirements.md](docs/requirements.md) file is a legacy planning
 note with encoding damage. Treat the documents above as the current source of

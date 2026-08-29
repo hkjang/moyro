@@ -20,8 +20,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/hkjang/moyro/server/internal/store"
 	"github.com/jackc/pgx/v5"
-	"github.com/moddle/moddle/server/internal/store"
 )
 
 var (
@@ -163,6 +163,49 @@ func (s *Service) Update(ctx context.Context, userID, displayName, description s
 	return b, nil
 }
 
+// Enable un-soft-deletes a previously disabled bot. Mirrors Disable but
+// it does NOT touch the personal_access_tokens column — Disable revokes
+// every PAT, so a re-enabled bot needs the admin to mint a fresh token
+// before it can act. That asymmetry is intentional: revoke-on-disable is
+// a security guarantee; auto-restore-on-enable would silently re-arm a
+// previously leaked credential.
+func (s *Service) Enable(ctx context.Context, userID string) error {
+	now := time.Now().UnixMilli()
+	tag, err := s.db.Pool.Exec(ctx, `
+		UPDATE users SET delete_at = 0, update_at = $2
+		WHERE id = $1 AND COALESCE(is_bot, FALSE) = TRUE AND delete_at != 0
+	`, userID, now)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrBotNotFound
+	}
+	return nil
+}
+
+// AssignOwner reassigns ownership of a bot to a different user. The new
+// owner must already exist; the handler validates that. Returns the
+// updated bot row so the admin tool can render the new owner inline.
+func (s *Service) AssignOwner(ctx context.Context, botUserID, newOwnerID string) (*Bot, error) {
+	now := time.Now().UnixMilli()
+	tag, err := s.db.Pool.Exec(ctx, `
+		UPDATE users
+		   SET bot_owner_id = NULLIF($2, ''),
+		       update_at    = $3
+		 WHERE id = $1
+		   AND COALESCE(is_bot, FALSE) = TRUE
+		   AND delete_at = 0
+	`, botUserID, newOwnerID, now)
+	if err != nil {
+		return nil, err
+	}
+	if tag.RowsAffected() == 0 {
+		return nil, ErrBotNotFound
+	}
+	return s.Get(ctx, botUserID)
+}
+
 // IsBot reports whether the given user id corresponds to an active bot.
 func (s *Service) IsBot(ctx context.Context, userID string) (bool, error) {
 	var ok bool
@@ -247,6 +290,69 @@ func (s *Service) RevokeToken(ctx context.Context, tokenID string) error {
 	return err
 }
 
+// EnableToken un-revokes a token by zeroing revoked_at. Used by the
+// Mattermost compat endpoint so an admin tool's "re-enable" button works.
+// Returns ErrTokenInvalid for unknown ids.
+func (s *Service) EnableToken(ctx context.Context, tokenID string) error {
+	tag, err := s.db.Pool.Exec(ctx, `
+		UPDATE personal_access_tokens SET revoked_at = 0
+		WHERE id = $1
+	`, tokenID)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrTokenInvalid
+	}
+	return nil
+}
+
+// GetToken returns a token row by id. nil + ErrTokenInvalid for unknown ids.
+// Plaintext is never available — only the hash is stored.
+func (s *Service) GetToken(ctx context.Context, tokenID string) (*Token, error) {
+	var t Token
+	err := s.db.Pool.QueryRow(ctx, `
+		SELECT id, user_id, description, create_at, last_used_at, revoked_at
+		FROM personal_access_tokens WHERE id = $1
+	`, tokenID).Scan(&t.ID, &t.UserID, &t.Description, &t.CreateAt, &t.LastUsedAt, &t.RevokedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrTokenInvalid
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &t, nil
+}
+
+// SearchTokens runs an admin-scope search over PAT description + user_id.
+// Empty term returns the most-recent 100 rows. Caller must have admin role.
+func (s *Service) SearchTokens(ctx context.Context, term string, limit int) ([]Token, error) {
+	if limit <= 0 || limit > 500 {
+		limit = 100
+	}
+	pat := "%" + term + "%"
+	rows, err := s.db.Pool.Query(ctx, `
+		SELECT id, user_id, description, create_at, last_used_at, revoked_at
+		FROM personal_access_tokens
+		WHERE ($1 = '' OR description ILIKE $2 OR user_id = $1 OR id = $1)
+		ORDER BY create_at DESC
+		LIMIT $3
+	`, term, pat, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []Token{}
+	for rows.Next() {
+		var t Token
+		if err := rows.Scan(&t.ID, &t.UserID, &t.Description, &t.CreateAt, &t.LastUsedAt, &t.RevokedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, t)
+	}
+	return out, rows.Err()
+}
+
 // ResolveToken validates a presented plaintext PAT and returns the owning
 // user id. It also bumps last_used_at as a side effect for visibility.
 // Returns ErrTokenInvalid if the token is missing, revoked, or not found.
@@ -257,10 +363,7 @@ func (s *Service) ResolveToken(ctx context.Context, plain string) (string, error
 	hash := hashToken(plain)
 	var userID string
 	var revoked int64
-	err := s.db.Pool.QueryRow(ctx, `
-		SELECT user_id, revoked_at FROM personal_access_tokens
-		WHERE token_hash = $1
-	`, hash).Scan(&userID, &revoked)
+	err := s.db.Pool.QueryRow(ctx, resolveTokenSQL, hash).Scan(&userID, &revoked)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return "", ErrTokenInvalid
 	}
@@ -274,6 +377,16 @@ func (s *Service) ResolveToken(ctx context.Context, plain string) (string, error
 	_, _ = s.db.Pool.Exec(ctx, `UPDATE personal_access_tokens SET last_used_at = $2 WHERE token_hash = $1`, hash, time.Now().UnixMilli())
 	return userID, nil
 }
+
+// Keep the account-activity predicate in the token lookup itself. Resolving a
+// PAT first and checking the user in a later statement would leave a race in
+// which a deactivated account could authenticate between the two queries.
+const resolveTokenSQL = `
+		SELECT pat.user_id, pat.revoked_at
+		FROM personal_access_tokens AS pat
+		JOIN users AS u ON u.id = pat.user_id AND u.delete_at = 0
+		WHERE pat.token_hash = $1
+`
 
 // ---- Helpers ----
 

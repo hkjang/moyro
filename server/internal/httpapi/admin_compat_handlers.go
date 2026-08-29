@@ -2,28 +2,13 @@ package httpapi
 
 import (
 	"encoding/json"
-	"fmt"
 	"io"
 	"net/http"
-	"runtime"
 	"strconv"
-	"strings"
-	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/google/uuid"
 )
-
-var compatServerBusy atomic.Bool
-
-var compatJobs = struct {
-	sync.Mutex
-	rows map[string]map[string]any
-}{
-	rows: map[string]map[string]any{},
-}
 
 type compatRole struct {
 	ID            string   `json:"id"`
@@ -93,8 +78,12 @@ func init() {
 
 func (h *handlers) adminConfigSnapshot() map[string]any {
 	cfg := h.cfg
+	site := defaultSiteSettings()
+	if h.native != nil {
+		site = h.native.currentSiteSettings()
+	}
 	listen := ""
-	publicURL := ""
+	publicURL := site.PublicBaseURL
 	pluginDir := ""
 	fileRoot := ""
 	fileBackend := "fs"
@@ -103,11 +92,13 @@ func (h *handlers) adminConfigSnapshot() map[string]any {
 	smtpPort := ""
 	smtpFrom := ""
 	smtpTLS := false
-	allowedOutgoing := []string(nil)
+	allowedOutgoing := append([]string(nil), site.AllowedOutgoingHosts...)
 	tokenTTL := ""
 	if cfg != nil {
 		listen = cfg.Listen
-		publicURL = cfg.PublicBaseURL
+		if publicURL == "" {
+			publicURL = cfg.PublicBaseURL
+		}
 		pluginDir = cfg.PluginDir
 		fileRoot = cfg.FileStorageRoot
 		fileBackend = cfg.FileBackend
@@ -116,7 +107,9 @@ func (h *handlers) adminConfigSnapshot() map[string]any {
 		smtpPort = cfg.SMTPPort
 		smtpFrom = cfg.SMTPFrom
 		smtpTLS = cfg.SMTPTLS
-		allowedOutgoing = cfg.AllowedOutgoingHosts
+		if len(allowedOutgoing) == 0 {
+			allowedOutgoing = append([]string(nil), cfg.AllowedOutgoingHosts...)
+		}
 		tokenTTL = cfg.TokenTTL.String()
 	}
 	return map[string]any{
@@ -129,13 +122,13 @@ func (h *handlers) adminConfigSnapshot() map[string]any {
 			"TLSStrictTransport":      false,
 		},
 		"TeamSettings": map[string]any{
-			"SiteName":           "RelayChat",
-			"EnableOpenServer":   true,
+			"SiteName":           site.SiteName,
+			"EnableOpenServer":   site.LocalSignupEnabled,
 			"EnableTeamCreation": true,
 		},
 		"PluginSettings": map[string]any{
 			"Enable":        true,
-			"EnableUploads": true,
+			"EnableUploads": false,
 			"Directory":     pluginDir,
 		},
 		"FileSettings": map[string]any{
@@ -175,40 +168,36 @@ func (h *handlers) getConfig(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, h.adminConfigSnapshot())
 }
 
+// writeAdminCompatNotSupported keeps legacy Mattermost administration
+// routes discoverable without claiming that an update was applied.  A
+// non-2xx Mattermost AppError is important here: the System Console and SDKs
+// otherwise treat any 200 response as a durable configuration change.
+func writeAdminCompatNotSupported(w http.ResponseWriter, id, feature string) {
+	writeError(
+		w,
+		http.StatusNotImplemented,
+		id,
+		feature+" is not dynamically supported in moyro v0.1.0",
+	)
+}
+
 func (h *handlers) putConfig(w http.ResponseWriter, r *http.Request) {
-	var body map[string]any
-	_ = json.NewDecoder(r.Body).Decode(&body)
-	writeJSON(w, http.StatusOK, h.adminConfigSnapshot())
+	writeAdminCompatNotSupported(w, "api.config.update_config.not_supported.app_error", "legacy Mattermost configuration updates")
 }
 
 func (h *handlers) patchConfig(w http.ResponseWriter, r *http.Request) {
-	var body map[string]any
-	_ = json.NewDecoder(r.Body).Decode(&body)
-	writeJSON(w, http.StatusOK, h.adminConfigSnapshot())
+	writeAdminCompatNotSupported(w, "api.config.patch_config.not_supported.app_error", "legacy Mattermost configuration patches")
 }
 
 func (h *handlers) reloadConfig(w http.ResponseWriter, r *http.Request) {
 	if h.audit != nil {
-		h.audit.LogAsync(userID(r), "system.config_reload", "config", map[string]any{})
+		h.audit.LogAsync(userID(r), "system.config_reload.rejected", "config", map[string]any{"reason": "not_supported"})
 	}
-	writeJSON(w, http.StatusOK, map[string]string{"status": "OK"})
+	writeAdminCompatNotSupported(w, "api.config.reload.not_supported.app_error", "legacy Mattermost configuration reload")
 }
 
 func (h *handlers) getLogs(w http.ResponseWriter, r *http.Request) {
-	perPage, _ := strconv.Atoi(r.URL.Query().Get("logs_per_page"))
-	if perPage <= 0 || perPage > 100 {
-		perPage = 20
-	}
-	now := time.Now().UTC().Format(time.RFC3339)
-	rows := make([]string, 0, perPage)
-	rows = append(rows,
-		fmt.Sprintf("%s [INFO] RelayChat admin log stream ready", now),
-		fmt.Sprintf("%s [INFO] go=%s goroutines=%d", now, runtime.Version(), runtime.NumGoroutine()),
-	)
-	for len(rows) < perPage {
-		rows = append(rows, fmt.Sprintf("%s [DEBUG] compat log placeholder %02d", now, len(rows)+1))
-	}
-	writeJSON(w, http.StatusOK, rows)
+	writeAdminCompatNotSupported(w, "api.logs.list.not_supported.app_error", "legacy runtime log listing")
 }
 
 func (h *handlers) postLog(w http.ResponseWriter, r *http.Request) {
@@ -221,10 +210,7 @@ func (h *handlers) postLog(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *handlers) downloadLogs(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-	w.Header().Set("Content-Disposition", `attachment; filename="relaychat.log"`)
-	w.WriteHeader(http.StatusOK)
-	_, _ = fmt.Fprintf(w, "%s [INFO] RelayChat compatibility log export\n", time.Now().UTC().Format(time.RFC3339))
+	writeAdminCompatNotSupported(w, "api.logs.download.not_supported.app_error", "legacy runtime log download")
 }
 
 func (h *handlers) listUserAudits(w http.ResponseWriter, r *http.Request) {
@@ -246,24 +232,7 @@ func (h *handlers) listUserAudits(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *handlers) getClusterStatus(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, []map[string]any{
-		{
-			"id":               "local",
-			"version":          "relaychat-dev",
-			"config_hash":      "local",
-			"status":           "OK",
-			"last_ping_at":     time.Now().UnixMilli(),
-			"hostname":         "localhost",
-			"ipaddress":        "127.0.0.1",
-			"cluster_id":       "local-dev",
-			"schema_version":   "",
-			"health_score":     1,
-			"server_version":   runtime.Version(),
-			"uptime_millis":    0,
-			"busy":             compatServerBusy.Load(),
-			"plugin_directory": h.pluginDirectory(),
-		},
-	})
+	writeAdminCompatNotSupported(w, "api.cluster.status.not_supported.app_error", "legacy cluster status")
 }
 
 func (h *handlers) pluginDirectory() string {
@@ -274,17 +243,15 @@ func (h *handlers) pluginDirectory() string {
 }
 
 func (h *handlers) getServerBusy(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]any{"busy": compatServerBusy.Load()})
+	writeAdminCompatNotSupported(w, "api.server_busy.get.not_supported.app_error", "legacy server busy state")
 }
 
 func (h *handlers) setServerBusy(w http.ResponseWriter, r *http.Request) {
-	compatServerBusy.Store(true)
-	writeJSON(w, http.StatusOK, map[string]string{"status": "OK"})
+	writeAdminCompatNotSupported(w, "api.server_busy.set.not_supported.app_error", "legacy server busy state")
 }
 
 func (h *handlers) clearServerBusy(w http.ResponseWriter, r *http.Request) {
-	compatServerBusy.Store(false)
-	writeJSON(w, http.StatusOK, map[string]string{"status": "OK"})
+	writeAdminCompatNotSupported(w, "api.server_busy.clear.not_supported.app_error", "legacy server busy state")
 }
 
 func (h *handlers) listRoles(w http.ResponseWriter, r *http.Request) {
@@ -331,20 +298,11 @@ func (h *handlers) getRolesByNames(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *handlers) patchRole(w http.ResponseWriter, r *http.Request) {
-	role, ok := findCompatRole(chi.URLParam(r, "roleID"))
-	if !ok {
+	if _, ok := findCompatRole(chi.URLParam(r, "roleID")); !ok {
 		writeError(w, http.StatusNotFound, "api.roles.patch_role.app_error", "role not found")
 		return
 	}
-	var patch struct {
-		Permissions []string `json:"permissions"`
-	}
-	_ = json.NewDecoder(r.Body).Decode(&patch)
-	if patch.Permissions != nil {
-		role.Permissions = patch.Permissions
-	}
-	role.UpdateAt = time.Now().UnixMilli()
-	writeJSON(w, http.StatusOK, role)
+	writeAdminCompatNotSupported(w, "api.roles.patch_role.not_supported.app_error", "legacy Mattermost role updates")
 }
 
 func findCompatRole(idOrName string) (compatRole, bool) {
@@ -357,141 +315,55 @@ func findCompatRole(idOrName string) (compatRole, bool) {
 }
 
 func (h *handlers) listJobs(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, compatJobRows(""))
+	writeAdminCompatNotSupported(w, "api.jobs.list.not_supported.app_error", "legacy background jobs")
 }
 
 func (h *handlers) listJobsByType(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, compatJobRows(chi.URLParam(r, "jobType")))
+	writeAdminCompatNotSupported(w, "api.jobs.list.not_supported.app_error", "legacy background jobs")
 }
 
 func (h *handlers) getJob(w http.ResponseWriter, r *http.Request) {
-	id := chi.URLParam(r, "jobID")
-	compatJobs.Lock()
-	defer compatJobs.Unlock()
-	if row, ok := compatJobs.rows[id]; ok {
-		writeJSON(w, http.StatusOK, cloneCompatJob(row))
-		return
-	}
-	writeError(w, http.StatusNotFound, "api.jobs.get_job.app_error", "job not found")
+	writeAdminCompatNotSupported(w, "api.jobs.get.not_supported.app_error", "legacy background jobs")
 }
 
 func (h *handlers) createJob(w http.ResponseWriter, r *http.Request) {
-	var body map[string]any
-	_ = json.NewDecoder(r.Body).Decode(&body)
-	jobType, _ := body["type"].(string)
-	if strings.TrimSpace(jobType) == "" {
-		jobType = "compatibility"
-	}
-	id := uuid.NewString()
-	now := time.Now().UnixMilli()
-	row := map[string]any{
-		"id":               id,
-		"type":             jobType,
-		"priority":         0,
-		"create_at":        now,
-		"start_at":         int64(0),
-		"last_activity_at": now,
-		"status":           "pending",
-		"progress":         0,
-		"data":             body,
-	}
-	compatJobs.Lock()
-	compatJobs.rows[id] = row
-	compatJobs.Unlock()
-	writeJSON(w, http.StatusCreated, cloneCompatJob(row))
+	writeAdminCompatNotSupported(w, "api.jobs.create.not_supported.app_error", "legacy background jobs")
 }
 
 func (h *handlers) cancelJob(w http.ResponseWriter, r *http.Request) {
-	h.setCompatJobStatus(w, r, "canceled")
+	writeAdminCompatNotSupported(w, "api.jobs.cancel.not_supported.app_error", "legacy background jobs")
 }
 
 func (h *handlers) patchJobStatus(w http.ResponseWriter, r *http.Request) {
-	var body struct {
-		Status string `json:"status"`
-	}
-	_ = json.NewDecoder(r.Body).Decode(&body)
-	if body.Status == "" {
-		body.Status = "pending"
-	}
-	h.setCompatJobStatus(w, r, body.Status)
-}
-
-func (h *handlers) setCompatJobStatus(w http.ResponseWriter, r *http.Request, status string) {
-	id := chi.URLParam(r, "jobID")
-	compatJobs.Lock()
-	defer compatJobs.Unlock()
-	row, ok := compatJobs.rows[id]
-	if !ok {
-		writeError(w, http.StatusNotFound, "api.jobs.update_job.app_error", "job not found")
-		return
-	}
-	row["status"] = status
-	row["last_activity_at"] = time.Now().UnixMilli()
-	writeJSON(w, http.StatusOK, cloneCompatJob(row))
+	writeAdminCompatNotSupported(w, "api.jobs.patch.not_supported.app_error", "legacy background jobs")
 }
 
 func (h *handlers) downloadJob(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("Content-Disposition", `attachment; filename="job.json"`)
-	id := chi.URLParam(r, "jobID")
-	compatJobs.Lock()
-	row, ok := compatJobs.rows[id]
-	compatJobs.Unlock()
-	if !ok {
-		writeError(w, http.StatusNotFound, "api.jobs.download_job.app_error", "job not found")
-		return
-	}
-	writeJSON(w, http.StatusOK, row)
-}
-
-func compatJobRows(jobType string) []map[string]any {
-	compatJobs.Lock()
-	defer compatJobs.Unlock()
-	out := make([]map[string]any, 0, len(compatJobs.rows))
-	for _, row := range compatJobs.rows {
-		if jobType != "" && row["type"] != jobType {
-			continue
-		}
-		out = append(out, cloneCompatJob(row))
-	}
-	return out
-}
-
-func cloneCompatJob(row map[string]any) map[string]any {
-	cp := make(map[string]any, len(row))
-	for k, v := range row {
-		cp[k] = v
-	}
-	return cp
+	writeAdminCompatNotSupported(w, "api.jobs.download.not_supported.app_error", "legacy background jobs")
 }
 
 func (h *handlers) uploadPlugin(w http.ResponseWriter, r *http.Request) {
-	_ = r.ParseMultipartForm(64 << 20)
-	writeJSON(w, http.StatusCreated, map[string]string{"status": "OK", "id": ""})
+	writeAdminCompatNotSupported(w, "api.plugin.upload.not_supported.app_error", "runtime plugin upload")
 }
 
 func (h *handlers) deletePlugin(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]string{"status": "OK"})
+	writeAdminCompatNotSupported(w, "api.plugin.delete.not_supported.app_error", "runtime plugin deletion")
 }
 
 func (h *handlers) enablePlugin(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]string{"status": "OK"})
+	writeAdminCompatNotSupported(w, "api.plugin.enable.not_supported.app_error", "runtime plugin enablement")
 }
 
 func (h *handlers) disablePlugin(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]string{"status": "OK"})
+	writeAdminCompatNotSupported(w, "api.plugin.disable.not_supported.app_error", "runtime plugin disablement")
 }
 
 func (h *handlers) installPluginFromURL(w http.ResponseWriter, r *http.Request) {
-	var body map[string]any
-	_ = json.NewDecoder(r.Body).Decode(&body)
-	writeJSON(w, http.StatusCreated, map[string]any{"status": "OK", "plugin": body})
+	writeAdminCompatNotSupported(w, "api.plugin.install_from_url.not_supported.app_error", "plugin installation from a URL")
 }
 
 func (h *handlers) installPluginFromMarketplace(w http.ResponseWriter, r *http.Request) {
-	var body map[string]any
-	_ = json.NewDecoder(r.Body).Decode(&body)
-	writeJSON(w, http.StatusCreated, map[string]any{"status": "OK", "plugin": body})
+	writeAdminCompatNotSupported(w, "api.plugin.install_marketplace.not_supported.app_error", "plugin Marketplace installation")
 }
 
 func (h *handlers) getMarketplaceFirstAdminVisit(w http.ResponseWriter, r *http.Request) {
@@ -499,7 +371,7 @@ func (h *handlers) getMarketplaceFirstAdminVisit(w http.ResponseWriter, r *http.
 }
 
 func (h *handlers) saveMarketplaceFirstAdminVisit(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]string{"status": "OK"})
+	writeAdminCompatNotSupported(w, "api.plugin.marketplace_preference.not_supported.app_error", "plugin Marketplace preferences")
 }
 
 func (h *handlers) getLicenseLoadMetric(w http.ResponseWriter, r *http.Request) {
@@ -520,12 +392,11 @@ func (h *handlers) getLicenseRenewal(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *handlers) uploadLicense(w http.ResponseWriter, r *http.Request) {
-	_ = r.ParseMultipartForm(16 << 20)
-	writeJSON(w, http.StatusCreated, map[string]string{"status": "OK"})
+	writeAdminCompatNotSupported(w, "api.license.upload.not_supported.app_error", "license upload")
 }
 
 func (h *handlers) deleteLicense(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]string{"status": "OK"})
+	writeAdminCompatNotSupported(w, "api.license.delete.not_supported.app_error", "license deletion")
 }
 
 func (h *handlers) getPreviousTrialLicense(w http.ResponseWriter, r *http.Request) {
@@ -556,12 +427,11 @@ func (h *handlers) getBrandImage(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *handlers) uploadBrandImage(w http.ResponseWriter, r *http.Request) {
-	_ = r.ParseMultipartForm(8 << 20)
-	writeJSON(w, http.StatusCreated, map[string]string{"status": "OK"})
+	writeAdminCompatNotSupported(w, "api.brand.upload_image.not_supported.app_error", "brand image upload")
 }
 
 func (h *handlers) deleteBrandImage(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]string{"status": "OK"})
+	writeAdminCompatNotSupported(w, "api.brand.delete_image.not_supported.app_error", "brand image deletion")
 }
 
 func (h *handlers) listLDAPGroups(w http.ResponseWriter, r *http.Request) {
@@ -569,24 +439,23 @@ func (h *handlers) listLDAPGroups(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *handlers) linkLDAPGroup(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]string{"status": "OK"})
+	writeAdminCompatNotSupported(w, "api.ldap.group_link.not_supported.app_error", "LDAP group linking")
 }
 
 func (h *handlers) unlinkLDAPGroup(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]string{"status": "OK"})
+	writeAdminCompatNotSupported(w, "api.ldap.group_unlink.not_supported.app_error", "LDAP group unlinking")
 }
 
 func (h *handlers) uploadLDAPCertificate(w http.ResponseWriter, r *http.Request) {
-	_ = r.ParseMultipartForm(8 << 20)
-	writeJSON(w, http.StatusCreated, map[string]string{"status": "OK"})
+	writeAdminCompatNotSupported(w, "api.ldap.certificate_upload.not_supported.app_error", "LDAP certificate upload")
 }
 
 func (h *handlers) deleteLDAPCertificate(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]string{"status": "OK"})
+	writeAdminCompatNotSupported(w, "api.ldap.certificate_delete.not_supported.app_error", "LDAP certificate deletion")
 }
 
 func (h *handlers) ldapDisabledOK(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]any{"status": "OK", "enabled": false})
+	writeAdminCompatNotSupported(w, "api.ldap.disabled.app_error", "LDAP administration")
 }
 
 func (h *handlers) getSAMLCertificateStatus(w http.ResponseWriter, r *http.Request) {
@@ -602,24 +471,23 @@ func (h *handlers) getSAMLCertificateStatus(w http.ResponseWriter, r *http.Reque
 func (h *handlers) getSAMLMetadata(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/xml; charset=utf-8")
 	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write([]byte(`<EntityDescriptor entityID="relaychat-dev"></EntityDescriptor>`))
+	_, _ = w.Write([]byte(`<EntityDescriptor entityID="moyro-dev"></EntityDescriptor>`))
 }
 
 func (h *handlers) uploadSAMLMetadataFromIDP(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]any{"status": "OK", "idp_descriptor_url": ""})
+	writeAdminCompatNotSupported(w, "api.saml.metadata.not_supported.app_error", "SAML metadata import")
 }
 
 func (h *handlers) resetSAMLAuthData(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]string{"status": "OK"})
+	writeAdminCompatNotSupported(w, "api.saml.reset.not_supported.app_error", "SAML authentication reset")
 }
 
 func (h *handlers) uploadSAMLCertificate(w http.ResponseWriter, r *http.Request) {
-	_ = r.ParseMultipartForm(8 << 20)
-	writeJSON(w, http.StatusCreated, map[string]string{"status": "OK"})
+	writeAdminCompatNotSupported(w, "api.saml.certificate_upload.not_supported.app_error", "SAML certificate upload")
 }
 
 func (h *handlers) deleteSAMLCertificate(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]string{"status": "OK"})
+	writeAdminCompatNotSupported(w, "api.saml.certificate_delete.not_supported.app_error", "SAML certificate deletion")
 }
 
 func (h *handlers) getContentFlaggingConfig(w http.ResponseWriter, r *http.Request) {
@@ -627,13 +495,7 @@ func (h *handlers) getContentFlaggingConfig(w http.ResponseWriter, r *http.Reque
 }
 
 func (h *handlers) putContentFlaggingConfig(w http.ResponseWriter, r *http.Request) {
-	var body map[string]any
-	_ = json.NewDecoder(r.Body).Decode(&body)
-	if body == nil {
-		body = map[string]any{}
-	}
-	body["enabled"] = false
-	writeJSON(w, http.StatusOK, body)
+	writeAdminCompatNotSupported(w, "api.content_flagging.config.not_supported.app_error", "content flagging configuration")
 }
 
 func (h *handlers) getContentFlaggingFlagConfig(w http.ResponseWriter, r *http.Request) {
@@ -645,17 +507,11 @@ func (h *handlers) getAIBridge(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *handlers) putAIBridge(w http.ResponseWriter, r *http.Request) {
-	var body map[string]any
-	_ = json.NewDecoder(r.Body).Decode(&body)
-	if body == nil {
-		body = map[string]any{}
-	}
-	body["enabled"] = false
-	writeJSON(w, http.StatusOK, body)
+	writeAdminCompatNotSupported(w, "api.ai_bridge.config.not_supported.app_error", "legacy AI bridge configuration")
 }
 
 func (h *handlers) deleteAIBridge(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]string{"status": "OK"})
+	writeAdminCompatNotSupported(w, "api.ai_bridge.delete.not_supported.app_error", "legacy AI bridge deletion")
 }
 
 func (h *handlers) getSystemNotice(w http.ResponseWriter, r *http.Request) {
@@ -666,7 +522,7 @@ func (h *handlers) getSystemNotice(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *handlers) markSystemNoticeViewed(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]string{"status": "OK"})
+	writeAdminCompatNotSupported(w, "api.system_notice.view.not_supported.app_error", "system notice acknowledgement")
 }
 
 func (h *handlers) getSupportPacket(w http.ResponseWriter, r *http.Request) {

@@ -3,13 +3,14 @@ package channels
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"sort"
 	"strings"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
-	"github.com/moddle/moddle/server/internal/store"
+	"github.com/hkjang/moyro/server/internal/store"
 )
 
 type Channel struct {
@@ -238,12 +239,140 @@ func (s *Service) MembersByIDs(ctx context.Context, userID string, channelIDs []
 	return out, rows.Err()
 }
 
+// ChannelsByIDsInTeam hydrates a bounded set of channels from a team-scoped
+// id list, returning only channels the caller can see (member of the
+// channel OR public ('O') channel in a team they belong to). Mirrors the
+// official Mattermost endpoint shape — clients use it on launch to
+// hydrate sidebars without fanning per-channel. Cap input at 200 ids.
+func (s *Service) ChannelsByIDsInTeam(ctx context.Context, teamID, userID string, channelIDs []string) ([]Channel, error) {
+	out := []Channel{}
+	if len(channelIDs) == 0 {
+		return out, nil
+	}
+	if len(channelIDs) > 200 {
+		channelIDs = channelIDs[:200]
+	}
+	rows, err := s.db.Pool.Query(ctx, `
+		SELECT c.id, c.team_id, c.name, c.display_name, c.type, c.header, c.purpose,
+		       c.create_at, c.update_at, c.delete_at
+		  FROM channels c
+		 WHERE c.team_id = $1
+		   AND c.id = ANY($3)
+		   AND c.delete_at = 0
+		   AND (c.type = 'O'
+		        OR EXISTS (SELECT 1 FROM channel_members m
+		                   WHERE m.channel_id = c.id AND m.user_id = $2))
+		 ORDER BY c.display_name
+	`, teamID, userID, channelIDs)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var c Channel
+		if err := rows.Scan(&c.ID, &c.TeamID, &c.Name, &c.DisplayName, &c.Type,
+			&c.Header, &c.Purpose, &c.CreateAt, &c.UpdateAt, &c.DeleteAt); err != nil {
+			return nil, err
+		}
+		out = append(out, c)
+	}
+	return out, rows.Err()
+}
+
+// ListGroupChannelsForUser returns every group ('G') channel the user is
+// a member of. Mattermost's official API exposes this as a body-less POST
+// (legacy quirk) that returns the user's group DM list; we expose the
+// same shape so official desktop clients can hydrate group DM rosters
+// without walking every channel_members row themselves.
+func (s *Service) ListGroupChannelsForUser(ctx context.Context, userID string) ([]Channel, error) {
+	rows, err := s.db.Pool.Query(ctx, `
+		SELECT c.id, c.team_id, c.name, c.display_name, c.type, c.header, c.purpose,
+		       c.create_at, c.update_at, c.delete_at
+		  FROM channels c
+		  JOIN channel_members m ON m.channel_id = c.id
+		 WHERE m.user_id = $1 AND c.type = 'G' AND c.delete_at = 0
+		 ORDER BY c.update_at DESC
+	`, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []Channel{}
+	for rows.Next() {
+		var c Channel
+		if err := rows.Scan(&c.ID, &c.TeamID, &c.Name, &c.DisplayName, &c.Type,
+			&c.Header, &c.Purpose, &c.CreateAt, &c.UpdateAt, &c.DeleteAt); err != nil {
+			return nil, err
+		}
+		out = append(out, c)
+	}
+	return out, rows.Err()
+}
+
 // Remove deletes a channel membership row.
 func (s *Service) Remove(ctx context.Context, channelID, userID string) error {
 	_, err := s.db.Pool.Exec(ctx, `
 		DELETE FROM channel_members WHERE channel_id=$1 AND user_id=$2
 	`, channelID, userID)
 	return err
+}
+
+// GetMember returns one channel_members row, or nil with no error when
+// the user isn't a member of the channel. Used by handlers that need to
+// inspect role tokens before deciding whether to authorise an action.
+func (s *Service) GetMember(ctx context.Context, channelID, userID string) (*Member, error) {
+	var m Member
+	err := s.db.Pool.QueryRow(ctx, `
+		SELECT channel_id, user_id, roles, last_viewed_at, create_at
+		FROM channel_members WHERE channel_id=$1 AND user_id=$2
+	`, channelID, userID).Scan(&m.ChannelID, &m.UserID, &m.Roles, &m.LastViewedAt, &m.CreateAt)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &m, nil
+}
+
+// SetMemberRoles overwrites the space-delimited roles string on the
+// channel_members row. Mirrors `PUT /channels/{id}/members/{uid}/roles`
+// (and the schemeRoles alias). Whitespace is normalised; duplicate tokens
+// collapsed; empty input rejected so we never strip a member out of the
+// channel_user baseline by accident. Returns false when no row exists so
+// the handler can 404 cleanly.
+func (s *Service) SetMemberRoles(ctx context.Context, channelID, userID, roles string) (bool, error) {
+	canon := canonicalRoles(roles)
+	if canon == "" {
+		return false, nil
+	}
+	tag, err := s.db.Pool.Exec(ctx, `
+		UPDATE channel_members SET roles=$1
+		WHERE channel_id=$2 AND user_id=$3
+	`, canon, channelID, userID)
+	if err != nil {
+		return false, err
+	}
+	return tag.RowsAffected() > 0, nil
+}
+
+// canonicalRoles splits on whitespace and dedups while preserving order.
+// Empty input yields an empty string so callers can short-circuit.
+func canonicalRoles(in string) string {
+	parts := strings.Fields(in)
+	if len(parts) == 0 {
+		return ""
+	}
+	seen := map[string]bool{}
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		if seen[p] {
+			continue
+		}
+		seen[p] = true
+		out = append(out, p)
+	}
+	return strings.Join(out, " ")
 }
 
 // Get fetches a single channel by id (ignores delete_at so clients can
@@ -456,6 +585,79 @@ func (s *Service) EnsureDirect(ctx context.Context, userA, userB string) (*Chann
 	}
 	// Both participants are channel_users. Self-DMs still work (one row).
 	for _, uid := range uniqueStrings(ids) {
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO channel_members (channel_id, user_id, roles, create_at)
+			VALUES ($1,$2,'channel_user',$3)
+			ON CONFLICT (channel_id, user_id) DO NOTHING
+		`, c.ID, uid, now); err != nil {
+			return nil, err
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, err
+	}
+	return &c, nil
+}
+
+// EnsureGroup returns the G-type channel for the given user-id set,
+// creating it on first call. The canonical name is the sha-style 40-char
+// concatenation of the sorted user-ids hashed (we keep it simpler — sorted
+// joined with "__" and capped at 64 chars by truncating; Mattermost's own
+// implementation uses a fixed-length hash but the canonical-name semantic
+// is the same: "this exact set of users → this channel id, idempotent").
+// Membership is 3-8 users; smaller sets should use EnsureDirect, larger
+// sets should be a private channel with explicit invites.
+func (s *Service) EnsureGroup(ctx context.Context, userIDs []string) (*Channel, error) {
+	if len(userIDs) < 3 || len(userIDs) > 8 {
+		return nil, errors.New("group channels require 3-8 members")
+	}
+	ids := uniqueStrings(userIDs)
+	if len(ids) < 3 {
+		return nil, errors.New("group channels require 3-8 distinct members")
+	}
+	sort.Strings(ids)
+	name := strings.Join(ids, "__")
+	if len(name) > 64 {
+		name = name[:64]
+	}
+
+	var c Channel
+	var teamID *string
+	err := s.db.Pool.QueryRow(ctx, `
+		SELECT id, team_id, type, display_name, name, header, purpose, create_at, update_at, delete_at
+		FROM channels WHERE type='G' AND name=$1 AND delete_at=0
+	`, name).Scan(&c.ID, &teamID, &c.Type, &c.DisplayName, &c.Name, &c.Header, &c.Purpose, &c.CreateAt, &c.UpdateAt, &c.DeleteAt)
+	if err == nil {
+		if teamID != nil {
+			c.TeamID = *teamID
+		}
+		return &c, nil
+	}
+	if err != pgx.ErrNoRows {
+		return nil, err
+	}
+
+	now := time.Now().UnixMilli()
+	c = Channel{
+		ID:          uuid.NewString(),
+		Type:        "G",
+		Name:        name,
+		DisplayName: "",
+		CreateAt:    now,
+		UpdateAt:    now,
+	}
+	tx, err := s.db.Pool.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback(ctx)
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO channels (id, team_id, type, display_name, name, create_at, update_at)
+		VALUES ($1, NULL, $2, $3, $4, $5, $5)
+	`, c.ID, c.Type, c.DisplayName, c.Name, now); err != nil {
+		return nil, err
+	}
+	for _, uid := range ids {
 		if _, err := tx.Exec(ctx, `
 			INSERT INTO channel_members (channel_id, user_id, roles, create_at)
 			VALUES ($1,$2,'channel_user',$3)

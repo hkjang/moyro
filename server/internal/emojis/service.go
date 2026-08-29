@@ -19,8 +19,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
-	"github.com/moddle/moddle/server/internal/files"
-	"github.com/moddle/moddle/server/internal/store"
+	"github.com/hkjang/moyro/server/internal/files"
+	"github.com/hkjang/moyro/server/internal/store"
 )
 
 type Emoji struct {

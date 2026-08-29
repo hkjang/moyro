@@ -36,11 +36,11 @@ function Add-Route {
 
 function Get-OfficialRoutes {
     $routes = @{}
-    $files = Invoke-RestMethod -Headers @{ "User-Agent" = "Moddle API compatibility audit" } -Uri $SourceApi
+    $files = Invoke-RestMethod -Headers @{ "User-Agent" = "moyro API compatibility audit" } -Uri $SourceApi
     $yamlFiles = $files | Where-Object { $_.name -like "*.yaml" }
 
     foreach ($file in $yamlFiles) {
-        $text = (Invoke-WebRequest -UseBasicParsing -Headers @{ "User-Agent" = "Moddle API compatibility audit" } -Uri $file.download_url).Content
+        $text = (Invoke-WebRequest -UseBasicParsing -Headers @{ "User-Agent" = "moyro API compatibility audit" } -Uri $file.download_url).Content
         $currentPath = $null
         foreach ($line in ($text -split "`n")) {
             if ($line -match '^\s{2}"?(/api/v4/.*?)"?:\s*$') {

@@ -14,13 +14,31 @@ export type AuthUser = {
   update_at?: number;
 };
 
-type State = { token: string | null; user: AuthUser | null };
+export type AuthState = { token: string | null; user: AuthUser | null };
+
+export const AUTH_STORAGE_KEY = "moyro.auth.session";
+
+function loadInitialState(): AuthState {
+  if (typeof window === "undefined") return { token: null, user: null };
+  try {
+    const raw = window.sessionStorage.getItem(AUTH_STORAGE_KEY);
+    if (!raw) return { token: null, user: null };
+    const parsed = JSON.parse(raw) as Partial<AuthState>;
+    if (typeof parsed.token !== "string" || !parsed.user || typeof parsed.user.id !== "string") {
+      window.sessionStorage.removeItem(AUTH_STORAGE_KEY);
+      return { token: null, user: null };
+    }
+    return { token: parsed.token, user: parsed.user };
+  } catch {
+    return { token: null, user: null };
+  }
+}
 
 const slice = createSlice({
   name: "auth",
-  initialState: { token: null, user: null } as State,
+  initialState: loadInitialState(),
   reducers: {
-    setAuth(state, action: PayloadAction<State>) {
+    setAuth(state, action: PayloadAction<AuthState>) {
       state.token = action.payload.token;
       state.user = action.payload.user;
     },

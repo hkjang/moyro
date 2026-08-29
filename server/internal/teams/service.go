@@ -7,7 +7,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
-	"github.com/moddle/moddle/server/internal/store"
+	"github.com/hkjang/moyro/server/internal/store"
 )
 
 type Team struct {
@@ -328,6 +328,65 @@ func (s *Service) AddMember(ctx context.Context, teamID, userID string) (*TeamMe
 	return s.GetMember(ctx, teamID, userID)
 }
 
+// SetMemberRoles overwrites the team_members.roles string. Mirrors
+// `PUT /teams/{id}/members/{uid}/roles` and the `schemeRoles` alias. Roles
+// are normalised (whitespace-split + dedup'd) before write. Empty roles
+// are rejected so a buggy admin tool can't strip a member out of the
+// team_user baseline. Returns false when no membership row exists so the
+// handler can 404 cleanly.
+func (s *Service) SetMemberRoles(ctx context.Context, teamID, userID, roles string) (bool, error) {
+	canon := canonicalRoles(roles)
+	if canon == "" {
+		return false, nil
+	}
+	tag, err := s.db.Pool.Exec(ctx, `
+		UPDATE team_members SET roles=$1 WHERE team_id=$2 AND user_id=$3
+	`, canon, teamID, userID)
+	if err != nil {
+		return false, err
+	}
+	return tag.RowsAffected() > 0, nil
+}
+
+func canonicalRoles(in string) string {
+	out := []string{}
+	cur := ""
+	flush := func() {
+		if cur != "" {
+			out = append(out, cur)
+			cur = ""
+		}
+	}
+	for _, r := range in {
+		if r == ' ' || r == '\t' {
+			flush()
+			continue
+		}
+		cur += string(r)
+	}
+	flush()
+	if len(out) == 0 {
+		return ""
+	}
+	seen := map[string]bool{}
+	dedup := make([]string, 0, len(out))
+	for _, p := range out {
+		if seen[p] {
+			continue
+		}
+		seen[p] = true
+		dedup = append(dedup, p)
+	}
+	res := ""
+	for i, p := range dedup {
+		if i > 0 {
+			res += " "
+		}
+		res += p
+	}
+	return res
+}
+
 type TeamUnread struct {
 	TeamID       string `json:"team_id"`
 	MsgCount     int64  `json:"msg_count"`
@@ -484,6 +543,54 @@ func (s *Service) SetPrivacy(ctx context.Context, teamID, privacy string) (*Team
 		return nil, errors.New("team not found")
 	}
 	return s.Get(ctx, teamID)
+}
+
+// Restore zeroes delete_at on a soft-deleted team. Symmetric counterpart to
+// the existing soft-delete path used by SetPrivacy and patch helpers. Returns
+// (true, nil) when a row was updated; (false, nil) for a no-op (team already
+// active or unknown). Mattermost's API treats restore-on-active as success.
+func (s *Service) Restore(ctx context.Context, teamID string) (bool, error) {
+	now := time.Now().UnixMilli()
+	tag, err := s.db.Pool.Exec(ctx, `
+		UPDATE teams SET delete_at = 0, update_at = $2
+		WHERE id = $1 AND delete_at != 0
+	`, teamID, now)
+	if err != nil {
+		return false, err
+	}
+	return tag.RowsAffected() > 0, nil
+}
+
+// Delete soft-deletes the team — the row stays in the table so audit
+// trails can resolve names, but every list query filters delete_at = 0.
+// Idempotent: deleting an already-deleted team is a (false, nil) no-op
+// so admin tools that retry on transient failure don't double-write the
+// timestamp.
+func (s *Service) Delete(ctx context.Context, teamID string) (bool, error) {
+	now := time.Now().UnixMilli()
+	tag, err := s.db.Pool.Exec(ctx, `
+		UPDATE teams SET delete_at = $2, update_at = $2
+		WHERE id = $1 AND delete_at = 0
+	`, teamID, now)
+	if err != nil {
+		return false, err
+	}
+	return tag.RowsAffected() > 0, nil
+}
+
+// RemoveMember kicks a user from a team. Mattermost's official wire
+// shape is DELETE /teams/{tid}/members/{uid}; the data model is the
+// same as Leave (which we don't expose separately). Returns
+// (changed, error) so the handler can 404 cleanly when the row is
+// already gone (idempotent retry path for admin tools).
+func (s *Service) RemoveMember(ctx context.Context, teamID, userID string) (bool, error) {
+	tag, err := s.db.Pool.Exec(ctx, `
+		DELETE FROM team_members WHERE team_id = $1 AND user_id = $2
+	`, teamID, userID)
+	if err != nil {
+		return false, err
+	}
+	return tag.RowsAffected() > 0, nil
 }
 
 func derefStr(p *string) (string, bool) {

@@ -17,7 +17,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
-	"github.com/moddle/moddle/server/internal/store"
+	"github.com/hkjang/moyro/server/internal/store"
 )
 
 var ErrNotFound = errors.New("thread membership not found")
@@ -104,6 +104,40 @@ func (s *Service) MarkAllReadInTeam(ctx context.Context, userID, teamID string) 
 		return 0, err
 	}
 	return now, nil
+}
+
+// MarkUnreadFromPost rewinds the thread's last_viewed_at to (postCreateAt - 1)
+// so the given reply becomes the first unread row in the panel. Mirrors
+// `POST /users/{uid}/teams/{tid}/threads/{rid}/set_unread/{pid}`. Auto-
+// creates the membership row when missing — same forgiveness as MarkRead —
+// because a user can hit "set unread" on a thread they only browsed.
+// Returns the resulting last_viewed_at boundary so the handler can echo it
+// back to the client and broadcast it.
+func (s *Service) MarkUnreadFromPost(ctx context.Context, userID, teamID, rootID string, postCreateAt int64) (int64, error) {
+	if postCreateAt <= 0 {
+		postCreateAt = time.Now().UnixMilli()
+	}
+	boundary := postCreateAt - 1
+	tag, err := s.db.Pool.Exec(ctx, `
+		UPDATE thread_memberships
+		SET last_viewed_at = $4
+		WHERE user_id = $1 AND root_id = $3
+	`, userID, teamID, rootID, boundary)
+	if err != nil {
+		return 0, err
+	}
+	if tag.RowsAffected() == 0 {
+		_, err = s.db.Pool.Exec(ctx, `
+			INSERT INTO thread_memberships (user_id, team_id, root_id, last_viewed_at, following)
+			VALUES ($1, $2, $3, $4, FALSE)
+			ON CONFLICT (user_id, root_id) DO UPDATE SET
+				last_viewed_at = EXCLUDED.last_viewed_at
+		`, userID, teamID, rootID, boundary)
+		if err != nil {
+			return 0, err
+		}
+	}
+	return boundary, nil
 }
 
 // Get returns a single membership row. Used by the handlers as a precheck

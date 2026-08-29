@@ -12,9 +12,9 @@ import (
 	"errors"
 	"strings"
 
-	"github.com/moddle/moddle/server/internal/channels"
-	"github.com/moddle/moddle/server/internal/posts"
-	"github.com/moddle/moddle/server/internal/userstatus"
+	"github.com/hkjang/moyro/server/internal/channels"
+	"github.com/hkjang/moyro/server/internal/posts"
+	"github.com/hkjang/moyro/server/internal/userstatus"
 )
 
 // ResponseType controls client rendering.

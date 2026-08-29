@@ -5,8 +5,8 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/moddle/moddle/server/internal/posts"
-	"github.com/moddle/moddle/server/internal/ws"
+	"github.com/hkjang/moyro/server/internal/posts"
+	"github.com/hkjang/moyro/server/internal/ws"
 )
 
 // PostResolver returns the minimum post fields the worker needs for the

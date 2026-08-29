@@ -1,0 +1,134 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>moyro 사용자 가이드 | 로그인·채널·개인 설정</title>
+    <meta name="description" content="moyro v0.1.0의 로그인, 팀과 채널, 메시지, 저장 글, 예약 메시지, 개인 API 키, AI와 선택적 승인 화면을 실제 캡처와 함께 설명합니다.">
+    <meta name="robots" content="index,follow,max-image-preview:large,max-snippet:-1">
+    <meta name="theme-color" content="#101a3b">
+    <link rel="icon" href="../favicon.svg" type="image/svg+xml">
+    <link rel="icon" href="../assets/brand/favicon-32.png" type="image/png" sizes="32x32">
+    <link rel="icon" href="../assets/brand/favicon-16.png" type="image/png" sizes="16x16">
+    <link rel="shortcut icon" href="../favicon.ico">
+    <link rel="apple-touch-icon" href="../apple-touch-icon.png" sizes="180x180">
+    <link rel="manifest" href="../site.webmanifest">
+    <link rel="canonical" href="https://hkjang.github.io/moyro/guides/user-guide.html">
+    <link rel="alternate" hreflang="ko-KR" href="https://hkjang.github.io/moyro/guides/user-guide.html">
+    <link rel="alternate" hreflang="x-default" href="https://hkjang.github.io/moyro/guides/user-guide.html">
+    <link rel="stylesheet" href="../assets/site.css">
+    <meta property="og:type" content="article">
+    <meta property="og:locale" content="ko_KR">
+    <meta property="og:site_name" content="moyro">
+    <meta property="og:title" content="moyro 사용자 가이드 | 로그인·채널·개인 설정">
+    <meta property="og:description" content="실제 v0.1.0 화면으로 배우는 moyro 사용자 작업 흐름입니다.">
+    <meta property="og:url" content="https://hkjang.github.io/moyro/guides/user-guide.html">
+    <meta property="og:image" content="https://hkjang.github.io/moyro/assets/brand/moyro-social-card.png">
+    <meta property="og:image:secure_url" content="https://hkjang.github.io/moyro/assets/brand/moyro-social-card.png">
+    <meta property="og:image:type" content="image/png">
+    <meta property="og:image:width" content="1200">
+    <meta property="og:image:height" content="630">
+    <meta property="og:image:alt" content="moyro 로고와 팀의 대화와 업무 흐름을 조직 안에 문구">
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:title" content="moyro v0.1.0 사용자 가이드">
+    <meta name="twitter:description" content="로그인, 채널, 개인 키, AI와 선택적 승인을 실제 화면으로 확인하세요.">
+    <meta name="twitter:image" content="https://hkjang.github.io/moyro/assets/brand/moyro-social-card.png">
+    <meta name="twitter:image:alt" content="moyro 로고와 팀의 대화와 업무 흐름을 조직 안에 문구">
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@graph": [
+          {
+            "@type": "TechArticle",
+            "@id": "https://hkjang.github.io/moyro/guides/user-guide.html#article",
+            "headline": "moyro v0.1.0 사용자 가이드",
+            "description": "로그인부터 채널 작업, 개인 설정과 선택적 승인까지 설명합니다.",
+            "image": "https://hkjang.github.io/moyro/assets/screenshots/workspace-channel.jpg",
+            "inLanguage": "ko-KR",
+            "dateModified": "2026-08-29",
+            "mainEntityOfPage": {"@type": "WebPage", "@id": "https://hkjang.github.io/moyro/guides/user-guide.html"},
+            "author": {"@type": "Organization", "name": "moyro contributors"}
+          },
+          {
+            "@type": "BreadcrumbList",
+            "itemListElement": [
+              {"@type": "ListItem", "position": 1, "name": "moyro", "item": "https://hkjang.github.io/moyro/"},
+              {"@type": "ListItem", "position": 2, "name": "사용자 가이드", "item": "https://hkjang.github.io/moyro/guides/user-guide.html"}
+            ]
+          }
+        ]
+      }
+    </script>
+  </head>
+  <body>
+    <a class="skip-link" href="#guide">본문으로 건너뛰기</a>
+    <header class="site-header guide-header">
+      <div class="shell header-inner">
+        <a class="brand" href="../" aria-label="moyro 홈"><img class="brand-logo" src="../assets/brand/moyro-mark.svg" width="36" height="36" alt=""><span>moyro</span></a>
+        <nav class="desktop-nav" aria-label="문서 메뉴"><a href="../">제품 소개</a><a href="../screens.html">제품 화면</a><a href="user-guide.html" aria-current="page">사용자 가이드</a><a href="admin-guide.html">관리자 가이드</a><a href="offline-deployment.html">오프라인 배포</a><a href="https://github.com/hkjang/moyro">GitHub</a></nav>
+      </div>
+    </header>
+    <main id="guide">
+      <section class="guide-hero"><div class="shell"><p class="eyebrow eyebrow-light"><span></span> User guide · v0.1.0</p><h1>대화에 집중하는<br>moyro 사용자 가이드</h1><p>로그인부터 채널 탐색, 저장·예약 메시지, 개인 키와 AI, 선택적 승인 흐름까지 실제 화면을 따라 설명합니다.</p><span class="status-note">서비스 전체 설정은 별도 관리자 영역에서 관리합니다.</span></div></section>
+      <div class="shell guide-layout">
+        <aside class="guide-toc" aria-label="목차"><strong>이 페이지에서</strong><a href="#signin">로그인과 버전</a><a href="#workspace">채널과 메시지</a><a href="#saved">저장·예약</a><a href="#personal">개인 설정</a><a href="#keys-ai">키와 AI</a><a href="#approval">선택적 승인</a><a href="#help">문제 해결</a></aside>
+        <article class="guide-content">
+          <section id="signin">
+            <h2>1. 로그인과 서비스 버전</h2>
+            <p>관리자가 안내한 내부 moyro 주소를 엽니다. 이메일 또는 사용자명과 비밀번호로 로그인합니다. 관리자가 Keycloak OIDC를 활성화했다면 로그인 화면에 SSO 진입점도 표시됩니다.</p>
+            <p>로컬 회원가입이 닫힌 조직에서는 관리자가 발급한 초대 링크를 여세요. 링크에 지정된 워크스페이스를 확인한 뒤 12–72바이트 비밀번호로 계정을 만들 수 있습니다. 만료·폐기·사용 횟수 소진 링크는 가입에 사용할 수 없습니다.</p>
+            <figure class="guide-figure"><picture><img src="../assets/screenshots/login.jpg" width="1440" height="1000" loading="lazy" decoding="async" alt="moyro 로그인 폼과 하단 서비스 버전"></picture><figcaption>로그인 화면 하단에서 현재 서비스 버전을 확인할 수 있습니다.</figcaption></figure>
+            <p>로그인 뒤에는 오른쪽 위의 <strong>계정 메뉴 열기</strong> 버튼을 선택합니다. 프로필 컨텍스트 메뉴에서도 동일한 버전을 확인할 수 있습니다. 오류를 문의할 때 버전과 발생 시각을 함께 전달하세요.</p>
+            <figure class="guide-figure"><picture><img src="../assets/screenshots/workspace-profile-menu.jpg" width="1440" height="1000" loading="lazy" decoding="async" alt="서비스 버전과 설정 진입점이 표시된 moyro 프로필 메뉴"></picture><figcaption>프로필 메뉴에는 개인 설정, 권한이 있는 서비스 관리자, 활성화된 경우 승인 메뉴가 표시됩니다.</figcaption></figure>
+          </section>
+
+          <section id="workspace">
+            <h2>2. 팀, 채널과 메시지</h2>
+            <p>왼쪽 영역에서 팀과 채널을 선택하면 URL이 해당 위치로 바뀝니다. 브라우저를 새로고침해도 같은 채널 또는 개인 보기가 다시 열립니다.</p>
+            <ul><li><strong>공개 채널:</strong> 참여 가능한 공개 대화 공간입니다.</li><li><strong>비공개 채널:</strong> 멤버에게만 표시되는 공간입니다.</li><li><strong>DM·그룹 메시지:</strong> 한 명 또는 여러 명과 직접 대화합니다.</li></ul>
+            <p>작성창에서 메시지와 파일을 보냅니다. 메시지의 답글 동작으로 스레드를 열고, 반응·수정·삭제·저장을 사용할 수 있습니다. 검색은 접근 권한이 있는 메시지만 대상으로 합니다.</p>
+            <figure class="guide-figure"><picture><img src="../assets/screenshots/workspace-channel.jpg" width="1440" height="1000" loading="lazy" decoding="async" alt="채널 탐색과 메시지가 표시된 moyro 작업 공간"></picture><figcaption>채널 작업 공간은 탐색, 메시지 목록, 작성 흐름을 한 화면에 배치합니다.</figcaption></figure>
+          </section>
+
+          <section id="saved">
+            <h2>3. 저장 글과 예약 메시지</h2>
+            <p>중요한 메시지는 저장해 개인 목록에 모을 수 있습니다. 예약 메시지는 지정한 시각 전까지 전용 보기에서 확인하고 취소할 수 있습니다.</p>
+            <figure class="guide-figure"><picture><img src="../assets/screenshots/workspace-saved.jpg" width="1440" height="1000" loading="lazy" decoding="async" alt="moyro 저장 글 목록"></picture><figcaption>저장 글은 사용자 개인에게만 적용되는 다시 보기 목록입니다.</figcaption></figure>
+            <figure class="guide-figure"><picture><img src="../assets/screenshots/workspace-scheduled.jpg" width="1440" height="1000" loading="lazy" decoding="async" alt="moyro 예약 메시지 목록"></picture><figcaption>예약 메시지 보기에서 발송 전 항목을 확인합니다.</figcaption></figure>
+          </section>
+
+          <section id="personal">
+            <h2>4. 개인 설정</h2>
+            <p>프로필 메뉴에서 <strong>개인 설정</strong>을 엽니다. 이 영역에는 내 프로필, 화면, 알림, 세션, 개인 키와 AI 개인화가 있습니다. 사이트 URL, Keycloak, AI 공급자처럼 조직 전체에 영향을 주는 값은 여기에 없습니다.</p>
+            <figure class="guide-figure"><picture><img src="../assets/screenshots/settings-profile.jpg" width="1440" height="1000" loading="lazy" decoding="async" alt="moyro 개인 프로필 설정 화면"></picture><figcaption>개인 설정은 독립 URL을 사용하므로 새로고침 뒤에도 선택한 메뉴가 유지됩니다.</figcaption></figure>
+            <table class="guide-table"><thead><tr><th>메뉴</th><th>용도</th></tr></thead><tbody><tr><td>프로필</td><td>내 계정 정보 확인</td></tr><tr><td>화면</td><td>개인 표시 환경</td></tr><tr><td>알림</td><td>개인 알림 선호</td></tr><tr><td>세션</td><td>로그인 세션 확인과 종료</td></tr></tbody></table>
+          </section>
+
+          <section id="keys-ai">
+            <h2>5. 개인 키와 AI</h2>
+            <p>개인 키 화면에서 관리자가 허용한 scope와 수명 안에서 API·MCP 키를 발급합니다. Secret은 생성 또는 회전 응답에서 한 번만 표시되므로 안전한 credential 저장소로 바로 옮기세요.</p>
+            <figure class="guide-figure"><picture><img src="../assets/screenshots/settings-keys.jpg" width="1440" height="1000" loading="lazy" decoding="async" alt="moyro 개인 API와 MCP 키 화면"></picture><figcaption>키마다 scope, 만료와 상태를 확인하고 회전하거나 폐기합니다.</figcaption></figure>
+            <div class="callout"><strong>키 회전 순서</strong><br>새 secret을 자동화에 반영하고 호출이 전환됐는지 확인한 뒤 이전 키를 폐기하세요. 관리자가 정한 유예시간 동안 이전 키가 유효할 수 있습니다.</div>
+            <p>AI 개인화는 관리자가 AI 공급자를 활성화했을 때 사용합니다. 공급자 endpoint, 모델과 최대 token은 서비스 관리 영역의 값이며, 사용자는 자신의 기본 선호만 관리합니다.</p>
+            <figure class="guide-figure"><picture><img src="../assets/screenshots/settings-ai.jpg" width="1440" height="1000" loading="lazy" decoding="async" alt="moyro AI 개인화 화면"></picture><figcaption>AI 요청 응답은 스트리밍을 기본으로 처리합니다.</figcaption></figure>
+          </section>
+
+          <section id="approval">
+            <h2>6. 선택적 검토와 승인</h2>
+            <p>승인 메뉴는 항상 보이지 않습니다. 관리자가 MCP 게시 작업에 승인 정책을 활성화한 경우에만 <strong>내 승인 요청</strong>과, 검토 권한이 있는 사용자에게 <strong>검토 대기</strong> 화면이 나타납니다.</p>
+            <figure class="guide-figure"><picture><img src="../assets/screenshots/settings-approvals-mine.jpg" width="1440" height="1000" loading="lazy" decoding="async" alt="moyro 내 승인 요청 목록"></picture><figcaption>요청자는 자신의 대기·승인·반려 상태를 확인합니다.</figcaption></figure>
+            <figure class="guide-figure"><picture><img src="../assets/screenshots/settings-approvals-review.jpg" width="1440" height="1000" loading="lazy" decoding="async" alt="moyro 검토 대기 요청 목록"></picture><figcaption>권한을 가진 검토자는 정책에 따라 승인 또는 반려합니다.</figcaption></figure>
+          </section>
+
+          <section id="help">
+            <h2>7. 문제가 생겼을 때</h2>
+            <ul><li>현재 URL을 새로고침해도 같은 메뉴가 열리는지 확인합니다.</li><li>연결 오류는 관리자에게 내부 네트워크와 <code>/healthz</code> 확인을 요청합니다.</li><li>채널이나 파일 접근 오류는 해당 채널 멤버십을 확인합니다.</li><li>SSO 진입점이 없으면 관리자가 Keycloak을 활성화했는지 확인합니다.</li><li>문의 시 서비스 버전, 발생 시각, 현재 URL과 수행한 작업을 전달합니다.</li></ul>
+            <p><a class="text-link" href="../screens.html">사용자·관리자·모바일 화면 전체 보기 →</a></p>
+          </section>
+          <nav class="guide-next" aria-label="다음 문서"><a class="text-link" href="../">← 제품 소개</a><a class="text-link" href="admin-guide.html">관리자 가이드 →</a></nav>
+        </article>
+      </div>
+    </main>
+    <footer class="site-footer"><div class="shell footer-bottom"><span>© 2026 moyro contributors · v0.1.0</span><span><a href="../screens.html">제품 화면</a> · <a href="https://github.com/hkjang/moyro">GitHub</a></span></div></footer>
+  </body>
+</html>

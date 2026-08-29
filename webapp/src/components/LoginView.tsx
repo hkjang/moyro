@@ -2,6 +2,8 @@ import { useEffect, useRef, useState } from "react";
 import { useDispatch } from "react-redux";
 import { setAuth } from "@/store/authSlice";
 import { api, type InvitePreview } from "@/api/client";
+import { displayVersion, useSystemInfo } from "@/features/system/SystemInfoContext";
+import { BrandMark } from "@/components/brand/BrandMark";
 
 type Mode = "login" | "register";
 
@@ -20,17 +22,19 @@ const OAUTH_ERROR_MESSAGES: Record<string, string> = {
 const PROVIDER_LABELS: Record<string, string> = {
   google: "Google로 계속하기",
   github: "GitHub으로 계속하기",
+  keycloak: "Keycloak로 계속하기",
+  oidc: "SSO로 계속하기",
 };
 
 const DEV_AUTO_LOGIN = {
-  enabled: import.meta.env.DEV && import.meta.env.VITE_MODDLE_DEV_AUTO_LOGIN !== "false",
-  loginId: import.meta.env.VITE_MODDLE_DEV_LOGIN_ID || "webuser",
-  username: import.meta.env.VITE_MODDLE_DEV_USERNAME || "webuser",
-  email: import.meta.env.VITE_MODDLE_DEV_EMAIL || "web@x.com",
-  password: import.meta.env.VITE_MODDLE_DEV_PASSWORD || "P@ssw0rd1",
+  enabled: import.meta.env.DEV && import.meta.env.VITE_MOYRO_DEV_AUTO_LOGIN === "true",
+  loginId: import.meta.env.VITE_MOYRO_DEV_LOGIN_ID || "webuser",
+  username: import.meta.env.VITE_MOYRO_DEV_USERNAME || "webuser",
+  email: import.meta.env.VITE_MOYRO_DEV_EMAIL || "web@x.com",
+  password: import.meta.env.VITE_MOYRO_DEV_PASSWORD || "P@ssw0rd1",
 };
 
-const DEV_AUTO_LOGIN_DISABLED_KEY = "moddle.devAutoLogin.disabled";
+const DEV_AUTO_LOGIN_DISABLED_KEY = "moyro.devAutoLogin.disabled";
 
 function isDevAutoLoginDisabled(): boolean {
   try {
@@ -41,6 +45,7 @@ function isDevAutoLoginDisabled(): boolean {
 }
 
 export function LoginView() {
+  const systemInfo = useSystemInfo();
   const [mode, setMode] = useState<Mode>("login");
   const [loginId, setLoginId] = useState("");
   const [username, setUsername] = useState("");
@@ -60,6 +65,18 @@ export function LoginView() {
   const [inviteError, setInviteError] = useState<string | null>(null);
   const devAutoLoginStartedRef = useRef(false);
   const dispatch = useDispatch();
+  const authProviders = providers.length > 0
+    ? providers
+    : systemInfo.oidc_enabled
+      ? [systemInfo.oidc_provider_name === "Keycloak" ? "keycloak" : "oidc"]
+      : [];
+  const canRegister = Boolean(invite || systemInfo.local_signup_enabled);
+
+  useEffect(() => {
+    if (systemInfo.loaded && !canRegister && mode === "register") {
+      setMode("login");
+    }
+  }, [canRegister, mode, systemInfo.loaded]);
 
   // Development-only fast path: Vite dev sessions should land directly in
   // the chat app. If the default user is missing, create it once and retry.
@@ -208,8 +225,8 @@ export function LoginView() {
     <div className="login-page">
       <div className="login-card">
         <div className="login-brand">
-          <div className="login-logo" aria-hidden>M</div>
-          <h1 className="login-title">Moddle</h1>
+          <BrandMark className="login-logo" size={38} />
+          <h1 className="login-title">moyro</h1>
         </div>
         <p className="login-subtitle">
           {mode === "login" ? "팀과 다시 연결하세요." : "팀을 위한 새 계정을 만드세요."}
@@ -238,15 +255,17 @@ export function LoginView() {
           >
             로그인
           </button>
-          <button
-            type="button"
-            role="tab"
-            aria-selected={mode === "register"}
-            className="login-tab"
-            onClick={() => { setMode("register"); setError(null); }}
-          >
-            회원가입
-          </button>
+          {canRegister && (
+            <button
+              type="button"
+              role="tab"
+              aria-selected={mode === "register"}
+              className="login-tab"
+              onClick={() => { setMode("register"); setError(null); }}
+            >
+              회원가입
+            </button>
+          )}
         </div>
 
         <form onSubmit={submit}>
@@ -299,6 +318,8 @@ export function LoginView() {
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               placeholder="••••••••"
+              minLength={mode === "register" ? 12 : undefined}
+              maxLength={72}
               required
             />
           </div>
@@ -310,15 +331,17 @@ export function LoginView() {
           {error && <div className="login-error" role="alert">{error}</div>}
         </form>
 
-        {providers.length > 0 && (
+        {authProviders.length > 0 && (
           <>
             <div className="login-divider"><span>또는</span></div>
             <div className="oauth-buttons">
-              {providers.map((name) => (
+              {authProviders.map((name) => (
                 <a
                   key={name}
                   className={`oauth-btn oauth-btn-${name}`}
-                  href={`/api/v4/oauth/${encodeURIComponent(name)}/login`}
+                  href={name === "keycloak" || name === "oidc"
+                    ? "/api/moyro/v1/auth/oidc/login"
+                    : `/api/v4/oauth/${encodeURIComponent(name)}/login`}
                 >
                   <span className={`oauth-icon oauth-icon-${name}`} aria-hidden />
                   <span>{PROVIDER_LABELS[name] ?? `${name}로 계속하기`}</span>
@@ -329,6 +352,9 @@ export function LoginView() {
         )}
 
         <div className="login-footer">
+          <strong>moyro {displayVersion(systemInfo.version)}</strong>
+          {systemInfo.build_hash && <> · {systemInfo.build_hash.slice(0, 8)}</>}
+          <br />
           Mattermost 호환 · /api/v4
         </div>
       </div>

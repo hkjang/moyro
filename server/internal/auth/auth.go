@@ -9,8 +9,9 @@ import (
 
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
+	"github.com/hkjang/moyro/server/internal/store"
 	"github.com/jackc/pgx/v5"
-	"github.com/moddle/moddle/server/internal/store"
+	"github.com/jackc/pgx/v5/pgconn"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -21,7 +22,15 @@ func jsonMarshal(v any) ([]byte, error)   { return json.Marshal(v) }
 
 var (
 	ErrInvalidCredentials = errors.New("invalid credentials")
+	ErrInvalidSession     = errors.New("invalid or revoked session")
+	ErrInvalidPassword    = errors.New("password must contain between 12 and 72 bytes and no NUL characters")
 	ErrUserExists         = errors.New("user already exists")
+	ErrNotFound           = errors.New("user not found")
+)
+
+const (
+	minimumPasswordBytes = 12
+	maximumPasswordBytes = 72 // bcrypt's defined input limit
 )
 
 type Service struct {
@@ -32,6 +41,16 @@ type Service struct {
 
 func New(db *store.DB, jwtSecret []byte, ttl time.Duration) *Service {
 	return &Service{db: db, jwtSecret: jwtSecret, ttl: ttl}
+}
+
+// ValidatePassword applies the local-account password boundary at the service
+// layer. HTTP validation is useful for friendly errors, but every caller that
+// can create or rotate a password must share the same fail-closed rule.
+func ValidatePassword(password string) error {
+	if len(password) < minimumPasswordBytes || len(password) > maximumPasswordBytes || strings.ContainsRune(password, '\x00') {
+		return ErrInvalidPassword
+	}
+	return nil
 }
 
 // DB returns the underlying store handle. Callers outside this package
@@ -70,7 +89,7 @@ type User struct {
 // userColumns is the canonical SELECT clause for hydrating User. Kept as a
 // constant so adding a column to the struct only edits one place. COALESCE
 // guards against any pre-Phase-23 NULL rows since the migration uses
-// NOT NULL DEFAULT '' but ALTER on a populated table can hand out NULLs
+// NOT NULL DEFAULT ” but ALTER on a populated table can hand out NULLs
 // during the transitional moment.
 const userColumns = `id, username, email, roles, COALESCE(picture,''),
        COALESCE(first_name,''), COALESCE(last_name,''),
@@ -103,6 +122,9 @@ type Claims struct {
 }
 
 func (s *Service) Register(ctx context.Context, username, email, password string) (*User, error) {
+	if err := ValidatePassword(password); err != nil {
+		return nil, err
+	}
 	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
 	if err != nil {
 		return nil, err
@@ -114,6 +136,10 @@ func (s *Service) Register(ctx context.Context, username, email, password string
 		VALUES ($1,$2,$3,$4,'system_user',$5,$5)
 	`, id, username, email, string(hash), now)
 	if err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+			return nil, ErrUserExists
+		}
 		return nil, err
 	}
 	return &User{ID: id, Username: username, Email: email, Roles: "system_user"}, nil
@@ -129,13 +155,19 @@ func (s *Service) LoginWithDevice(ctx context.Context, loginID, password, device
 	if loginID == "" || password == "" {
 		return nil, "", ErrInvalidCredentials
 	}
+	tx, err := s.db.Pool.Begin(ctx)
+	if err != nil {
+		return nil, "", err
+	}
+	defer tx.Rollback(ctx)
 
 	var u User
 	var hash string
 	var isBot bool
-	err := s.db.Pool.QueryRow(ctx, `
+	err = tx.QueryRow(ctx, `
 		SELECT `+userColumns+`, password_hash, COALESCE(is_bot, FALSE)
 		FROM users WHERE (LOWER(username)=LOWER($1) OR LOWER(email)=LOWER($1)) AND delete_at=0
+		FOR SHARE
 	`, loginID).Scan(&u.ID, &u.Username, &u.Email, &u.Roles, &u.Picture,
 		&u.FirstName, &u.LastName, &u.Nickname, &u.Position, &hash, &isBot)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -158,11 +190,14 @@ func (s *Service) LoginWithDevice(ctx context.Context, loginID, password, device
 		return nil, "", err
 	}
 	now := time.Now()
-	_, err = s.db.Pool.Exec(ctx, `
+	_, err = tx.Exec(ctx, `
 		INSERT INTO sessions (id, user_id, token, device_id, expires_at, create_at)
 		VALUES ($1,$2,$3,$4,$5,$6)
 	`, uuid.NewString(), u.ID, tok, deviceID, now.Add(s.ttl).UnixMilli(), now.UnixMilli())
 	if err != nil {
+		return nil, "", err
+	}
+	if err := tx.Commit(ctx); err != nil {
 		return nil, "", err
 	}
 	return &u, tok, nil
@@ -202,7 +237,7 @@ func (s *Service) issueToken(userID string) (string, error) {
 			ID:        uuid.NewString(),
 			ExpiresAt: jwt.NewNumericDate(now.Add(s.ttl)),
 			IssuedAt:  jwt.NewNumericDate(now),
-			Issuer:    "moddle",
+			Issuer:    "moyro",
 		},
 	}
 	return jwt.NewWithClaims(jwt.SigningMethodHS256, claims).SignedString(s.jwtSecret)
@@ -223,6 +258,36 @@ func (s *Service) Parse(tokenStr string) (*Claims, error) {
 		return nil, errors.New("invalid token")
 	}
 	return c, nil
+}
+
+// Authenticate validates both the signed JWT and its live database session.
+// This makes logout, administrator revocation, expiry, and user deactivation
+// effective on the very next HTTP or WebSocket request.
+func (s *Service) Authenticate(ctx context.Context, tokenStr string) (*Claims, error) {
+	claims, err := s.Parse(tokenStr)
+	if err != nil {
+		return nil, ErrInvalidSession
+	}
+
+	var valid bool
+	err = s.db.Pool.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1
+			FROM sessions AS s
+			JOIN users AS u ON u.id = s.user_id
+			WHERE s.token = $1
+			  AND s.user_id = $2
+			  AND s.expires_at > $3
+			  AND u.delete_at = 0
+		)
+	`, tokenStr, claims.UserID, time.Now().UnixMilli()).Scan(&valid)
+	if err != nil {
+		return nil, err
+	}
+	if !valid {
+		return nil, ErrInvalidSession
+	}
+	return claims, nil
 }
 
 func (s *Service) UserByID(ctx context.Context, id string) (*User, error) {
@@ -501,6 +566,51 @@ func (s *Service) RevokeOthers(ctx context.Context, userID, currentToken string)
 	return cmd.RowsAffected(), nil
 }
 
+// RevokeAllForUser deletes every session for the given user — the official
+// `POST /users/{id}/sessions/revoke/all` semantics. Returns the row count
+// so callers can decide whether to broadcast a kick. Used by both the
+// admin "force logout" tool and the self-serve "log me out everywhere"
+// button (which is functionally equivalent to RevokeOthers + revoke self).
+func (s *Service) RevokeAllForUser(ctx context.Context, userID string) (int64, error) {
+	cmd, err := s.db.Pool.Exec(ctx, `DELETE FROM sessions WHERE user_id=$1`, userID)
+	if err != nil {
+		return 0, err
+	}
+	return cmd.RowsAffected(), nil
+}
+
+// RevokeAllSessionsGlobal nukes every session row in the table. Mirrors
+// `POST /users/sessions/revoke/all` — the admin "log everyone out"
+// hammer typically used for emergency token rotation. Returns the row
+// count so the handler can broadcast a global kick.
+func (s *Service) RevokeAllSessionsGlobal(ctx context.Context) (int64, error) {
+	cmd, err := s.db.Pool.Exec(ctx, `DELETE FROM sessions`)
+	if err != nil {
+		return 0, err
+	}
+	return cmd.RowsAffected(), nil
+}
+
+// ListAllUserIDsWithSessions returns every distinct user_id that currently
+// has a session row. Used by the global revoke handler to fan out kicks.
+// Empty slice when no sessions exist.
+func (s *Service) ListAllUserIDsWithSessions(ctx context.Context) ([]string, error) {
+	rows, err := s.db.Pool.Query(ctx, `SELECT DISTINCT user_id FROM sessions`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []string{}
+	for rows.Next() {
+		var uid string
+		if err := rows.Scan(&uid); err != nil {
+			return nil, err
+		}
+		out = append(out, uid)
+	}
+	return out, rows.Err()
+}
+
 // GetNotifyProps reads the user's top-level Mattermost-shaped notification
 // preferences. Empty/missing rows return an empty map (never nil) so the
 // JSON response stays `{}` not `null`. Mattermost stores notify_props as a
@@ -657,10 +767,45 @@ func (s *Service) Stats(ctx context.Context) (*UserStats, error) {
 	return &UserStats{TotalUsersCount: n}, nil
 }
 
-// UpdatePassword verifies the current password then swaps in the new one.
+type passwordMutationExecutor interface {
+	Exec(context.Context, string, ...any) (pgconn.CommandTag, error)
+}
+
+// replacePasswordAndRevokeSessions keeps password rotation and session
+// invalidation inseparable. Callers execute it inside the same transaction so
+// neither a new password with old sessions nor deleted sessions with an old
+// password can become visible after a partial failure.
+func replacePasswordAndRevokeSessions(ctx context.Context, executor passwordMutationExecutor, userID, hash string, now int64) (bool, error) {
+	tag, err := executor.Exec(ctx, `
+		UPDATE users SET password_hash=$1, update_at=$2
+		WHERE id=$3 AND delete_at=0
+	`, hash, now, userID)
+	if err != nil {
+		return false, err
+	}
+	if tag.RowsAffected() == 0 {
+		return false, nil
+	}
+	if _, err := executor.Exec(ctx, `DELETE FROM sessions WHERE user_id=$1`, userID); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+// UpdatePassword verifies the current password, swaps in the new one, and
+// revokes every session for the account in one transaction.
 func (s *Service) UpdatePassword(ctx context.Context, userID, current, next string) error {
+	if err := ValidatePassword(next); err != nil {
+		return err
+	}
+	tx, err := s.db.Pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+
 	var hash string
-	if err := s.db.Pool.QueryRow(ctx, `SELECT password_hash FROM users WHERE id=$1 AND delete_at=0`, userID).Scan(&hash); err != nil {
+	if err := tx.QueryRow(ctx, `SELECT password_hash FROM users WHERE id=$1 AND delete_at=0 FOR UPDATE`, userID).Scan(&hash); err != nil {
 		return err
 	}
 	if err := bcrypt.CompareHashAndPassword([]byte(hash), []byte(current)); err != nil {
@@ -670,8 +815,14 @@ func (s *Service) UpdatePassword(ctx context.Context, userID, current, next stri
 	if err != nil {
 		return err
 	}
-	_, err = s.db.Pool.Exec(ctx, `UPDATE users SET password_hash=$1, update_at=$2 WHERE id=$3`, string(newHash), time.Now().UnixMilli(), userID)
-	return err
+	changed, err := replacePasswordAndRevokeSessions(ctx, tx, userID, string(newHash), time.Now().UnixMilli())
+	if err != nil {
+		return err
+	}
+	if !changed {
+		return ErrInvalidCredentials
+	}
+	return tx.Commit(ctx)
 }
 
 // AdminSetPassword force-rotates a user's password without checking the
@@ -679,21 +830,26 @@ func (s *Service) UpdatePassword(ctx context.Context, userID, current, next stri
 // from a privileged actor. Returns ErrInvalidCredentials only when the user
 // is missing/deleted (so callers can surface a 404), nil on success.
 func (s *Service) AdminSetPassword(ctx context.Context, userID, next string) error {
-	if next == "" {
-		return errors.New("empty password")
+	if err := ValidatePassword(next); err != nil {
+		return err
 	}
 	newHash, err := bcrypt.GenerateFromPassword([]byte(next), bcrypt.DefaultCost)
 	if err != nil {
 		return err
 	}
-	tag, err := s.db.Pool.Exec(ctx, `UPDATE users SET password_hash=$1, update_at=$2 WHERE id=$3 AND delete_at=0`, string(newHash), time.Now().UnixMilli(), userID)
+	tx, err := s.db.Pool.Begin(ctx)
 	if err != nil {
 		return err
 	}
-	if tag.RowsAffected() == 0 {
+	defer tx.Rollback(ctx)
+	changed, err := replacePasswordAndRevokeSessions(ctx, tx, userID, string(newHash), time.Now().UnixMilli())
+	if err != nil {
+		return err
+	}
+	if !changed {
 		return ErrInvalidCredentials
 	}
-	return nil
+	return tx.Commit(ctx)
 }
 
 // SetRoles overwrites a user's role string. Mirrors Mattermost's
@@ -799,6 +955,64 @@ func (s *Service) HasAnySystemAdmin(ctx context.Context) (bool, error) {
 	return exists, err
 }
 
+// PromoteToUser swaps system_guest for system_user on the role string.
+// Mirrors Mattermost's `POST /users/{id}/promote`. We don't actually treat
+// system_guest specially anywhere in the codebase, so this is a contract-
+// shape implementation: it round-trips correctly so an official admin tool
+// that flips users back-and-forth gets the same string it sent. Idempotent
+// — promoting an already-promoted user is a no-op.
+func (s *Service) PromoteToUser(ctx context.Context, userID string) error {
+	var roles string
+	if err := s.db.Pool.QueryRow(ctx, `SELECT roles FROM users WHERE id=$1 AND delete_at=0`, userID).Scan(&roles); err != nil {
+		return err
+	}
+	parts := splitRoles(roles)
+	out := make([]string, 0, len(parts)+1)
+	hasUser := false
+	for _, p := range parts {
+		if p == "system_guest" {
+			continue
+		}
+		if p == "system_user" {
+			hasUser = true
+		}
+		out = append(out, p)
+	}
+	if !hasUser {
+		out = append([]string{"system_user"}, out...)
+	}
+	_, err := s.db.Pool.Exec(ctx, `UPDATE users SET roles=$1, update_at=$2 WHERE id=$3`,
+		stringsJoinSpace(out), time.Now().UnixMilli(), userID)
+	return err
+}
+
+// DemoteToGuest swaps system_user for system_guest on the role string.
+// Mirrors Mattermost's `POST /users/{id}/demote`. Idempotent.
+func (s *Service) DemoteToGuest(ctx context.Context, userID string) error {
+	var roles string
+	if err := s.db.Pool.QueryRow(ctx, `SELECT roles FROM users WHERE id=$1 AND delete_at=0`, userID).Scan(&roles); err != nil {
+		return err
+	}
+	parts := splitRoles(roles)
+	out := make([]string, 0, len(parts)+1)
+	hasGuest := false
+	for _, p := range parts {
+		if p == "system_user" {
+			continue
+		}
+		if p == "system_guest" {
+			hasGuest = true
+		}
+		out = append(out, p)
+	}
+	if !hasGuest {
+		out = append([]string{"system_guest"}, out...)
+	}
+	_, err := s.db.Pool.Exec(ctx, `UPDATE users SET roles=$1, update_at=$2 WHERE id=$3`,
+		stringsJoinSpace(out), time.Now().UnixMilli(), userID)
+	return err
+}
+
 // PromoteSystemAdmin adds system_admin to a user's role set. Idempotent —
 // if the role is already present the stored string is left unchanged.
 func (s *Service) PromoteSystemAdmin(ctx context.Context, userID string) error {
@@ -818,6 +1032,84 @@ func (s *Service) PromoteSystemAdmin(ctx context.Context, userID string) error {
 	}
 	_, err := s.db.Pool.Exec(ctx, `UPDATE users SET roles=$1, update_at=$2 WHERE id=$3`, roles, time.Now().UnixMilli(), userID)
 	return err
+}
+
+// ConvertToBot flips an existing human user into a bot account: blanks
+// password_hash so the regular Login path rejects them, sets is_bot=true,
+// and revokes every active session so any in-flight JWTs from before the
+// conversion stop working. Returns ErrNotFound for unknown / already-bot
+// rows. Caller is expected to follow up with bots.Service.CreateToken so
+// the new bot has a way to authenticate.
+func (s *Service) ConvertToBot(ctx context.Context, userID, ownerID, description string) error {
+	now := time.Now().UnixMilli()
+	tx, err := s.db.Pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	tag, err := tx.Exec(ctx, `
+		UPDATE users
+		   SET is_bot          = TRUE,
+		       password_hash   = '',
+		       bot_owner_id    = NULLIF($2,''),
+		       bot_description = $3,
+		       update_at       = $4
+		 WHERE id = $1
+		   AND delete_at = 0
+		   AND COALESCE(is_bot, FALSE) = FALSE
+	`, userID, ownerID, description, now)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	if _, err := tx.Exec(ctx, `DELETE FROM sessions WHERE user_id = $1`, userID); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
+// ConvertBotToUser is the inverse of ConvertToBot. Takes a plaintext
+// password (we bcrypt it inline; bcrypt is already imported here for
+// Login/Register), wipes is_bot/bot_owner_id/bot_description, and revokes
+// every outstanding PAT in the same transaction so a leftover token can't
+// be used to act as the now-human account.
+func (s *Service) ConvertBotToUser(ctx context.Context, userID, password string) error {
+	if err := ValidatePassword(password); err != nil {
+		return err
+	}
+	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	if err != nil {
+		return err
+	}
+	now := time.Now().UnixMilli()
+	tx, err := s.db.Pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	tag, err := tx.Exec(ctx, `
+		UPDATE users
+		   SET is_bot          = FALSE,
+		       password_hash   = $2,
+		       bot_owner_id    = NULL,
+		       bot_description = '',
+		       update_at       = $3
+		 WHERE id = $1
+		   AND COALESCE(is_bot, FALSE) = TRUE
+		   AND delete_at = 0
+	`, userID, string(hash), now)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	if _, err := tx.Exec(ctx, `UPDATE personal_access_tokens SET revoked_at = $2 WHERE user_id = $1 AND revoked_at = 0`, userID, now); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
 }
 
 // UserIDsByUsernames resolves a set of usernames to their user IDs. Unknown

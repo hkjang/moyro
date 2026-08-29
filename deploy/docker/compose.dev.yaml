@@ -1,37 +1,37 @@
-name: moddle
+name: moyro
 
 services:
   postgres:
     image: postgres:15-alpine
-    container_name: moddle-postgres
+    container_name: moyro-postgres
     environment:
-      POSTGRES_USER: moddle
-      POSTGRES_PASSWORD: moddle
-      POSTGRES_DB: moddle
+      POSTGRES_USER: moyro
+      POSTGRES_PASSWORD: moyro
+      POSTGRES_DB: moyro
     ports:
       - "5433:5432"
     volumes:
-      - moddle-pg:/var/lib/postgresql/data
+      - moyro-pg:/var/lib/postgresql/data
 
   redis:
     image: redis:7-alpine
-    container_name: moddle-redis
+    container_name: moyro-redis
     ports:
       - "6380:6379"
 
   minio:
     image: minio/minio:latest
-    container_name: moddle-minio
+    container_name: moyro-minio
     command: server /data --console-address ":9001"
     environment:
-      MINIO_ROOT_USER: moddle
-      MINIO_ROOT_PASSWORD: moddlepass
+      MINIO_ROOT_USER: moyro
+      MINIO_ROOT_PASSWORD: moyropass
     ports:
       - "9100:9000"
       - "9101:9001"
     volumes:
-      - moddle-minio:/data
+      - moyro-minio:/data
 
 volumes:
-  moddle-pg:
-  moddle-minio:
+  moyro-pg:
+  moyro-minio:

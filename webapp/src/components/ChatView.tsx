@@ -1,16 +1,20 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useDispatch, useSelector } from "react-redux";
+import { useLocation, useNavigate, useParams } from "react-router-dom";
 import type { RootState } from "@/store";
 import { clearAuth, setAuth } from "@/store/authSlice";
 import {
   api,
   compatApi,
+  customProfileApi,
   notifyApi,
   prefsApi,
   sidebarApi,
   type Channel,
   type ChannelNotifyProps,
   type ChannelStats,
+  type CustomProfileField,
+  type CustomProfileValues,
   type FileInfo,
   type OrderedSidebarCategories,
   type Post,
@@ -24,13 +28,16 @@ import {
   type UserNotifyProps,
   type UserStatusValue,
 } from "@/api/client";
-import { IntegrationsPanel } from "@/components/IntegrationsPanel";
 import { EmojiPicker, customEmojiByName } from "@/components/EmojiPicker";
+import { AuthenticatedImage, downloadAuthenticatedMedia, isExternalImageURL } from "@/components/AuthenticatedMedia";
 import { Lightbox } from "@/components/Lightbox";
 import { MessageBody } from "@/components/MessageBody";
 import { useMentionAutocomplete } from "@/components/MentionPicker";
+import { BrandMark } from "@/components/brand/BrandMark";
 import { useEscClose, useConfirm } from "@/components/shared";
 import { useWebsocket } from "@/hooks/useWebsocket";
+import { displayVersion, useSystemInfo } from "@/features/system/SystemInfoContext";
+import { useAdminAccess } from "@/features/admin/AdminAccessContext";
 
 type UnreadEntry = { msg: number; mention: number };
 
@@ -47,15 +54,25 @@ export function ChatView() {
   const user = useSelector((s: RootState) => s.auth.user);
   const token = useSelector((s: RootState) => s.auth.token);
   const dispatch = useDispatch();
+  const navigate = useNavigate();
+  const location = useLocation();
+  const { teamId: routeTeamId, channelId: routeChannelId, view: routeView } = useParams<{
+    teamId?: string;
+    channelId?: string;
+    view?: string;
+  }>();
+  const systemInfo = useSystemInfo();
+  const adminAccess = useAdminAccess();
+  const applyingRouteRef = useRef(true);
   // Phase 20 — shared confirm dialog in place of native window.confirm.
   // render() is spilled into the chat-shell div at the bottom so its
   // z-index stacks above every other modal.
   const confirmer = useConfirm();
 
   const [teams, setTeams] = useState<Team[]>([]);
-  const [currentTeamId, setCurrentTeamId] = useState<string | null>(null);
+  const [currentTeamId, setCurrentTeamId] = useState<string | null>(routeTeamId ?? null);
   const [channels, setChannels] = useState<Channel[]>([]);
-  const [currentChannelId, setCurrentChannelId] = useState<string | null>(null);
+  const [currentChannelId, setCurrentChannelId] = useState<string | null>(routeChannelId ?? null);
   const [posts, setPosts] = useState<Post[]>([]);
   const [loadingPosts, setLoadingPosts] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -77,7 +94,6 @@ export function ChatView() {
   const [searchTerm, setSearchTerm] = useState("");
   const [searchResults, setSearchResults] = useState<Post[] | null>(null);
   const [showStartDM, setShowStartDM] = useState(false);
-  const [showIntegrations, setShowIntegrations] = useState(false);
 
   // Phase 16 — session-management modal. We lazy-fetch the list when the
   // modal opens; the list is short-lived and stale data (e.g. a session
@@ -113,7 +129,7 @@ export function ChatView() {
   const [savedIds, setSavedIds] = useState<Set<string>>(new Set());
   // When true the main pane renders the 저장됨 pseudo-channel view
   // (separate list of bookmarked posts across all channels).
-  const [savedView, setSavedView] = useState(false);
+  const [savedView, setSavedView] = useState(routeView === "saved");
   const [savedPosts, setSavedPosts] = useState<Post[]>([]);
   const [savedLoading, setSavedLoading] = useState(false);
 
@@ -126,7 +142,7 @@ export function ChatView() {
   // delete/send WS events. `scheduledView` flips the main pane into the
   // list layout; `scheduleModalFor` remembers which channel the compose-
   // then-schedule action came from so the modal persists the target.
-  const [scheduledView, setScheduledView] = useState(false);
+  const [scheduledView, setScheduledView] = useState(routeView === "scheduled");
   const [scheduledList, setScheduledList] = useState<import("@/api/client").ScheduledPost[]>([]);
   const [scheduledLoading, setScheduledLoading] = useState(false);
   const [scheduleModalFor, setScheduleModalFor] = useState<
@@ -166,6 +182,56 @@ export function ChatView() {
   };
   const [reminderToasts, setReminderToasts] = useState<ReminderToast[]>([]);
 
+  const selectTeam = useCallback((teamId: string) => {
+    setCurrentTeamId(teamId);
+    setCurrentChannelId(null);
+    setSavedView(false);
+    setScheduledView(false);
+    navigate(`/workspace/${encodeURIComponent(teamId)}`);
+  }, [navigate]);
+
+  const selectChannel = useCallback((channelId: string) => {
+    if (!currentTeamId) return;
+    setSavedView(false);
+    setScheduledView(false);
+    setCurrentChannelId(channelId);
+    navigate(`/workspace/${encodeURIComponent(currentTeamId)}/channel/${encodeURIComponent(channelId)}`);
+  }, [currentTeamId, navigate]);
+
+  // The URL is the durable navigation state. Browser back/forward and a full
+  // refresh restore the selected team, channel, or pseudo-channel view.
+  useEffect(() => {
+    if (routeTeamId && routeView && routeView !== "saved" && routeView !== "scheduled") {
+      navigate(`/workspace/${encodeURIComponent(routeTeamId)}`, { replace: true });
+      return;
+    }
+    applyingRouteRef.current = true;
+    if (routeTeamId) setCurrentTeamId(routeTeamId);
+    if (routeChannelId) setCurrentChannelId(routeChannelId);
+    else if (routeTeamId && routeView !== "saved" && routeView !== "scheduled") setCurrentChannelId(null);
+    setSavedView(routeView === "saved");
+    setScheduledView(routeView === "scheduled");
+  }, [routeTeamId, routeChannelId, routeView, navigate]);
+
+  // Internal events can also change the active entity. Canonicalize those
+  // changes back into a route without adding noisy history entries.
+  useEffect(() => {
+    if (applyingRouteRef.current) {
+      applyingRouteRef.current = false;
+      return;
+    }
+    if (!currentTeamId) return;
+    const teamPath = `/workspace/${encodeURIComponent(currentTeamId)}`;
+    const target = savedView
+      ? `${teamPath}/saved`
+      : scheduledView
+        ? `${teamPath}/scheduled`
+        : currentChannelId
+          ? `${teamPath}/channel/${encodeURIComponent(currentChannelId)}`
+          : teamPath;
+    if (location.pathname !== target) navigate(target, { replace: true });
+  }, [currentTeamId, currentChannelId, savedView, scheduledView, location.pathname, navigate]);
+
   // Phase 21 — Mattermost-shaped preferences. Theme value is one of
   // "light" | "dark" | "system"; default is "system" (follows the OS prefers-
   // color-scheme media query). Stored in preferences.category=display_settings,
@@ -175,7 +241,9 @@ export function ChatView() {
     // Hydrate from localStorage so first paint matches the user's last
     // saved theme — the prefs API call later in the mount cycle reconciles
     // if the server has a different value.
-    const cached = (typeof window !== "undefined" && window.localStorage.getItem("moddle:theme")) || "";
+    const cached = typeof window !== "undefined"
+      ? window.localStorage.getItem("moyro:theme") || ""
+      : "";
     return cached === "light" || cached === "dark" || cached === "system" ? cached : "system";
   });
   // Apply the theme to <html data-theme=…> so CSS variables can branch.
@@ -201,7 +269,7 @@ export function ChatView() {
   // Cache the choice locally so the next first-paint is correct without
   // waiting on the network. Server is still source-of-truth.
   useEffect(() => {
-    try { window.localStorage.setItem("moddle:theme", theme); } catch { /* ignore */ }
+    try { window.localStorage.setItem("moyro:theme", theme); } catch { /* ignore */ }
   }, [theme]);
   // Pull the canonical theme from preferences once at login.
   useEffect(() => {
@@ -275,6 +343,16 @@ export function ChatView() {
   // the sidebar just shows a skeleton row to avoid a sort flicker.
   const [sidebarCats, setSidebarCats] = useState<OrderedSidebarCategories | null>(null);
   const [showNotifyPrefs, setShowNotifyPrefs] = useState(false);
+  // Phase 33 — custom profile attributes drawer. Admin-defined fields with
+  // per-user values. Lazily opened from the sidebar footer.
+  const [showProfileFields, setShowProfileFields] = useState(false);
+  // Phase 34 — Mattermost-v11-style user menu. Avatar trigger lives in the
+  // chat-header right; clicking opens a dropdown with all account/profile
+  // controls (avatar upload, theme, notify, profile fields, sessions, email
+  // digest, status, logout). The hamburger to the left of the brand is a
+  // direct opener for the admin "운영 관리" panel — only rendered for
+  // admins, single click skips a dropdown that would only have one item.
+  const [showUserMenu, setShowUserMenu] = useState(false);
 
   // Reload categories whenever the team changes. Server auto-bootstraps the
   // three defaults on first call, so a freshly-joined team renders correctly
@@ -337,14 +415,10 @@ export function ChatView() {
   const [searchTotal, setSearchTotal] = useState<number>(0);
   const [searchPage, setSearchPage] = useState<number>(0);
 
-  // Admin gate — roles is a space-separated list from the server. We only
-  // render the integrations entry-point for system_admin; the server also
-  // enforces this on every route, so a forged check here only grants a UI
-  // button with no teeth.
-  const isAdmin = useMemo(
-    () => (user?.roles ?? "").split(/\s+/).includes("system_admin"),
-    [user],
-  );
+  // The server returns effective RBAC permissions for the current session.
+  // This keeps delegated administrators discoverable in the normal UI while
+  // route and API authorization remain the enforcement boundary.
+  const isAdmin = adminAccess.loaded && adminAccess.hasAdminAccess;
 
   // Thread sidebar: rootId is the live open thread, threadPosts is the
   // ordered list (oldest-first, root included) and threadLoading mirrors
@@ -366,7 +440,9 @@ export function ChatView() {
     api.listTeams(token)
       .then((t) => {
         setTeams(t ?? []);
-        setCurrentTeamId((prev) => prev ?? (t?.[0]?.id ?? null));
+        setCurrentTeamId((prev) => prev && (t ?? []).some((team) => team.id === prev)
+          ? prev
+          : (t?.[0]?.id ?? null));
       })
       .catch((e) => setError(e.message));
   }, [token]);
@@ -615,6 +691,8 @@ export function ChatView() {
             });
             n.onclick = () => {
               window.focus();
+              setSavedView(false);
+              setScheduledView(false);
               setCurrentChannelId(p.channel_id);
               n.close();
             };
@@ -858,7 +936,7 @@ export function ChatView() {
     try {
       const t = await api.createTeam(token, slug(display), display);
       setTeams((prev) => [...prev, t]);
-      setCurrentTeamId(t.id);
+      selectTeam(t.id);
     } catch (e) {
       setError(e instanceof Error ? e.message : "팀 생성 실패");
     }
@@ -871,7 +949,7 @@ export function ChatView() {
     try {
       const c = await api.createChannel(token, currentTeamId, slug(display), display);
       setChannels((prev) => [...prev, c]);
-      setCurrentChannelId(c.id);
+      selectChannel(c.id);
     } catch (e) {
       setError(e instanceof Error ? e.message : "채널 생성 실패");
     }
@@ -1235,10 +1313,8 @@ export function ChatView() {
 
   function onJumpFromReminder(channelId: string) {
     if (!channelId) return;
-    setSavedView(false);
-    setScheduledView(false);
     setSearchResults(null);
-    setCurrentChannelId(channelId);
+    selectChannel(channelId);
   }
 
   async function onToggleReaction(post: Post, emoji: string) {
@@ -1288,7 +1364,7 @@ export function ChatView() {
     try {
       const c = await api.createDirectChannel(token, [user.id, otherId]);
       setChannels((prev) => prev.some((x) => x.id === c.id) ? prev : [...prev, c]);
-      setCurrentChannelId(c.id);
+      selectChannel(c.id);
       setShowStartDM(false);
     } catch (e) {
       setError(e instanceof Error ? e.message : "DM 생성 실패");
@@ -1453,9 +1529,28 @@ export function ChatView() {
   return (
     <div className="chat-shell">
       <aside className="chat-side">
-        <div className="login-brand" style={{ marginBottom: 16 }}>
-          <div className="login-logo" aria-hidden>M</div>
-          <strong>Moddle</strong>
+        {/* Phase 34.5 — sidebar header. Mattermost-v11 keeps team identity
+            tight in the top-left. For admins the hamburger to the left of
+            the brand opens the operations panel directly (single click —
+            no intermediate dropdown for a single destination); for regular
+            users the brand sits flush left without a placeholder spacer
+            that would otherwise look like a missing affordance. */}
+        <div className={`side-brand ${isAdmin ? "" : "side-brand-no-burger"}`}>
+          {isAdmin && (
+            <button
+              type="button"
+              className="side-hamburger"
+              aria-label="운영 관리 열기"
+              title="운영 관리 · 시스템 · 플러그인 · 역할 · 작업"
+              onClick={() => navigate("/admin/overview")}
+            >
+              <span /><span /><span />
+            </button>
+          )}
+          <div className="side-brand-name">
+            <BrandMark className="side-brand-logo" size={30} />
+            <strong>moyro</strong>
+          </div>
         </div>
 
         <SectionTitle>팀</SectionTitle>
@@ -1464,7 +1559,7 @@ export function ChatView() {
             <button
               key={t.id}
               className={`item ${t.id === currentTeamId ? "item-active" : ""}`}
-              onClick={() => setCurrentTeamId(t.id)}
+              onClick={() => selectTeam(t.id)}
             >
               <span className="item-badge" style={{ background: color(t.id) }}>
                 {t.display_name[0]?.toUpperCase() ?? "?"}
@@ -1523,9 +1618,9 @@ export function ChatView() {
                         <button
                           key={c.id}
                           className={`item ${!savedView && !scheduledView && c.id === currentChannelId ? "item-active" : ""}`}
-                          onClick={() => { setSavedView(false); setScheduledView(false); setCurrentChannelId(c.id); }}
+                          onClick={() => selectChannel(c.id)}
                         >
-                          <Avatar id={otherId} name={u?.username ?? otherId.slice(0, 8)} status={statuses[otherId]} size={22} picture={u?.picture} updateAt={u?.update_at} />
+                          <Avatar token={token} id={otherId} name={u?.username ?? otherId.slice(0, 8)} status={statuses[otherId]} size={22} picture={u?.picture} updateAt={u?.update_at} />
                           <span style={{ marginLeft: 2, flex: 1, textAlign: "left" }}>{u?.username ?? otherId.slice(0, 8)}</span>
                           <span
                             role="button"
@@ -1548,7 +1643,7 @@ export function ChatView() {
                         channel={c}
                         active={!savedView && !scheduledView && c.id === currentChannelId}
                         unread={unread[c.id] ?? { msg: 0, mention: 0 }}
-                        onClick={() => { setSavedView(false); setScheduledView(false); setCurrentChannelId(c.id); }}
+                        onClick={() => selectChannel(c.id)}
                         isFavorite
                         onToggleFavorite={onToggleFavorite}
                       />
@@ -1565,7 +1660,7 @@ export function ChatView() {
                   channel={c}
                   active={!savedView && !scheduledView && c.id === currentChannelId}
                   unread={unread[c.id] ?? { msg: 0, mention: 0 }}
-                  onClick={() => { setSavedView(false); setScheduledView(false); setCurrentChannelId(c.id); }}
+                  onClick={() => selectChannel(c.id)}
                   isFavorite={false}
                   onToggleFavorite={onToggleFavorite}
                 />
@@ -1612,7 +1707,7 @@ export function ChatView() {
                 </div>
               ))}
               {showArchived && archivedChannels.length === 0 && (
-                <div className="item item-muted" style={{ fontSize: 12 }}>
+                <div className="item item-muted" style={{ fontSize: 13 }}>
                   보관된 채널이 없습니다.
                 </div>
               )}
@@ -1628,9 +1723,9 @@ export function ChatView() {
                   <button
                     key={c.id}
                     className={`item ${!savedView && !scheduledView && c.id === currentChannelId ? "item-active" : ""}`}
-                    onClick={() => { setSavedView(false); setScheduledView(false); setCurrentChannelId(c.id); }}
+                    onClick={() => selectChannel(c.id)}
                   >
-                    <Avatar id={otherId} name={u?.username ?? otherId.slice(0, 8)} status={statuses[otherId]} size={22} picture={u?.picture} updateAt={u?.update_at} />
+                    <Avatar token={token} id={otherId} name={u?.username ?? otherId.slice(0, 8)} status={statuses[otherId]} size={22} picture={u?.picture} updateAt={u?.update_at} />
                     <span style={{ marginLeft: 2, flex: 1, textAlign: "left" }}>{u?.username ?? otherId.slice(0, 8)}</span>
                     <span
                       role="button"
@@ -1652,155 +1747,6 @@ export function ChatView() {
           </>
         )}
 
-        <div style={{ marginTop: "auto", paddingTop: 16 }}>
-          <div style={{ color: "var(--muted)", fontSize: 12 }}>접속 중</div>
-          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
-            <Avatar id={user?.id ?? ""} name={user?.username ?? ""} status={myStatus} size={24} picture={user?.picture} updateAt={user?.update_at} />
-            <div style={{ fontWeight: 600 }}>{user?.username}</div>
-          </div>
-          <select
-            className="status-select"
-            value={myStatus}
-            onChange={(e) => onChangeMyStatus(e.target.value as UserStatusValue)}
-          >
-            <option value="online">🟢 온라인</option>
-            <option value="away">🌙 자리비움</option>
-            <option value="dnd">⛔ 방해금지</option>
-            <option value="offline">⚫ 오프라인</option>
-          </select>
-          {isAdmin && (
-            <button
-              type="button"
-              className="btn-ghost"
-              style={{ marginTop: 8 }}
-              onClick={() => setShowIntegrations(true)}
-              title="시스템 · 플러그인 · 역할 · 작업 관리"
-            >
-              🔧 운영 관리
-            </button>
-          )}
-          {/* Hidden file input driven by the "프로필 사진 변경" button below.
-              We reset .value after each run so re-selecting the same file
-              still fires onChange. */}
-          <input
-            ref={avatarFileRef}
-            type="file"
-            accept="image/*"
-            style={{ display: "none" }}
-            onChange={async (e) => {
-              const file = e.target.files?.[0];
-              if (!file || !token) { e.target.value = ""; return; }
-              setUploadingAvatar(true);
-              try {
-                const updated = await api.uploadProfileImage(token, file);
-                dispatch(setAuth({ token, user: updated }));
-              } catch (err) {
-                setError((err as Error).message || "프로필 사진 업로드 실패");
-              } finally {
-                setUploadingAvatar(false);
-                e.target.value = "";
-              }
-            }}
-          />
-          <button
-            type="button"
-            className="btn-ghost"
-            style={{ marginTop: 8 }}
-            onClick={() => avatarFileRef.current?.click()}
-            disabled={uploadingAvatar}
-            title="JPG/PNG, 최대 512KB"
-          >
-            {uploadingAvatar ? "업로드 중…" : "🖼️ 프로필 사진 변경"}
-          </button>
-          {/* Phase 17 — email digest opt-in. Optimistic toggle: flip locally,
-              roll back on server error. Checkbox is disabled until the initial
-              GET resolves so the user doesn't see an unchecked state flicker. */}
-          <label
-            className="email-prefs-toggle"
-            style={{ marginTop: 8, display: "flex", alignItems: "center", gap: 6, fontSize: 13 }}
-            title="하루에 한 번, 놓친 멘션을 이메일로 보내드립니다"
-          >
-            <input
-              type="checkbox"
-              checked={digestEnabled === true}
-              disabled={digestEnabled === null || !token}
-              onChange={async (e) => {
-                if (!token) return;
-                const next = e.target.checked;
-                const prev = digestEnabled;
-                setDigestEnabled(next);
-                try {
-                  await api.updateEmailPrefs(token, { digest_enabled: next });
-                } catch (err) {
-                  setDigestEnabled(prev);
-                  setError((err as Error).message || "이메일 설정 저장 실패");
-                }
-              }}
-            />
-            이메일 알림 수신
-          </label>
-          {/* Phase 21 — theme picker. Stored in Mattermost-shaped
-              preferences (display_settings/theme) so any future official
-              client lands on the same value. */}
-          <label
-            className="theme-picker"
-            style={{ marginTop: 8, display: "flex", alignItems: "center", gap: 6, fontSize: 13 }}
-            title="테마는 모든 기기에서 동기화됩니다"
-          >
-            <span>🎨 테마</span>
-            <select
-              value={theme}
-              onChange={(e) => setTheme(e.target.value as "light" | "dark" | "system")}
-              style={{ flex: 1, height: 28, borderRadius: 6 }}
-            >
-              <option value="system">시스템 설정 따르기</option>
-              <option value="light">밝게</option>
-              <option value="dark">어둡게</option>
-            </select>
-          </label>
-          <button
-            type="button"
-            className="btn-ghost"
-            style={{ marginTop: 8 }}
-            onClick={() => setShowQuickSwitcher(true)}
-            title="채널 / 사용자 빠른 이동 (Ctrl+K)"
-          >
-            🔎 빠른 이동 (Ctrl+K)
-          </button>
-          {/* Phase 22 — user-level notify_props. Per-channel notify_props
-              already lives in the channel-settings gear; this button surfaces
-              the top-level fallback (email digests, desktop default,
-              first-name highlighting). */}
-          <button
-            type="button"
-            className="btn-ghost"
-            style={{ marginTop: 8 }}
-            onClick={() => setShowNotifyPrefs(true)}
-            title="이메일 / 데스크톱 / 멘션 기본 설정"
-          >
-            🔔 알림 설정
-          </button>
-          <button
-            type="button"
-            className="btn-ghost"
-            style={{ marginTop: 8 }}
-            onClick={openSessionModal}
-            title="이 계정의 로그인 세션 목록"
-          >
-            🔐 세션 관리
-          </button>
-          <button
-            type="button"
-            className="btn-ghost"
-            style={{ marginTop: 8 }}
-            onClick={async () => {
-              if (token) { try { await api.logout(token); } catch { /* best-effort */ } }
-              dispatch(clearAuth());
-            }}
-          >
-            로그아웃
-          </button>
-        </div>
       </aside>
 
       <main className="chat-main">
@@ -1828,7 +1774,7 @@ export function ChatView() {
             onOpenThread={openThread}
             isSaved={(postId) => savedIds.has(postId)}
             onToggleSaved={onToggleSaved}
-            onJumpToChannel={(chId) => { setSavedView(false); setCurrentChannelId(chId); }}
+            onJumpToChannel={selectChannel}
           />
         ) : scheduledView ? (
           <ScheduledPostsView
@@ -1838,7 +1784,7 @@ export function ChatView() {
             onClose={closeScheduledView}
             onReload={loadScheduledList}
             onCancel={onCancelScheduled}
-            onJumpToChannel={(chId) => { setScheduledView(false); setCurrentChannelId(chId); }}
+            onJumpToChannel={selectChannel}
           />
         ) : currentChannel ? (
           <>
@@ -1849,6 +1795,7 @@ export function ChatView() {
                   {currentChannel.type === "D" ? (
                     <>
                       <Avatar
+                        token={token}
                         id={dmCounterpart(currentChannel.name, user?.id ?? "")}
                         name=""
                         status={statuses[dmCounterpart(currentChannel.name, user?.id ?? "")]}
@@ -1892,28 +1839,54 @@ export function ChatView() {
                   )}
                 </h2>
               </div>
-              <form
-                className="search-form"
-                onSubmit={(e) => { e.preventDefault(); onSearch(0); }}
-              >
-                <input
-                  className="search-input"
-                  placeholder="메시지 검색  (예: 배포 from:alice in:general has:link)"
-                  value={searchTerm}
-                  onChange={(e) => setSearchTerm(e.target.value)}
-                  title="from:username, in:channel, before:YYYY-MM-DD, after:YYYY-MM-DD, has:file, has:link"
-                />
-                {searchResults && (
-                  <button
-                    type="button"
-                    className="btn-ghost"
-                    style={{ width: "auto", padding: "0 10px", height: 32, marginLeft: 6 }}
-                    onClick={() => { setSearchResults(null); setSearchTerm(""); setSearchFilters({}); setSearchTotal(0); setSearchPage(0); }}
-                  >
-                    닫기
-                  </button>
-                )}
-              </form>
+              <div className="chat-header-right">
+                <form
+                  className="search-form"
+                  onSubmit={(e) => { e.preventDefault(); onSearch(0); }}
+                >
+                  <span className="search-icon" aria-hidden>🔍</span>
+                  <input
+                    className="search-input"
+                    placeholder="메시지 검색"
+                    value={searchTerm}
+                    onChange={(e) => setSearchTerm(e.target.value)}
+                    title="from:username, in:channel, before:YYYY-MM-DD, after:YYYY-MM-DD, has:file, has:link"
+                  />
+                  {searchResults && (
+                    <button
+                      type="button"
+                      className="search-clear"
+                      title="검색 닫기"
+                      onClick={() => { setSearchResults(null); setSearchTerm(""); setSearchFilters({}); setSearchTotal(0); setSearchPage(0); }}
+                    >×</button>
+                  )}
+                </form>
+                {/* Phase 34.5 — visual separator + user-menu trigger. The
+                    1px hairline between the search and the trigger keeps
+                    the two clusters from feeling like one cramped blob;
+                    matches Mattermost-v11 header rhythm. */}
+                <span className="chat-header-divider" aria-hidden />
+                <button
+                  type="button"
+                  className="user-menu-trigger"
+                  aria-label="계정 메뉴 열기"
+                  aria-expanded={showUserMenu}
+                  aria-haspopup="menu"
+                  onClick={() => setShowUserMenu((v) => !v)}
+                  title="계정 · 프로필 · 환경설정"
+                >
+                  <Avatar
+                    token={token}
+                    id={user?.id ?? ""}
+                    name={user?.username ?? ""}
+                    status={myStatus}
+                    size={28}
+                    picture={user?.picture}
+                    updateAt={user?.update_at}
+                  />
+                  <span className="user-menu-caret" aria-hidden>▾</span>
+                </button>
+              </div>
             </header>
 
             {searchResults ? (
@@ -1965,7 +1938,7 @@ export function ChatView() {
                     channelLabel={
                       channels.find((c) => c.id === p.channel_id)?.display_name
                     }
-                    onJumpToChannel={() => setCurrentChannelId(p.channel_id)}
+                    onJumpToChannel={() => selectChannel(p.channel_id)}
                   />
                 ))}
                 {searchTotal > searchResults.length + searchPage * 20 && (
@@ -2078,14 +2051,6 @@ export function ChatView() {
         />
       )}
 
-      {showIntegrations && isAdmin && (
-        <IntegrationsPanel
-          channels={channels}
-          currentTeamId={currentTeamId}
-          onClose={() => setShowIntegrations(false)}
-        />
-      )}
-
       {showSessions && (
         <SessionManagerModal
           sessions={sessions}
@@ -2109,7 +2074,7 @@ export function ChatView() {
             // roles correct. If the fetch fails the user will still see
             // the channel after their next reconnect-driven refresh.
             loadChannels();
-            setCurrentChannelId(chId);
+            selectChannel(chId);
             setShowDiscover(false);
           }}
         />
@@ -2183,9 +2148,7 @@ export function ChatView() {
           meId={user?.id ?? ""}
           onClose={() => setShowQuickSwitcher(false)}
           onPickChannel={(chId) => {
-            setCurrentChannelId(chId);
-            setSavedView(false);
-            setScheduledView(false);
+            selectChannel(chId);
             setShowQuickSwitcher(false);
           }}
           onPickUser={async (peer) => {
@@ -2195,9 +2158,7 @@ export function ChatView() {
               const ch = await api.createDirectChannel(token, [peer.id]);
               setUsers((prev) => ({ ...prev, [peer.id]: peer }));
               await loadChannels();
-              setCurrentChannelId(ch.id);
-              setSavedView(false);
-              setScheduledView(false);
+              selectChannel(ch.id);
             } catch (err) {
               setError((err as Error).message || "DM 열기 실패");
             }
@@ -2209,6 +2170,91 @@ export function ChatView() {
           /users/me/notify_props. */}
       {showNotifyPrefs && token && (
         <NotifyPrefsModal token={token} onClose={() => setShowNotifyPrefs(false)} />
+      )}
+
+      {/* Phase 33 — custom profile attributes drawer. Renders the admin's
+          field defs as a form, persists per-field values via PATCH
+          /users/me/custom_profile_attributes. Admins additionally see a
+          "필드 관리" toggle to define/rename/remove fields globally. */}
+      {showProfileFields && token && (
+        <CustomProfileFieldsModal
+          token={token}
+          isAdmin={false}
+          onClose={() => setShowProfileFields(false)}
+        />
+      )}
+
+      {/* Phase 34.5 — avatar file input for the user-menu's "프로필 사진
+          변경" entry. Parked at chat-shell root (no longer in the sidebar)
+          so it survives sidebar layout changes and the user-menu open/close
+          cycle. We reset .value after each run so re-selecting the same
+          file still fires onChange. */}
+      <input
+        ref={avatarFileRef}
+        type="file"
+        accept="image/*"
+        style={{ display: "none" }}
+        onChange={async (e) => {
+          const file = e.target.files?.[0];
+          if (!file || !token) { e.target.value = ""; return; }
+          setUploadingAvatar(true);
+          try {
+            const updated = await api.uploadProfileImage(token, file);
+            dispatch(setAuth({ token, user: updated }));
+          } catch (err) {
+            setError((err as Error).message || "프로필 사진 업로드 실패");
+          } finally {
+            setUploadingAvatar(false);
+            e.target.value = "";
+          }
+        }}
+      />
+
+      {/* Phase 34 — user-menu dropdown. Mounted at the chat-shell root
+          so the absolute-positioned dropdown isn't clipped by the
+          chat-header's overflow. Click-outside to close is handled by a
+          full-viewport invisible backdrop directly behind the menu. */}
+      {showUserMenu && (
+        <UserMenuOverlay
+          username={user?.username ?? ""}
+          email={user?.email ?? ""}
+          status={myStatus}
+          onChangeStatus={onChangeMyStatus}
+          theme={theme}
+          onChangeTheme={setTheme}
+          digestEnabled={digestEnabled}
+          onToggleDigest={async (next) => {
+            if (!token) return;
+            const prev = digestEnabled;
+            setDigestEnabled(next);
+            try {
+              await api.updateEmailPrefs(token, { digest_enabled: next });
+            } catch (err) {
+              setDigestEnabled(prev);
+              setError((err as Error).message || "이메일 설정 저장 실패");
+            }
+          }}
+          uploadingAvatar={uploadingAvatar}
+          onUploadAvatar={() => avatarFileRef.current?.click()}
+          onOpenProfileFields={() => { setShowUserMenu(false); setShowProfileFields(true); }}
+          onOpenNotifyPrefs={() => { setShowUserMenu(false); setShowNotifyPrefs(true); }}
+          onOpenSessions={() => { setShowUserMenu(false); openSessionModal(); }}
+          onOpenQuickSwitcher={() => { setShowUserMenu(false); setShowQuickSwitcher(true); }}
+          onOpenPersonalSettings={() => { setShowUserMenu(false); navigate("/settings/profile"); }}
+          onOpenMyApprovals={() => { setShowUserMenu(false); navigate("/settings/approvals/mine"); }}
+          onOpenApprovalReviews={() => { setShowUserMenu(false); navigate("/settings/approvals/review"); }}
+          onOpenAdmin={() => { setShowUserMenu(false); navigate("/admin/overview"); }}
+          isAdmin={isAdmin}
+          approvalEnabled={systemInfo.approval_enabled === true}
+          version={displayVersion(systemInfo.version)}
+          buildHash={systemInfo.build_hash}
+          onLogout={async () => {
+            setShowUserMenu(false);
+            if (token) { try { await api.logout(token); } catch { /* best-effort */ } }
+            dispatch(clearAuth());
+          }}
+          onClose={() => setShowUserMenu(false)}
+        />
       )}
 
       {/* Phase 20 — shared confirm dialog. Rendered last so its backdrop
@@ -2268,8 +2314,9 @@ function ChannelRow({
 // failure (404 from empty, CORS from a stale external URL) we fall back
 // to the initial-tile render via an onError handler.
 function Avatar({
-  id, name, status, size = 28, picture, updateAt,
+  token, id, name, status, size = 28, picture, updateAt,
 }: {
+  token: string | null;
   id: string;
   name: string;
   status?: UserStatusValue;
@@ -2280,7 +2327,9 @@ function Avatar({
   const bg = color(id || name || "?");
   const initial = (name || id || "?")[0]?.toUpperCase() ?? "?";
   const [imgFailed, setImgFailed] = useState(false);
-  const showImg = !!picture && !imgFailed && !!id;
+  const externalPicture = isExternalImageURL(picture);
+  const showImg = !!picture && !imgFailed && !!id && (externalPicture || !!token);
+  useEffect(() => setImgFailed(false), [picture, updateAt, token]);
   return (
     <span
       className="avatar"
@@ -2292,11 +2341,22 @@ function Avatar({
       }}
     >
       {showImg ? (
-        <img
-          src={api.userImageURL(id, updateAt ?? picture)}
-          alt=""
-          onError={() => setImgFailed(true)}
-        />
+        externalPicture ? (
+          <img
+            src={picture}
+            alt=""
+            referrerPolicy="no-referrer"
+            onError={() => setImgFailed(true)}
+          />
+        ) : (
+          <AuthenticatedImage
+            token={token ?? ""}
+            path={api.userImagePath(id, updateAt ?? picture)}
+            alt=""
+            onFetchError={() => setImgFailed(true)}
+            onError={() => setImgFailed(true)}
+          />
+        )
       ) : (
         initial
       )}
@@ -2360,7 +2420,7 @@ function MessageRow(props: MessageRowProps) {
   // while the editor is closed so we don't accidentally rehydrate on
   // mount before the user clicks ✎.
   const editDraftKey = editing && currentUserId
-    ? `moddle:draft:edit:${currentUserId}:${post.id}`
+    ? `moyro:draft:edit:${currentUserId}:${post.id}`
     : null;
   const editDraft = useDraft(editDraftKey, draft, setDraft);
 
@@ -2375,7 +2435,7 @@ function MessageRow(props: MessageRowProps) {
   return (
     <div className={`msg ${isMe ? "msg-me" : ""} ${compact ? "msg-compact" : ""}`}>
       <div className="msg-meta">
-        <Avatar id={post.user_id} name={author?.username ?? ""} status={status} size={20} picture={author?.picture} updateAt={author?.update_at} />
+        <Avatar token={token} id={post.user_id} name={author?.username ?? ""} status={status} size={20} picture={author?.picture} updateAt={author?.update_at} />
         <span className="msg-author">{author?.username ?? (isMe ? "나" : post.user_id.slice(0, 8))}</span>
         <time className="msg-time">{formatTime(post.create_at)}</time>
         {edited && <span className="msg-edited">(편집됨)</span>}
@@ -2475,9 +2535,10 @@ function MessageRow(props: MessageRowProps) {
                 title={rs.map((r) => r.user_id).join(", ")}
               >
                 {custom ? (
-                  <img
+                  <AuthenticatedImage
+                    token={token}
+                    path={api.emojiImagePath(custom.id)}
                     className="emoji-img"
-                    src={api.emojiImageURL(token, custom.id)}
                     alt={emoji}
                   />
                 ) : (
@@ -2551,16 +2612,18 @@ function MessageRow(props: MessageRowProps) {
 
 function FileChip({ file, token }: { file: FileInfo; token: string }) {
   const [lightbox, setLightbox] = useState(false);
-  const href = api.fileDownloadURL(token, file.id);
+  const [downloading, setDownloading] = useState(false);
+  const [downloadFailed, setDownloadFailed] = useState(false);
+  const filePath = api.fileDownloadPath(file.id);
   const isImage = file.mime_type?.startsWith("image/");
   if (isImage) {
     // Prefer the server-generated thumbnail when one exists. When the
     // upload is still being processed (has_thumbnail=false), fall back to
     // the full-size image — correct, just slower. Both cases open the
     // full-res lightbox on click.
-    const thumbURL = file.has_thumbnail
-      ? api.fileThumbnailURL(token, file.id)
-      : href;
+    const thumbnailPath = file.has_thumbnail
+      ? api.fileThumbnailPath(file.id)
+      : filePath;
     return (
       <>
         <button
@@ -2569,20 +2632,42 @@ function FileChip({ file, token }: { file: FileInfo; token: string }) {
           onClick={() => setLightbox(true)}
           aria-label={`이미지 확대: ${file.name}`}
         >
-          <img src={thumbURL} alt={file.name} loading="lazy" />
+          <AuthenticatedImage token={token} path={thumbnailPath} alt={file.name} loading="lazy" />
         </button>
         {lightbox && (
-          <Lightbox src={href} alt={file.name} onClose={() => setLightbox(false)} />
+          <Lightbox token={token} path={filePath} alt={file.name} onClose={() => setLightbox(false)} />
         )}
       </>
     );
   }
+
+  async function onDownload() {
+    if (downloading) return;
+    setDownloading(true);
+    setDownloadFailed(false);
+    try {
+      await downloadAuthenticatedMedia(token, filePath, file.name);
+    } catch {
+      setDownloadFailed(true);
+    } finally {
+      setDownloading(false);
+    }
+  }
+
   return (
-    <a className="file-chip" href={href} target="_blank" rel="noreferrer" download={file.name}>
+    <button
+      type="button"
+      className="file-chip"
+      onClick={onDownload}
+      disabled={downloading}
+      title={downloadFailed ? "파일을 다운로드하지 못했습니다." : undefined}
+    >
       <span className="file-icon">📎</span>
       <span className="file-name">{file.name}</span>
-      <span className="file-size">{humanSize(file.size)}</span>
-    </a>
+      <span className="file-size">
+        {downloading ? "받는 중…" : downloadFailed ? "실패 — 다시 시도" : humanSize(file.size)}
+      </span>
+    </button>
   );
 }
 
@@ -2631,7 +2716,7 @@ function Composer({ token, channelID, onSend, onTyping, onUpload, onSchedule, us
   // concurrent drafts in different channels or threads don't clobber each
   // other. Null key disables the hook entirely (no per-channel context).
   const draftKey = userId && channelID
-    ? `moddle:draft:${userId}:${channelID}:${rootId || "root"}`
+    ? `moyro:draft:${userId}:${channelID}:${rootId || "root"}`
     : null;
   const draft = useDraft(draftKey, value, setValue);
 
@@ -2690,7 +2775,7 @@ function Composer({ token, channelID, onSend, onTyping, onUpload, onSchedule, us
       className="composer"
       onSubmit={(e) => { e.preventDefault(); submit(); }}
     >
-      <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 6 }}>
+      <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", gap: 6 }}>
         {pending.length > 0 && (
           <div className="msg-files" style={{ marginBottom: 0 }}>
             {pending.map((f) => (
@@ -2706,7 +2791,7 @@ function Composer({ token, channelID, onSend, onTyping, onUpload, onSchedule, us
             ))}
           </div>
         )}
-        <div style={{ display: "flex", gap: 8 }}>
+        <div style={{ display: "flex", minWidth: 0, gap: 8 }}>
           <button
             type="button"
             className="btn-ghost"
@@ -2730,7 +2815,7 @@ function Composer({ token, channelID, onSend, onTyping, onUpload, onSchedule, us
             style={{ display: "none" }}
             onChange={(e) => onFilesSelected(e.target.files)}
           />
-          <div className="mention-picker-host" style={{ flex: 1, display: "flex" }}>
+          <div className="mention-picker-host" style={{ flex: 1, minWidth: 0, display: "flex" }}>
             <textarea
               ref={textareaRef}
               className="composer-input"
@@ -2754,7 +2839,7 @@ function Composer({ token, channelID, onSend, onTyping, onUpload, onSchedule, us
             />
             {mentions.render()}
           </div>
-          <button type="submit" className="btn-primary" style={{ width: 88, height: 40 }}>
+          <button type="submit" className="btn-primary" style={{ width: 88, height: 40, flex: "0 0 auto" }}>
             전송
           </button>
         </div>
@@ -3149,9 +3234,9 @@ function StartDirectModal({
             <div className="chat-empty" style={{ padding: 16 }}>결과 없음</div>
           ) : results.map((u) => (
             <button key={u.id} className="item" onClick={() => onPick(u.id)}>
-              <Avatar id={u.id} name={u.username} size={22} picture={u.picture} updateAt={u.update_at} />
+              <Avatar token={token} id={u.id} name={u.username} size={22} picture={u.picture} updateAt={u.update_at} />
               <span style={{ marginLeft: 2 }}>{u.username}</span>
-              <span style={{ color: "var(--muted)", fontSize: 12, marginLeft: "auto" }}>{u.email}</span>
+              <span style={{ color: "var(--muted)", fontSize: 13, marginLeft: "auto" }}>{u.email}</span>
             </button>
           ))}
         </div>
@@ -3687,7 +3772,7 @@ function SessionManagerModal({
           <h3 style={{ margin: 0 }}>세션 관리</h3>
           <button type="button" className="action-btn" onClick={onClose} title="닫기">✕</button>
         </header>
-        <div style={{ padding: "4px 0 10px", color: "var(--muted)", fontSize: 12 }}>
+        <div style={{ padding: "4px 0 10px", color: "var(--muted)", fontSize: 13 }}>
           이 계정으로 로그인한 모든 기기의 세션입니다. 의심스러운 세션이 있다면 즉시 종료하세요.
         </div>
         {loading ? (
@@ -3702,7 +3787,7 @@ function SessionManagerModal({
                   <div style={{ fontWeight: 600 }}>
                     {s.is_current ? "이 기기" : (s.device_id || "알 수 없는 기기")}
                   </div>
-                  <div style={{ color: "var(--muted)", fontSize: 12 }}>
+                  <div style={{ color: "var(--muted)", fontSize: 13 }}>
                     생성 {new Date(s.create_at).toLocaleString()}
                     {" · 만료 "}
                     {new Date(s.expires_at).toLocaleString()}
@@ -4022,6 +4107,506 @@ function NotifyPrefsModal({ token, onClose }: { token: string; onClose: () => vo
           >
             {saving ? "저장 중…" : "저장"}
           </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Phase 33 — Custom profile attributes drawer. Renders the admin-curated
+// field defs and the caller's per-field values. Two views side-by-side:
+//
+//   Left:  the user's own value form (always visible).
+//   Right: the admin field-management form (only visible to system_admins).
+//
+// Field defs are global so a non-admin user only sees the value form. The
+// modal lazy-loads on open and refetches both fields and values together
+// so a freshly-added admin field shows up immediately for users who happen
+// to have the modal open.
+function CustomProfileFieldsModal({
+  token,
+  isAdmin,
+  onClose,
+}: {
+  token: string;
+  isAdmin: boolean;
+  onClose: () => void;
+}) {
+  const [fields, setFields] = useState<CustomProfileField[]>([]);
+  const [values, setValues] = useState<CustomProfileValues>({});
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  // Admin-mode toggle: when true, render the field-defs editor instead of
+  // (or rather, alongside) the value form. Hidden entirely for non-admins.
+  const [adminMode, setAdminMode] = useState(false);
+  // New-field form. Stored separately so the user can type a name + pick a
+  // type before the row is committed.
+  const [newName, setNewName] = useState("");
+  const [newType, setNewType] = useState<string>("text");
+  useEscClose(true, onClose);
+
+  const reload = useCallback(async () => {
+    setLoading(true);
+    try {
+      const [fs, vs] = await Promise.all([
+        customProfileApi.listFields(token),
+        customProfileApi.getUserValues(token),
+      ]);
+      setFields(Array.isArray(fs) ? fs : []);
+      setValues(vs ?? {});
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setLoading(false);
+    }
+  }, [token]);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const [fs, vs] = await Promise.all([
+          customProfileApi.listFields(token),
+          customProfileApi.getUserValues(token),
+        ]);
+        if (cancelled) return;
+        setFields(Array.isArray(fs) ? fs : []);
+        setValues(vs ?? {});
+      } catch (e) {
+        if (!cancelled) setError((e as Error).message);
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [token]);
+
+  const updateValue = (fieldId: string, raw: unknown) =>
+    setValues((prev) => ({ ...prev, [fieldId]: raw }));
+
+  const save = async () => {
+    setSaving(true);
+    setError(null);
+    try {
+      // Only PATCH the keys that map to current field defs — drops orphan
+      // entries from a since-deleted field so the next reload starts clean.
+      const filtered: CustomProfileValues = {};
+      for (const f of fields) {
+        if (Object.prototype.hasOwnProperty.call(values, f.id)) {
+          filtered[f.id] = values[f.id];
+        }
+      }
+      const next = await customProfileApi.patchMyValues(token, filtered);
+      setValues(next ?? filtered);
+      onClose();
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const createField = async () => {
+    const name = newName.trim();
+    if (!name) return;
+    setSaving(true);
+    try {
+      await customProfileApi.createField(token, { name, type: newType });
+      setNewName("");
+      setNewType("text");
+      await reload();
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const deleteField = async (id: string) => {
+    setSaving(true);
+    try {
+      await customProfileApi.deleteField(token, id);
+      await reload();
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="modal-backdrop" onClick={onClose}>
+      <div className="modal" onClick={(e) => e.stopPropagation()} role="dialog" aria-modal style={{ maxWidth: 560 }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
+          <h3 style={{ margin: 0 }}>프로필 항목</h3>
+          {isAdmin && (
+            <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13 }}>
+              <input
+                type="checkbox"
+                checked={adminMode}
+                onChange={(e) => setAdminMode(e.target.checked)}
+              />
+              필드 관리 (관리자)
+            </label>
+          )}
+        </div>
+        {loading ? (
+          <div style={{ color: "var(--muted)" }}>불러오는 중…</div>
+        ) : adminMode ? (
+          <div style={{ display: "grid", gap: 10 }}>
+            {fields.length === 0 ? (
+              <div style={{ color: "var(--muted)", fontSize: 13 }}>
+                정의된 항목이 없습니다. 아래에서 새 항목을 추가하세요.
+              </div>
+            ) : (
+              fields.map((f) => (
+                <div key={f.id} style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <strong style={{ flex: 1 }}>{f.name}</strong>
+                  <span style={{ color: "var(--muted)", fontSize: 13 }}>{f.type}</span>
+                  <button
+                    type="button"
+                    className="btn-ghost"
+                    style={{ fontSize: 13 }}
+                    onClick={() => void deleteField(f.id)}
+                    disabled={saving}
+                  >
+                    삭제
+                  </button>
+                </div>
+              ))
+            )}
+            <div style={{ marginTop: 12, paddingTop: 12, borderTop: "1px solid var(--border)" }}>
+              <div style={{ fontSize: 13, color: "var(--muted)", marginBottom: 6 }}>새 항목 추가</div>
+              <div style={{ display: "flex", gap: 6 }}>
+                <input
+                  type="text"
+                  value={newName}
+                  onChange={(e) => setNewName(e.target.value)}
+                  placeholder="이름 (예: 부서)"
+                  style={{ flex: 1 }}
+                />
+                <select
+                  value={newType}
+                  onChange={(e) => setNewType(e.target.value)}
+                  style={{ width: 110 }}
+                >
+                  <option value="text">텍스트</option>
+                  <option value="url">URL</option>
+                  <option value="phone">전화</option>
+                  <option value="select">선택</option>
+                  <option value="date">날짜</option>
+                </select>
+                <button
+                  type="button"
+                  className="btn-primary"
+                  onClick={() => void createField()}
+                  disabled={saving || newName.trim() === ""}
+                >
+                  추가
+                </button>
+              </div>
+            </div>
+          </div>
+        ) : fields.length === 0 ? (
+          <div style={{ color: "var(--muted)", fontSize: 13 }}>
+            관리자가 정의한 프로필 항목이 없습니다.
+          </div>
+        ) : (
+          <div style={{ display: "grid", gap: 12 }}>
+            {fields.map((f) => {
+              const cur = values[f.id];
+              const asString = typeof cur === "string" ? cur : cur == null ? "" : String(cur);
+              const inputType =
+                f.type === "url" ? "url" :
+                f.type === "phone" ? "tel" :
+                f.type === "date" ? "date" :
+                "text";
+              return (
+                <label key={f.id} className="notify-row">
+                  <span>{f.name}</span>
+                  <input
+                    type={inputType}
+                    value={asString}
+                    onChange={(e) => updateValue(f.id, e.target.value)}
+                    style={{ flex: 1 }}
+                  />
+                </label>
+              );
+            })}
+          </div>
+        )}
+        {error && (
+          <div style={{ color: "var(--danger)", marginTop: 12, fontSize: 13 }}>{error}</div>
+        )}
+        <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 16 }}>
+          <button type="button" className="btn-ghost" onClick={onClose}>닫기</button>
+          {!adminMode && (
+            <button
+              type="button"
+              className="btn-primary"
+              onClick={() => void save()}
+              disabled={loading || saving || fields.length === 0}
+            >
+              {saving ? "저장 중…" : "저장"}
+            </button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Phase 34 — Mattermost-v11-style user menu rendered as an overlay so it
+// floats above the chat-header. The trigger lives in the chat-header right;
+// this component handles the dropdown panel + click-outside backdrop +
+// Esc-to-close. Every interactive entry is a real button so keyboard
+// navigation (Tab + Enter) works out of the box.
+function UserMenuOverlay(props: {
+  username: string;
+  email: string;
+  status: UserStatusValue;
+  onChangeStatus: (next: UserStatusValue) => void;
+  theme: "light" | "dark" | "system";
+  onChangeTheme: (next: "light" | "dark" | "system") => void;
+  digestEnabled: boolean | null;
+  onToggleDigest: (next: boolean) => void;
+  uploadingAvatar: boolean;
+  onUploadAvatar: () => void;
+  onOpenProfileFields: () => void;
+  onOpenNotifyPrefs: () => void;
+  onOpenSessions: () => void;
+  onOpenQuickSwitcher: () => void;
+  onOpenPersonalSettings: () => void;
+  onOpenMyApprovals: () => void;
+  onOpenApprovalReviews: () => void;
+  onOpenAdmin: () => void;
+  isAdmin: boolean;
+  approvalEnabled: boolean;
+  version: string;
+  buildHash?: string;
+  onLogout: () => void;
+  onClose: () => void;
+}) {
+  useEscClose(true, props.onClose);
+  const statusLabel: Record<UserStatusValue, string> = {
+    online: "온라인",
+    away: "자리비움",
+    dnd: "방해금지",
+    offline: "오프라인",
+  };
+  return (
+    <div className="user-menu-layer" role="presentation">
+      {/* Invisible backdrop catches clicks outside the panel and closes
+          the menu. Pointer-events on the panel itself stay enabled so
+          clicks inside don't propagate to the backdrop. */}
+      <button
+        type="button"
+        className="user-menu-backdrop"
+        aria-label="메뉴 닫기"
+        onClick={props.onClose}
+      />
+      <div className="user-menu" role="menu" aria-label="계정 메뉴">
+        <div className="user-menu-head">
+          <div className="user-menu-name">{props.username || "사용자"}</div>
+          {props.email && <div className="user-menu-email">{props.email}</div>}
+          <div className="user-menu-current-status" aria-live="polite">
+            <span className={`status-dot status-${props.status}`} aria-hidden />
+            <span>{statusLabel[props.status]}</span>
+          </div>
+        </div>
+
+        <div className="user-menu-section">
+          <div className="user-menu-section-label">상태 변경</div>
+          <div className="user-menu-status-row">
+            {(["online", "away", "dnd", "offline"] as UserStatusValue[]).map((s) => (
+              <button
+                key={s}
+                type="button"
+                className={`user-menu-status-pill ${props.status === s ? "is-active" : ""} status-${s}`}
+                onClick={() => props.onChangeStatus(s)}
+                role="menuitemradio"
+                aria-checked={props.status === s}
+              >
+                <span className={`status-dot status-${s}`} aria-hidden />
+                <span>{statusLabel[s]}</span>
+                {props.status === s && <span className="user-menu-check" aria-hidden>✓</span>}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div className="user-menu-divider" />
+
+        <button
+          type="button"
+          className="user-menu-item"
+          role="menuitem"
+          onClick={props.onOpenPersonalSettings}
+        >
+          <span className="user-menu-icon">⚙️</span>
+          <span className="user-menu-label">
+            내 설정
+            <small>프로필 · 개인 키 · AI 설정</small>
+          </span>
+        </button>
+        {props.approvalEnabled && (
+          <>
+            <button
+              type="button"
+              className="user-menu-item"
+              role="menuitem"
+              onClick={props.onOpenMyApprovals}
+            >
+              <span className="user-menu-icon">📋</span>
+              <span className="user-menu-label">
+                내 승인 요청
+                <small>검토 상태와 실행 결과</small>
+              </span>
+            </button>
+            <button
+              type="button"
+              className="user-menu-item"
+              role="menuitem"
+              onClick={props.onOpenApprovalReviews}
+            >
+              <span className="user-menu-icon">✅</span>
+              <span className="user-menu-label">
+                검토 대기
+                <small>승인 · 반려 결정</small>
+              </span>
+            </button>
+          </>
+        )}
+        {props.isAdmin && (
+          <button
+            type="button"
+            className="user-menu-item"
+            role="menuitem"
+            onClick={props.onOpenAdmin}
+          >
+            <span className="user-menu-icon">🛡️</span>
+            <span className="user-menu-label">
+              서비스 관리
+              <small>SSO · AI · 키 정책 · 승인</small>
+            </span>
+          </button>
+        )}
+
+        <div className="user-menu-divider" />
+
+        <button
+          type="button"
+          className="user-menu-item"
+          role="menuitem"
+          onClick={props.onUploadAvatar}
+          disabled={props.uploadingAvatar}
+        >
+          <span className="user-menu-icon">🖼️</span>
+          <span className="user-menu-label">
+            {props.uploadingAvatar ? "업로드 중…" : "프로필 사진 변경"}
+            <small>JPG/PNG · 최대 512KB</small>
+          </span>
+        </button>
+        <button
+          type="button"
+          className="user-menu-item"
+          role="menuitem"
+          onClick={props.onOpenProfileFields}
+        >
+          <span className="user-menu-icon">🪪</span>
+          <span className="user-menu-label">
+            프로필 항목
+            <small>부서 · 전화번호 등 사용자 정의 필드</small>
+          </span>
+        </button>
+
+        <div className="user-menu-divider" />
+
+        <button
+          type="button"
+          className="user-menu-item"
+          role="menuitem"
+          onClick={props.onOpenNotifyPrefs}
+        >
+          <span className="user-menu-icon">🔔</span>
+          <span className="user-menu-label">
+            알림 설정
+            <small>데스크톱 · 멘션 · 이메일</small>
+          </span>
+        </button>
+        <label className="user-menu-row" role="menuitemcheckbox" aria-checked={props.digestEnabled === true}>
+          <span className="user-menu-icon">📧</span>
+          <span className="user-menu-label">
+            이메일 알림 수신
+            <small>하루 한 번 놓친 멘션 요약</small>
+          </span>
+          <input
+            type="checkbox"
+            checked={props.digestEnabled === true}
+            disabled={props.digestEnabled === null}
+            onChange={(e) => props.onToggleDigest(e.target.checked)}
+          />
+        </label>
+
+        <div className="user-menu-divider" />
+
+        <div className="user-menu-row" role="menuitem">
+          <span className="user-menu-icon">🎨</span>
+          <span className="user-menu-label">테마</span>
+          <select
+            className="user-menu-select"
+            value={props.theme}
+            onChange={(e) => props.onChangeTheme(e.target.value as "light" | "dark" | "system")}
+            aria-label="테마 변경"
+          >
+            <option value="system">시스템</option>
+            <option value="light">밝게</option>
+            <option value="dark">어둡게</option>
+          </select>
+        </div>
+
+        <div className="user-menu-divider" />
+
+        <button
+          type="button"
+          className="user-menu-item"
+          role="menuitem"
+          onClick={props.onOpenQuickSwitcher}
+        >
+          <span className="user-menu-icon">🔎</span>
+          <span className="user-menu-label">
+            빠른 이동
+            <small>채널 · 사용자 전환 (Ctrl+K)</small>
+          </span>
+        </button>
+        <button
+          type="button"
+          className="user-menu-item"
+          role="menuitem"
+          onClick={props.onOpenSessions}
+        >
+          <span className="user-menu-icon">🔐</span>
+          <span className="user-menu-label">
+            세션 관리
+            <small>로그인된 기기 보기 · 종료</small>
+          </span>
+        </button>
+
+        <div className="user-menu-divider" />
+
+        <button
+          type="button"
+          className="user-menu-item user-menu-item-danger"
+          role="menuitem"
+          onClick={props.onLogout}
+        >
+          <span className="user-menu-icon">↩</span>
+          <span className="user-menu-label">로그아웃</span>
+        </button>
+        <div className="user-menu-version" aria-label={`서비스 버전 ${props.version}`}>
+          <span className="user-menu-version-brand"><BrandMark size={20} />moyro {props.version}</span>
+          {props.buildHash && <span>build {props.buildHash.slice(0, 8)}</span>}
         </div>
       </div>
     </div>

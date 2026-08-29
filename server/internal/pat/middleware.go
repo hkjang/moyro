@@ -14,7 +14,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/moddle/moddle/server/internal/bots"
+	"github.com/hkjang/moyro/server/internal/bots"
 )
 
 // ctx key type is unexported to prevent collisions; we re-use httpapi's
@@ -55,9 +55,6 @@ func extract(r *http.Request) string {
 	h := r.Header.Get("Authorization")
 	if strings.HasPrefix(h, "Bearer ") {
 		return strings.TrimPrefix(h, "Bearer ")
-	}
-	if t := r.URL.Query().Get("access_token"); t != "" {
-		return t
 	}
 	return ""
 }

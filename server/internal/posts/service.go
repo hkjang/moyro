@@ -3,26 +3,28 @@ package posts
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/moddle/moddle/server/internal/store"
+	"github.com/hkjang/moyro/server/internal/store"
+	"github.com/jackc/pgx/v5"
 )
 
 type Post struct {
-	ID           string         `json:"id"`
-	ChannelID    string         `json:"channel_id"`
-	UserID       string         `json:"user_id"`
-	RootID       string         `json:"root_id"`
-	Message      string         `json:"message"`
-	Props        map[string]any `json:"props"`
-	FileIDs      []string       `json:"file_ids"`
-	IsPinned     bool           `json:"is_pinned"`
-	CreateAt     int64          `json:"create_at"`
-	UpdateAt     int64          `json:"update_at"`
-	DeleteAt     int64          `json:"delete_at"`
+	ID        string         `json:"id"`
+	ChannelID string         `json:"channel_id"`
+	UserID    string         `json:"user_id"`
+	RootID    string         `json:"root_id"`
+	Message   string         `json:"message"`
+	Props     map[string]any `json:"props"`
+	FileIDs   []string       `json:"file_ids"`
+	IsPinned  bool           `json:"is_pinned"`
+	CreateAt  int64          `json:"create_at"`
+	UpdateAt  int64          `json:"update_at"`
+	DeleteAt  int64          `json:"delete_at"`
 	// Phase 18: server-generated OpenGraph unfurl cards. Empty by default;
 	// populated asynchronously after creation and re-broadcast via post_edited.
 	LinkMetadata []LinkPreview `json:"link_metadata"`
@@ -51,12 +53,12 @@ type PostList struct {
 // message body (same regex the link-extractor uses) so it's consistent with
 // the preview pipeline.
 type SearchFilters struct {
-	FromUserID   string
-	InChannelID  string
-	After        int64 // ms epoch, inclusive
-	Before       int64 // ms epoch, exclusive (so callers can pass the *next* day's midnight)
-	HasFile      bool
-	HasLink      bool
+	FromUserID  string
+	InChannelID string
+	After       int64 // ms epoch, inclusive
+	Before      int64 // ms epoch, exclusive (so callers can pass the *next* day's midnight)
+	HasFile     bool
+	HasLink     bool
 }
 
 // SearchResult is the ranked-search envelope. TotalHits is the unpaginated
@@ -71,6 +73,8 @@ type SearchResult struct {
 type Service struct{ db *store.DB }
 
 func New(db *store.DB) *Service { return &Service{db: db} }
+
+var ErrInvalidRoot = errors.New("post root must be a live root post in the same channel")
 
 // allPostColumns lists every column we hydrate into a Post — kept in one
 // place so adding a column only touches this constant and scanRow.
@@ -129,14 +133,53 @@ func (s *Service) Create(ctx context.Context, channelID, userID, rootID, message
 		UpdateAt:     now,
 		LinkMetadata: []LinkPreview{},
 	}
-	_, err := s.db.Pool.Exec(ctx, `
+	tx, err := s.db.Pool.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback(ctx)
+
+	// Validate replies at the persistence boundary so every caller (REST,
+	// scheduled posts, MCP, and integrations) gets the same channel-isolation
+	// guarantee. FOR SHARE keeps the validated root stable until the insert
+	// commits and prevents a concurrent thread move from crossing channels.
+	if rootID != "" {
+		var one int
+		err = tx.QueryRow(ctx, `
+			SELECT 1 FROM posts
+			WHERE id=$1 AND channel_id=$2 AND delete_at=0
+			  AND COALESCE(root_id, '')=''
+			FOR SHARE
+		`, rootID, channelID).Scan(&one)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, ErrInvalidRoot
+		}
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	_, err = tx.Exec(ctx, `
 		INSERT INTO posts (id, channel_id, user_id, root_id, message, props, file_ids, is_pinned, create_at, update_at)
 		VALUES ($1,$2,$3,$4,$5,$6,$7,FALSE,$8,$8)
 	`, p.ID, p.ChannelID, p.UserID, p.RootID, p.Message, rawProps, rawFileIDs, now)
 	if err != nil {
 		return nil, err
 	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, err
+	}
 	return p, nil
+}
+
+// GetByApprovalRequest returns the unique post produced by one approved
+// workflow request. A partial unique index on props->>'approval_request_id'
+// turns retries across network failures into a read of the original result.
+func (s *Service) GetByApprovalRequest(ctx context.Context, requestID string) (*Post, error) {
+	return scanPost(s.db.Pool.QueryRow(ctx, `
+		SELECT `+allPostColumns+` FROM posts
+		WHERE props->>'approval_request_id'=$1 AND delete_at=0
+	`, requestID))
 }
 
 // UpdateFileIDs overwrites a post's file_ids after files are associated.
@@ -306,13 +349,16 @@ func (s *Service) ListForChannelPaged(ctx context.Context, channelID string, opt
 	}
 }
 
-func (s *Service) Delete(ctx context.Context, postID, userID string) error {
+func (s *Service) Delete(ctx context.Context, postID, userID string) (bool, error) {
 	now := time.Now().UnixMilli()
-	_, err := s.db.Pool.Exec(ctx, `
+	tag, err := s.db.Pool.Exec(ctx, `
 		UPDATE posts SET delete_at=$1, update_at=$1
 		WHERE id=$2 AND user_id=$3 AND delete_at=0
 	`, now, postID, userID)
-	return err
+	if err != nil {
+		return false, err
+	}
+	return tag.RowsAffected() > 0, nil
 }
 
 // Search runs a ranked full-text search across posts in channels the caller
@@ -514,11 +560,98 @@ func (s *Service) Update(ctx context.Context, postID, userID, message string, pr
 // ListByIDs hydrates an ordered list of posts from an ID slice. Used by
 // savedposts so the bookmark list can render full post bodies. Returned
 // in the same order as `ids`; missing ids are dropped silently.
+// Restore zeroes delete_at on a soft-deleted post. Mirrors Delete but
+// without the user_id ownership filter — restores are admin-mediated.
+// Returns (true, nil) when a row was updated; (false, nil) for a no-op
+// (post already active or unknown). Reply posts can be restored without
+// restoring the root — Mattermost behaves the same way.
+func (s *Service) Restore(ctx context.Context, postID string) (bool, error) {
+	now := time.Now().UnixMilli()
+	tag, err := s.db.Pool.Exec(ctx, `
+		UPDATE posts SET delete_at = 0, update_at = $2
+		WHERE id = $1 AND delete_at != 0
+	`, postID, now)
+	if err != nil {
+		return false, err
+	}
+	return tag.RowsAffected() > 0, nil
+}
+
+// MoveThread relocates a root post (and all its replies) to a different
+// channel in a single transaction. The post's create_at is preserved so
+// the existing reply order stays intact at the destination. Caller is
+// responsible for the membership/permission gate. Returns the count of
+// rows touched (root + replies). Returns 0 with no error if no rows
+// matched (post deleted or already in destination — both are no-ops).
+func (s *Service) MoveThread(ctx context.Context, postID, destChannelID string) (int64, error) {
+	now := time.Now().UnixMilli()
+	tx, err := s.db.Pool.Begin(ctx)
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback(ctx)
+	// Move the root + every direct reply (root_id = postID) in one UPDATE
+	// using a CTE so we don't hit the table twice. Reply rows have
+	// root_id = postID; the root has root_id = '' (or NULL — handled by COALESCE).
+	tag, err := tx.Exec(ctx, `
+		UPDATE posts
+		   SET channel_id = $2,
+		       update_at  = $3
+		 WHERE (id = $1 OR root_id = $1)
+		   AND channel_id <> $2
+		   AND delete_at = 0
+	`, postID, destChannelID, now)
+	if err != nil {
+		return 0, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return 0, err
+	}
+	return tag.RowsAffected(), nil
+}
+
 func (s *Service) ListByIDs(ctx context.Context, ids []string) ([]*Post, error) {
 	if len(ids) == 0 {
 		return []*Post{}, nil
 	}
 	rows, err := s.db.Pool.Query(ctx, `SELECT `+allPostColumns+` FROM posts WHERE id = ANY($1) AND delete_at=0`, ids)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	byID := map[string]*Post{}
+	for rows.Next() {
+		p, err := scanPost(rows)
+		if err != nil {
+			return nil, err
+		}
+		byID[p.ID] = p
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	out := make([]*Post, 0, len(ids))
+	for _, id := range ids {
+		if p, ok := byID[id]; ok {
+			out = append(out, p)
+		}
+	}
+	return out, nil
+}
+
+// ListByIDsForUser is the membership-safe variant used for saved/flagged
+// posts. A bookmark must never keep exposing a private-channel message after
+// its owner leaves that channel.
+func (s *Service) ListByIDsForUser(ctx context.Context, userID string, ids []string) ([]*Post, error) {
+	if len(ids) == 0 {
+		return []*Post{}, nil
+	}
+	rows, err := s.db.Pool.Query(ctx, `
+		SELECT `+prefixedCols("p.")+`
+		FROM posts p
+		JOIN channel_members cm ON cm.channel_id=p.channel_id AND cm.user_id=$2
+		WHERE p.id = ANY($1) AND p.delete_at=0
+	`, ids, userID)
 	if err != nil {
 		return nil, err
 	}

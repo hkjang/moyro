@@ -4,11 +4,18 @@ webapp/node_modules/
 # Build outputs
 webapp/dist/
 webapp/tsconfig.tsbuildinfo
+webapp/test-results/
+webapp/playwright-report/
 bin/*.exe
+*.tar
+*.tar.gz
+plugins/**/server/*
+!plugins/**/server/.gitkeep
 
 # Local runtime data and caches
 .cache/
 data/files/
+tmp/
 .claude/settings.local.json
 
 # Local secrets

@@ -21,7 +21,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/moddle/moddle/server/internal/posts"
+	"github.com/hkjang/moyro/server/internal/posts"
 	"golang.org/x/net/html"
 )
 
@@ -31,11 +31,11 @@ import (
 const MaxURLsPerPost = 3
 
 const (
-	fetchTimeout   = 5 * time.Second
-	maxBodyBytes   = 512 * 1024
-	cacheTTL       = 24 * time.Hour
-	cacheMaxSize   = 1000
-	userAgent      = "moddle-link-preview/1.0"
+	fetchTimeout = 5 * time.Second
+	maxBodyBytes = 512 * 1024
+	cacheTTL     = 24 * time.Hour
+	cacheMaxSize = 1000
+	userAgent    = "moyro-link-preview/1.0"
 )
 
 // urlRegex is deliberately permissive on the right side; we run the matched

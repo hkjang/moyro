@@ -7,6 +7,7 @@
 // than fitting everything on one screen.
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useSelector } from "react-redux";
+import { useSearchParams } from "react-router-dom";
 import type { RootState } from "@/store";
 import {
   adminApi,
@@ -31,6 +32,7 @@ import {
   type Team,
   type User,
 } from "@/api/client";
+import { AuthenticatedImage } from "@/components/AuthenticatedMedia";
 import { invalidateEmojiCache } from "@/components/EmojiPicker";
 import { useEscClose, useConfirm } from "@/components/shared";
 
@@ -167,7 +169,18 @@ export function IntegrationsPanel({
   const confirmer = useConfirm();
   const token = useSelector((s: RootState) => s.auth.token);
   const currentUser = useSelector((s: RootState) => s.auth.user);
-  const [tab, setTab] = useState<Tab>("org");
+  const [searchParams, setSearchParams] = useSearchParams();
+  const queryTab = searchParams.get("tab");
+  const tab: Tab = queryTab && Object.prototype.hasOwnProperty.call(TAB_LABELS, queryTab)
+    ? queryTab as Tab
+    : "org";
+  const selectTab = useCallback((nextTab: Tab) => {
+    setSearchParams((current) => {
+      const next = new URLSearchParams(current);
+      next.set("tab", nextTab);
+      return next;
+    });
+  }, [setSearchParams]);
   const [error, setError] = useState<string | null>(null);
   const [adminSearch, setAdminSearch] = useState("");
   const [collapsedSections, setCollapsedSections] = useState<Record<string, boolean>>({});
@@ -261,7 +274,8 @@ export function IntegrationsPanel({
     () => (currentUser?.roles ?? "").split(/\s+/).includes("system_admin"),
     [currentUser],
   );
-  const organizationName = String(adminConfig?.TeamSettings?.SiteName ?? "RelayChat");
+  const organizationName = String(adminConfig?.TeamSettings?.SiteName ?? "moyro");
+  const pluginRuntimeManagementEnabled = adminConfig?.PluginSettings?.EnableUploads === true;
   const workspaceScope = currentTeamId ? currentTeamId.slice(0, 8) : "all workspaces";
   const query = adminSearch.trim().toLowerCase();
   const filteredUsers = useMemo(
@@ -883,7 +897,7 @@ export function IntegrationsPanel({
           </div>
         </div>
         <div className="admin-console-shell">
-          <nav className="admin-console-tree" aria-label="System Console">
+          <nav className="admin-console-tree moyro-scrollbar admin-user-menu-scroll" aria-label="System Console">
             {ADMIN_NAV.map((section) => {
               const collapsed = collapsedSections[section.section] === true;
               return (
@@ -913,7 +927,7 @@ export function IntegrationsPanel({
                         aria-current={tab === item.tab ? "page" : undefined}
                         aria-disabled={disabled}
                         disabled={disabled}
-                        onClick={() => setTab(item.tab)}
+                        onClick={() => selectTab(item.tab)}
                         title={disabled ? "권한이 필요합니다" : item.label}
                       >
                         <span>{item.label}</span>
@@ -1238,17 +1252,17 @@ export function IntegrationsPanel({
                 <li key={b.user_id} className="integrations-row">
                   <div style={{ flex: 1 }}>
                     <div style={{ fontWeight: 600 }}>@{b.username}</div>
-                    <div style={{ color: "var(--muted)", fontSize: 12 }}>{b.description || "—"}</div>
+                    <div style={{ color: "var(--muted)", fontSize: 13 }}>{b.description || "—"}</div>
                     {botTokens[b.user_id] && (
                       <div style={{ marginTop: 6 }}>
                         {botTokens[b.user_id].length === 0
-                          ? <span style={{ color: "var(--muted)", fontSize: 12 }}>발급된 토큰 없음</span>
+                          ? <span style={{ color: "var(--muted)", fontSize: 13 }}>발급된 토큰 없음</span>
                           : (
                             <ul className="pat-list">
                               {botTokens[b.user_id].map((t) => (
                                 <li key={t.id}>
                                   <span>{t.description || "(설명없음)"}</span>
-                                  <span style={{ color: "var(--muted)", fontSize: 11, marginLeft: 8 }}>
+                                  <span style={{ color: "var(--muted)", fontSize: 13, marginLeft: 8 }}>
                                     {t.revoked_at ? "취소됨" : "활성"}
                                   </span>
                                   {!t.revoked_at && (
@@ -1306,8 +1320,8 @@ export function IntegrationsPanel({
                 <li key={hk.id} className="integrations-row">
                   <div style={{ flex: 1 }}>
                     <div style={{ fontWeight: 600 }}>{hk.display_name || "(이름없음)"}</div>
-                    <div style={{ color: "var(--muted)", fontSize: 12 }}>채널 {hk.channel_id} · 잠금 {hk.channel_locked ? "ON" : "OFF"}</div>
-                    <code className="reveal-code" style={{ marginTop: 4, padding: "2px 6px", fontSize: 11 }}>{`${window.location.origin}/hooks/${hk.id}`}</code>
+                    <div style={{ color: "var(--muted)", fontSize: 13 }}>채널 {hk.channel_id} · 잠금 {hk.channel_locked ? "ON" : "OFF"}</div>
+                    <code className="reveal-code" style={{ marginTop: 4, padding: "2px 6px", fontSize: 13 }}>{`${window.location.origin}/hooks/${hk.id}`}</code>
                   </div>
                   <button className="btn-ghost" style={{ width: "auto", padding: "0 10px", height: 30, color: "var(--danger)" }}
                     onClick={() => onDeleteIncoming(hk.id)}>삭제</button>
@@ -1347,7 +1361,7 @@ export function IntegrationsPanel({
                 <li key={hk.id} className="integrations-row">
                   <div style={{ flex: 1 }}>
                     <div style={{ fontWeight: 600 }}>{hk.display_name || "(이름없음)"}</div>
-                    <div style={{ color: "var(--muted)", fontSize: 12 }}>
+                    <div style={{ color: "var(--muted)", fontSize: 13 }}>
                       트리거: {hk.trigger_words.join(", ") || "(없음)"} · 콜백 {hk.callback_urls.length}개
                     </div>
                   </div>
@@ -1376,12 +1390,12 @@ export function IntegrationsPanel({
               {emojis.length === 0 && <li className="chat-empty" style={{ padding: 12 }}>등록된 이모지가 없습니다.</li>}
               {emojis.map((e) => (
                 <li key={e.id} className="emoji-tile">
-                  <img src={api.emojiImageURL(token ?? "", e.id)} alt={e.name} />
+                  <AuthenticatedImage token={token ?? ""} path={api.emojiImagePath(e.id)} alt={e.name} />
                   <div className="emoji-tile-name" title={`:${e.name}:`}>:{e.name}:</div>
                   <button
                     type="button"
                     className="btn-ghost"
-                    style={{ width: "auto", padding: "0 8px", height: 26, color: "var(--danger)", fontSize: 11 }}
+                    style={{ width: "auto", padding: "0 8px", height: 26, color: "var(--danger)", fontSize: 13 }}
                     onClick={() => onDeleteEmoji(e.id)}
                   >삭제</button>
                 </li>
@@ -1444,8 +1458,8 @@ export function IntegrationsPanel({
                     return (
                       <li key={inv.id} className="integrations-row">
                         <div style={{ flex: 1, minWidth: 0 }}>
-                          <div style={{ fontWeight: 600, fontSize: 12, wordBreak: "break-all" }}>{inv.url}</div>
-                          <div style={{ color: "var(--muted)", fontSize: 12, marginTop: 2 }}>
+                          <div style={{ fontWeight: 600, fontSize: 13, wordBreak: "break-all" }}>{inv.url}</div>
+                          <div style={{ color: "var(--muted)", fontSize: 13, marginTop: 2 }}>
                             남은 사용 {remaining} · 만료 {expires}
                           </div>
                         </div>
@@ -1490,12 +1504,12 @@ export function IntegrationsPanel({
                       <div style={{ fontWeight: 600 }}>
                         @{u.username}
                         {inactive && (
-                          <span style={{ marginLeft: 8, color: "var(--danger)", fontSize: 11 }}>
+                          <span style={{ marginLeft: 8, color: "var(--danger)", fontSize: 13 }}>
                             비활성
                           </span>
                         )}
                       </div>
-                      <div style={{ color: "var(--muted)", fontSize: 12 }}>
+                      <div style={{ color: "var(--muted)", fontSize: 13 }}>
                         {u.email} · {u.roles || "system_user"}
                       </div>
                     </div>
@@ -1554,7 +1568,7 @@ export function IntegrationsPanel({
                       {row.label}
                       <span className={`admin-pill ${row.tone ?? ""}`.trim()}>{row.status}</span>
                     </div>
-                    <div style={{ color: "var(--muted)", fontSize: 12, marginTop: 2 }}>
+                    <div style={{ color: "var(--muted)", fontSize: 13, marginTop: 2 }}>
                       {row.detail}
                       {row.count !== undefined && ` · ${row.count} rows`}
                     </div>
@@ -1579,7 +1593,9 @@ export function IntegrationsPanel({
                 className="btn-ghost"
                 style={{ width: "auto", padding: "0 12px", height: 34 }}
                 onClick={onReloadConfig}
-              >설정 리로드</button>
+                disabled
+                title="레거시 런타임 설정 리로드는 v0.1.0에서 지원하지 않습니다. moyro 관리 설정은 저장 즉시 적용됩니다."
+              >레거시 리로드 미지원</button>
               <button
                 type="button"
                 className="btn-ghost"
@@ -1626,8 +1642,8 @@ export function IntegrationsPanel({
                         {node.status}
                       </span>
                     </div>
-                    <div style={{ color: "var(--muted)", fontSize: 12, marginTop: 2 }}>
-                      {node.version || node.server_version || "relaychat"} · 마지막 ping {node.last_ping_at ? new Date(node.last_ping_at).toLocaleTimeString() : "—"}
+                    <div style={{ color: "var(--muted)", fontSize: 13, marginTop: 2 }}>
+                      {node.version || node.server_version || "moyro"} · 마지막 ping {node.last_ping_at ? new Date(node.last_ping_at).toLocaleTimeString() : "—"}
                     </div>
                   </div>
                 </li>
@@ -1670,7 +1686,7 @@ export function IntegrationsPanel({
                           {state}
                         </span>
                       </div>
-                      <div style={{ color: "var(--muted)", fontSize: 12, marginTop: 2 }}>
+                      <div style={{ color: "var(--muted)", fontSize: 13, marginTop: 2 }}>
                         {pluginId} · v{String(plugin.version ?? "dev")}
                       </div>
                     </div>
@@ -1679,7 +1695,9 @@ export function IntegrationsPanel({
                       className="btn-ghost"
                       style={{ width: "auto", padding: "0 10px", height: 30 }}
                       onClick={() => onTogglePlugin(pluginId, enabled)}
-                    >{enabled ? "비활성화" : "활성화"}</button>
+                      disabled={!pluginRuntimeManagementEnabled}
+                      title={pluginRuntimeManagementEnabled ? undefined : "플러그인 런타임 활성화/비활성화는 v0.1.0에서 지원하지 않습니다."}
+                    >{pluginRuntimeManagementEnabled ? (enabled ? "비활성화" : "활성화") : "재시작 필요"}</button>
                   </li>
                 );
               })}
@@ -1708,7 +1726,7 @@ export function IntegrationsPanel({
                       {role.display_name || role.name}
                       {role.built_in && <span className="admin-pill">built-in</span>}
                     </div>
-                    <div style={{ color: "var(--muted)", fontSize: 12, marginTop: 2 }}>
+                    <div style={{ color: "var(--muted)", fontSize: 13, marginTop: 2 }}>
                       {role.name} · 권한 {role.permissions.length}개
                     </div>
                     <div className="admin-permission-list">
@@ -1760,7 +1778,7 @@ export function IntegrationsPanel({
                         {job.status}
                       </span>
                     </div>
-                    <div style={{ color: "var(--muted)", fontSize: 12, marginTop: 2 }}>
+                    <div style={{ color: "var(--muted)", fontSize: 13, marginTop: 2 }}>
                       {job.id.slice(0, 8)} · {new Date(job.create_at).toLocaleString()}
                     </div>
                   </div>
@@ -1811,7 +1829,7 @@ export function IntegrationsPanel({
                       {row.label}
                       <span className={`admin-pill ${row.tone ?? ""}`.trim()}>{row.status}</span>
                     </div>
-                    <div style={{ color: "var(--muted)", fontSize: 12, marginTop: 2 }}>
+                    <div style={{ color: "var(--muted)", fontSize: 13, marginTop: 2 }}>
                       {row.detail}
                       {row.count !== undefined && ` · ${row.count} rows`}
                     </div>
@@ -1829,7 +1847,7 @@ export function IntegrationsPanel({
                         : "inactive"}
                     </span>
                   </div>
-                  <div style={{ color: "var(--muted)", fontSize: 12, marginTop: 2 }}>
+                  <div style={{ color: "var(--muted)", fontSize: 13, marginTop: 2 }}>
                     message {String(globalRetentionPolicy?.message_retention_cutoff ?? 0)}
                     {" · "}
                     file {String(globalRetentionPolicy?.file_retention_cutoff ?? 0)}
@@ -1893,7 +1911,7 @@ export function IntegrationsPanel({
                       <div style={{ fontWeight: 600, fontSize: 13 }}>
                         {row.action}
                       </div>
-                      <div style={{ color: "var(--muted)", fontSize: 11, marginTop: 2 }}>
+                      <div style={{ color: "var(--muted)", fontSize: 13, marginTop: 2 }}>
                         {new Date(row.create_at).toLocaleString()}
                         {row.actor_id && ` · 행위자 ${row.actor_id.slice(0, 8)}`}
                         {row.target && ` · 대상 ${row.target}`}
@@ -1905,7 +1923,7 @@ export function IntegrationsPanel({
                             padding: "4px 6px",
                             background: "rgba(255,255,255,0.04)",
                             borderRadius: 4,
-                            fontSize: 11,
+                            fontSize: 13,
                             whiteSpace: "pre-wrap",
                             wordBreak: "break-all",
                           }}

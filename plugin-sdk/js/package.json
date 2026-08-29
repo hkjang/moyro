@@ -1,5 +1,5 @@
 {
-  "name": "@moddle/plugin-sdk",
+  "name": "@moyro/plugin-sdk",
   "version": "0.1.0",
   "type": "module",
   "main": "src/index.ts",

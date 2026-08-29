@@ -1,20 +1,25 @@
+/* Mattermost-style tokens. Light surface is the default so login + modals
+ * feel native to the chat shell (which is also light). The chat-shell layer
+ * at the bottom of this file owns its own scoped palette (deep navy sidebar
+ * + white center channel) but shares the same accent colour so buttons and
+ * focus rings stay consistent across the app. */
 :root {
-  --bg: #0b1020;
-  --bg-grad-1: #1e2a5a;
-  --bg-grad-2: #0b1020;
-  --card: rgba(255, 255, 255, 0.04);
-  --card-border: rgba(255, 255, 255, 0.08);
-  --fg: #e6e9f2;
-  --muted: #8a93ad;
-  --accent: #6366f1;
-  --accent-hover: #7c7ff4;
-  --accent-ring: rgba(99, 102, 241, 0.35);
-  --danger: #f87171;
-  --input-bg: rgba(255, 255, 255, 0.06);
-  --input-border: rgba(255, 255, 255, 0.12);
-  --input-focus: rgba(99, 102, 241, 0.6);
-  --surface: rgba(255, 255, 255, 0.04);
-  --surface-2: rgba(255, 255, 255, 0.07);
+  --bg: #f4f5f7;
+  --bg-grad-1: #e9edf3;
+  --bg-grad-2: #f4f5f7;
+  --card: #ffffff;
+  --card-border: #d9dce3;
+  --fg: #1f2937;
+  --muted: #6b7280;
+  --accent: #1c58d9;
+  --accent-hover: #1649b8;
+  --accent-ring: rgba(28, 88, 217, 0.18);
+  --danger: #d24b4e;
+  --input-bg: #ffffff;
+  --input-border: #c5cad3;
+  --input-focus: rgba(28, 88, 217, 0.6);
+  --surface: #ffffff;
+  --surface-2: #f5f7fb;
   --border: var(--card-border);
   --text: var(--fg);
 }
@@ -29,11 +34,10 @@ html, body, #root {
 }
 
 body {
-  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", "Pretendard", "Apple SD Gothic Neo",
-    "Noto Sans KR", sans-serif;
+  font-family: "Open Sans", ui-sans-serif, system-ui, -apple-system, "Segoe UI", "Pretendard",
+    "Apple SD Gothic Neo", "Noto Sans KR", sans-serif;
   color: var(--fg);
-  background: radial-gradient(1200px 800px at 20% 0%, var(--bg-grad-1), transparent 60%),
-    radial-gradient(900px 700px at 100% 100%, #3b2a5a 0%, transparent 55%), var(--bg);
+  background: var(--bg);
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
 }
@@ -52,25 +56,31 @@ select:focus-visible {
   outline-offset: 2px;
 }
 
-/* ---- Login ---- */
+/* ---- Login ----
+ * Mattermost-style auth surface: a centred white card on a soft neutral wash
+ * with a subtle cool gradient. Restrained shadow + 4px-family radii match the
+ * chat shell so the login → chat transition feels like one product. */
 
 .login-page {
   min-height: 100%;
   display: grid;
   place-items: center;
   padding: 24px;
+  background:
+    radial-gradient(900px 600px at 18% -10%, rgba(28, 88, 217, 0.10), transparent 60%),
+    radial-gradient(700px 500px at 110% 110%, rgba(28, 88, 217, 0.07), transparent 55%),
+    linear-gradient(180deg, #f4f5f7, #eef0f4);
 }
 
 .login-card {
   width: 100%;
   max-width: 400px;
   padding: 32px 28px 28px;
-  background: var(--card);
+  background: #ffffff;
   border: 1px solid var(--card-border);
-  border-radius: 16px;
-  backdrop-filter: blur(12px);
-  box-shadow: 0 30px 80px -20px rgba(0, 0, 0, 0.5);
-  animation: login-pop 280ms ease-out;
+  border-radius: 8px;
+  box-shadow: 0 24px 60px -28px rgba(15, 23, 42, 0.35), 0 4px 12px rgba(15, 23, 42, 0.06);
+  animation: login-pop 240ms ease-out;
 }
 
 @keyframes login-pop {
@@ -86,15 +96,11 @@ select:focus-visible {
 }
 
 .login-logo {
-  width: 34px;
-  height: 34px;
-  border-radius: 10px;
-  background: linear-gradient(135deg, #7c7ff4, #c084fc);
-  display: grid;
-  place-items: center;
-  font-weight: 700;
-  color: #0b1020;
-  box-shadow: 0 8px 24px -8px rgba(124, 127, 244, 0.6);
+  display: block;
+  width: 38px;
+  height: 38px;
+  flex: 0 0 auto;
+  filter: drop-shadow(0 6px 8px rgba(49, 95, 234, 0.24));
 }
 
 .login-title {
@@ -114,9 +120,9 @@ select:focus-visible {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 4px;
-  background: rgba(255,255,255,0.04);
+  background: #f4f5f7;
   border: 1px solid var(--card-border);
-  border-radius: 10px;
+  border-radius: 6px;
   padding: 4px;
   margin-bottom: 16px;
 }
@@ -126,15 +132,16 @@ select:focus-visible {
   background: transparent;
   color: var(--muted);
   padding: 8px 12px;
-  border-radius: 7px;
+  border-radius: 4px;
   font-size: 13px;
-  font-weight: 500;
+  font-weight: 600;
   transition: background 120ms, color 120ms;
 }
 
 .login-tab[aria-selected="true"] {
-  background: rgba(255,255,255,0.08);
-  color: var(--fg);
+  background: #ffffff;
+  color: var(--accent);
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.08);
 }
 
 .field {
@@ -144,7 +151,7 @@ select:focus-visible {
 }
 
 .field label {
-  font-size: 12px;
+  font-size: 13px;
   color: var(--muted);
   font-weight: 500;
   letter-spacing: 0.02em;
@@ -155,7 +162,7 @@ select:focus-visible {
   padding: 0 12px;
   background: var(--input-bg);
   border: 1px solid var(--input-border);
-  border-radius: 10px;
+  border-radius: 4px;
   color: var(--fg);
   font-size: 14px;
   outline: none;
@@ -163,64 +170,64 @@ select:focus-visible {
 }
 
 .field input::placeholder {
-  color: #5a647e;
+  color: #98a0ad;
 }
 
 .field input:focus {
-  border-color: var(--input-focus);
-  box-shadow: 0 0 0 4px var(--accent-ring);
-  background: rgba(255,255,255,0.08);
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-ring);
+  background: #ffffff;
 }
 
 .btn-primary {
   width: 100%;
-  height: 42px;
+  height: 40px;
   margin-top: 6px;
-  background: linear-gradient(135deg, #6366f1, #8b5cf6);
-  color: white;
-  border: 0;
-  border-radius: 10px;
+  background: var(--accent);
+  color: #ffffff;
+  border: 1px solid var(--accent-hover);
+  border-radius: 4px;
   font-weight: 600;
   font-size: 14px;
   letter-spacing: 0.01em;
-  box-shadow: 0 10px 24px -8px rgba(99, 102, 241, 0.6);
-  transition: transform 80ms ease, filter 120ms;
+  box-shadow: none;
+  transition: background 120ms ease, transform 80ms ease;
 }
 
-.btn-primary:hover:not(:disabled) { filter: brightness(1.08); }
+.btn-primary:hover:not(:disabled) { background: var(--accent-hover); }
 .btn-primary:active:not(:disabled) { transform: translateY(1px); }
-.btn-primary:disabled { opacity: 0.6; cursor: not-allowed; }
+.btn-primary:disabled { opacity: 0.55; cursor: not-allowed; }
 
 .login-error {
   margin-top: 12px;
   padding: 10px 12px;
-  border-radius: 8px;
-  background: rgba(248, 113, 113, 0.1);
-  border: 1px solid rgba(248, 113, 113, 0.25);
-  color: var(--danger);
+  border-radius: 4px;
+  background: rgba(210, 75, 78, 0.08);
+  border: 1px solid rgba(210, 75, 78, 0.32);
+  color: #b1393c;
   font-size: 13px;
 }
 
 .invite-banner {
   margin: 0 0 16px;
   padding: 12px 14px;
-  border-radius: 8px;
-  background: rgba(99, 102, 241, 0.12);
-  border: 1px solid rgba(99, 102, 241, 0.35);
-  color: #c7d2fe;
+  border-radius: 4px;
+  background: rgba(28, 88, 217, 0.06);
+  border: 1px solid rgba(28, 88, 217, 0.28);
+  color: var(--accent-hover);
   font-size: 13px;
   line-height: 1.5;
 }
-.invite-banner strong { color: #fff; }
+.invite-banner strong { color: #1f2937; }
 
-/* Phase 17 — WS reconnect banner. Amber on a dim background so it reads
- * as "transient, non-fatal" rather than an error; distinct from .invite-banner
- * (indigo) and from the regular error banner (red) that surfaces 4xx/5xx. */
+/* Phase 17 — WS reconnect banner. Amber on a soft tint so it reads as
+ * "transient, non-fatal" rather than an error; distinct from .invite-banner
+ * (Mattermost blue) and the regular error banner (red) for 4xx/5xx. */
 .ws-reconnect-banner {
   padding: 8px 14px;
-  background: rgba(245, 158, 11, 0.14);
-  border-bottom: 1px solid rgba(245, 158, 11, 0.35);
-  color: #fcd34d;
+  background: rgba(217, 139, 0, 0.12);
+  border-bottom: 1px solid rgba(217, 139, 0, 0.32);
+  color: #8a5a00;
   font-size: 13px;
   text-align: center;
 }
@@ -229,7 +236,7 @@ select:focus-visible {
   margin-top: 18px;
   text-align: center;
   color: var(--muted);
-  font-size: 12px;
+  font-size: 13px;
 }
 
 .login-footer a {
@@ -247,14 +254,14 @@ select:focus-visible {
   gap: 10px;
   margin: 18px 0 12px;
   color: var(--muted);
-  font-size: 12px;
+  font-size: 13px;
 }
 .login-divider::before,
 .login-divider::after {
   content: "";
   flex: 1;
   height: 1px;
-  background: rgba(148, 163, 184, 0.2);
+  background: var(--card-border);
 }
 
 .oauth-buttons {
@@ -307,13 +314,16 @@ select:focus-visible {
   background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='white'><path d='M12 .3a12 12 0 0 0-3.8 23.4c.6.1.8-.3.8-.6v-2c-3.3.7-4-1.6-4-1.6-.6-1.4-1.4-1.8-1.4-1.8-1.1-.7.1-.7.1-.7 1.2.1 1.9 1.3 1.9 1.3 1 1.8 2.8 1.3 3.5 1 .1-.8.4-1.3.8-1.6-2.7-.3-5.5-1.3-5.5-6 0-1.3.5-2.4 1.3-3.2-.1-.4-.6-1.6.1-3.2 0 0 1-.3 3.3 1.2a11.5 11.5 0 0 1 6 0C17.3 4.7 18.3 5 18.3 5c.7 1.6.2 2.8.1 3.2.8.8 1.3 1.9 1.3 3.2 0 4.6-2.8 5.6-5.5 5.9.4.4.8 1.1.8 2.2v3.3c0 .3.2.7.8.6A12 12 0 0 0 12 .3'/></svg>");
 }
 
-/* ---- Chat ---- */
+/* ---- Chat ----
+ * Baseline structural rules. The Mattermost v11 layer at the bottom of this
+ * file owns the *visual* personality (deep navy sidebar, white centre, flat
+ * stream rows) — keep this baseline minimal so it never fights the v11 layer. */
 
 .chat-shell {
   display: grid;
   grid-template-columns: 280px 1fr auto;
   height: 100%;
-  background: var(--bg);
+  background: #ffffff;
   color: var(--fg);
 }
 
@@ -323,7 +333,7 @@ select:focus-visible {
   display: flex;
   flex-direction: column;
   min-height: 0;
-  background: var(--bg);
+  background: #ffffff;
 }
 
 .thread-header {
@@ -345,7 +355,7 @@ select:focus-visible {
 }
 
 .thread-divider {
-  font-size: 11px;
+  font-size: 13px;
   color: var(--muted);
   text-transform: uppercase;
   letter-spacing: 0.08em;
@@ -370,7 +380,7 @@ select:focus-visible {
 }
 
 .section-title {
-  font-size: 11px;
+  font-size: 13px;
   font-weight: 600;
   letter-spacing: 0.08em;
   text-transform: uppercase;
@@ -406,7 +416,7 @@ select:focus-visible {
   border-radius: 6px;
   display: grid;
   place-items: center;
-  font-size: 11px;
+  font-size: 13px;
   font-weight: 700;
   color: #fff;
   flex: 0 0 auto;
@@ -433,7 +443,7 @@ select:focus-visible {
   align-items: flex-end;
   justify-content: space-between;
 }
-.chat-header-team { color: var(--muted); font-size: 12px; margin-bottom: 2px; }
+.chat-header-team { color: var(--muted); font-size: 13px; margin-bottom: 2px; }
 .chat-header-title { margin: 0; font-size: 18px; font-weight: 700; }
 
 .chat-messages {
@@ -468,7 +478,7 @@ select:focus-visible {
 .msg-meta {
   display: flex;
   gap: 10px;
-  font-size: 11px;
+  font-size: 13px;
   color: var(--muted);
   margin-bottom: 4px;
 }
@@ -566,7 +576,7 @@ select:focus-visible {
   border-radius: 9px;
   background: rgba(255,255,255,0.16);
   color: var(--fg);
-  font-size: 11px;
+  font-size: 13px;
   font-weight: 700;
   display: grid;
   place-items: center;
@@ -580,7 +590,7 @@ select:focus-visible {
   border-radius: 9px;
   background: var(--danger);
   color: #fff;
-  font-size: 11px;
+  font-size: 13px;
   font-weight: 700;
   display: grid;
   place-items: center;
@@ -641,7 +651,7 @@ select:focus-visible {
 }
 
 .notify-section-title {
-  font-size: 11px;
+  font-size: 13px;
   font-weight: 600;
   letter-spacing: 0.05em;
   text-transform: uppercase;
@@ -692,8 +702,8 @@ select:focus-visible {
   align-items: center;
 }
 
-.msg-edited { color: var(--muted); font-size: 10px; }
-.msg-pinned { font-size: 11px; }
+.msg-edited { color: var(--muted); font-size: 13px; }
+.msg-pinned { font-size: 13px; }
 
 /* Phase 18 — channel-chip shown on MessageRow when rendered outside its
    own channel (search / saved views). Clickable to jump-navigate. */
@@ -703,7 +713,7 @@ select:focus-visible {
   color: var(--muted);
   border-radius: 999px;
   padding: 1px 8px;
-  font-size: 10px;
+  font-size: 13px;
   cursor: pointer;
   margin-left: 6px;
 }
@@ -755,7 +765,7 @@ select:focus-visible {
 }
 .link-preview-desc {
   margin: 0;
-  font-size: 12px;
+  font-size: 13px;
   color: var(--muted);
   display: -webkit-box;
   -webkit-line-clamp: 2;
@@ -763,7 +773,7 @@ select:focus-visible {
   overflow: hidden;
 }
 .link-preview-url {
-  font-size: 10px;
+  font-size: 13px;
   color: var(--muted);
   margin-top: auto;
 }
@@ -774,7 +784,7 @@ select:focus-visible {
   align-items: center;
   gap: 10px;
   padding: 10px 12px;
-  font-size: 12px;
+  font-size: 13px;
   color: var(--muted);
   border-bottom: 1px solid var(--card-border);
 }
@@ -784,7 +794,7 @@ select:focus-visible {
   border: 1px solid var(--card-border);
   border-radius: 999px;
   padding: 2px 10px;
-  font-size: 11px;
+  font-size: 13px;
   color: var(--fg);
 }
 
@@ -809,8 +819,8 @@ select:focus-visible {
 }
 .discover-row-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
 .discover-row-title { font-weight: 600; font-size: 14px; }
-.discover-row-name { font-size: 11px; color: var(--muted); font-family: var(--font-mono, monospace); }
-.discover-row-purpose { font-size: 12px; color: var(--muted); }
+.discover-row-name { font-size: 13px; color: var(--muted); font-family: var(--font-mono, monospace); }
+.discover-row-purpose { font-size: 13px; color: var(--muted); }
 
 .msg-actions {
   position: absolute;
@@ -880,7 +890,7 @@ select:focus-visible {
   border: 1px solid var(--card-border);
   background: rgba(255,255,255,0.04);
   color: var(--fg);
-  font-size: 12px;
+  font-size: 13px;
   transition: background 120ms, border-color 120ms;
 }
 .reaction-chip:hover { background: rgba(255,255,255,0.08); }
@@ -912,9 +922,18 @@ select:focus-visible {
   max-width: 260px;
 }
 .file-chip:hover { background: rgba(255,255,255,0.08); }
+button.file-chip {
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+button.file-chip:disabled {
+  cursor: wait;
+  opacity: 0.72;
+}
 .file-icon { font-size: 14px; }
 .file-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.file-size { color: var(--muted); font-size: 11px; }
+.file-size { color: var(--muted); font-size: 13px; }
 
 .file-image {
   display: inline-block;
@@ -936,18 +955,21 @@ select:focus-visible {
 .typing-indicator {
   padding: 0 24px 4px;
   color: var(--muted);
-  font-size: 12px;
+  font-size: 13px;
   font-style: italic;
   min-height: 18px;
 }
 
-/* ---- Modal ---- */
+/* ---- Modal ----
+ * White card on a dimmed surface — Mattermost-style. The backdrop is a soft
+ * navy wash (not pure black) so the dialog feels like it floats over the
+ * chat surface rather than blocking the entire viewport. */
 
 .modal-backdrop {
   position: fixed;
   inset: 0;
-  background: rgba(6, 10, 20, 0.65);
-  backdrop-filter: blur(4px);
+  background: rgba(15, 23, 42, 0.42);
+  backdrop-filter: blur(2px);
   display: grid;
   place-items: center;
   z-index: 100;
@@ -957,10 +979,11 @@ select:focus-visible {
   width: 420px;
   max-width: calc(100vw - 40px);
   padding: 20px;
-  background: #141a30;
+  background: #ffffff;
   border: 1px solid var(--card-border);
-  border-radius: 14px;
-  box-shadow: 0 30px 80px -20px rgba(0,0,0,0.7);
+  border-radius: 8px;
+  box-shadow: 0 24px 60px -28px rgba(15, 23, 42, 0.42), 0 4px 12px rgba(15, 23, 42, 0.08);
+  color: var(--fg);
 }
 .field-input {
   width: 100%;
@@ -968,13 +991,13 @@ select:focus-visible {
   padding: 0 12px;
   background: var(--input-bg);
   border: 1px solid var(--input-border);
-  border-radius: 10px;
+  border-radius: 4px;
   color: var(--fg);
   font-size: 14px;
   outline: none;
 }
 .field-input:focus {
-  border-color: var(--input-focus);
+  border-color: var(--accent);
   box-shadow: 0 0 0 3px var(--accent-ring);
 }
 
@@ -990,9 +1013,9 @@ select:focus-visible {
 .cmd-notice {
   margin: 0 24px 8px;
   padding: 8px 12px;
-  background: rgba(99,102,241,0.12);
-  border: 1px solid rgba(99,102,241,0.35);
-  border-radius: 10px;
+  background: rgba(28, 88, 217, 0.06);
+  border: 1px solid rgba(28, 88, 217, 0.28);
+  border-radius: 4px;
   color: var(--fg);
   font-size: 13px;
   white-space: pre-wrap;
@@ -1051,7 +1074,7 @@ select:focus-visible {
   display: block;
   overflow: hidden;
   color: var(--muted);
-  font-size: 11px;
+  font-size: 13px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -1100,7 +1123,7 @@ select:focus-visible {
   background: transparent;
   color: var(--muted);
   cursor: pointer;
-  font-size: 11px;
+  font-size: 13px;
   font-weight: 700;
   letter-spacing: 0.04em;
   text-transform: uppercase;
@@ -1128,7 +1151,7 @@ select:focus-visible {
 .admin-console-tree-item span {
   max-width: 100%;
   overflow: hidden;
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 650;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1137,7 +1160,7 @@ select:focus-visible {
   max-width: 100%;
   overflow: hidden;
   color: var(--muted);
-  font-size: 11px;
+  font-size: 13px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -1187,7 +1210,7 @@ select:focus-visible {
 }
 .admin-console-panel-kicker {
   color: var(--muted);
-  font-size: 11px;
+  font-size: 13px;
   font-weight: 700;
   letter-spacing: 0.04em;
   text-transform: uppercase;
@@ -1271,7 +1294,7 @@ select:focus-visible {
   display: block;
   margin-bottom: 4px;
   color: var(--muted);
-  font-size: 11px;
+  font-size: 13px;
 }
 .admin-kv strong {
   display: block;
@@ -1288,22 +1311,29 @@ select:focus-visible {
   height: 22px;
   padding: 0 8px;
   border-radius: 999px;
-  background: rgba(148, 163, 184, 0.12);
-  border: 1px solid rgba(148, 163, 184, 0.2);
-  color: #cbd5e1;
-  font-size: 11px;
+  background: rgba(31, 41, 55, 0.06);
+  border: 1px solid rgba(31, 41, 55, 0.14);
+  color: var(--muted);
+  font-size: 13px;
   font-weight: 600;
 }
+/* Status pills sit on light card surfaces in the admin Integrations panel
+   now (post-redesign), so the text colour has to read on white. The
+   underlying tints stay translucent so a dark-mode user still sees the
+   green/red wash; the !important-free dark override below punches the
+   text bright again on dark surfaces. */
 .admin-pill.ok {
-  background: rgba(16, 185, 129, 0.12);
-  border-color: rgba(16, 185, 129, 0.32);
-  color: #86efac;
+  background: rgba(6, 170, 99, 0.12);
+  border-color: rgba(6, 170, 99, 0.32);
+  color: #06734a;
 }
 .admin-pill.danger {
-  background: rgba(248, 113, 113, 0.12);
-  border-color: rgba(248, 113, 113, 0.32);
-  color: #fca5a5;
+  background: rgba(210, 75, 78, 0.12);
+  border-color: rgba(210, 75, 78, 0.32);
+  color: #b1383b;
 }
+html[data-theme="dark"] .admin-pill.ok { color: #6ce0aa; }
+html[data-theme="dark"] .admin-pill.danger { color: #f59295; }
 .admin-permission-list {
   display: flex;
   flex-wrap: wrap;
@@ -1315,11 +1345,11 @@ select:focus-visible {
   border-radius: 6px;
   background: rgba(255,255,255,0.04);
   color: var(--muted);
-  font-size: 11px;
+  font-size: 13px;
 }
 .admin-log-list code {
   overflow-wrap: anywhere;
-  font-size: 11px;
+  font-size: 13px;
   color: #d8dee9;
 }
 .admin-data-table {
@@ -1338,7 +1368,7 @@ select:focus-visible {
   padding: 9px 10px;
   border-bottom: 1px solid var(--card-border);
   color: var(--fg);
-  font-size: 12px;
+  font-size: 13px;
   text-align: left;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1349,7 +1379,7 @@ select:focus-visible {
   z-index: 1;
   background: rgba(20, 24, 33, 0.96);
   color: var(--muted);
-  font-size: 11px;
+  font-size: 13px;
   font-weight: 700;
   text-transform: uppercase;
 }
@@ -1392,7 +1422,7 @@ select:focus-visible {
 .admin-detail-panel-head span {
   display: block;
   color: var(--muted);
-  font-size: 11px;
+  font-size: 13px;
   font-weight: 700;
   text-transform: uppercase;
 }
@@ -1404,7 +1434,7 @@ select:focus-visible {
 .admin-detail-panel p {
   margin: 0 0 12px;
   color: var(--muted);
-  font-size: 12px;
+  font-size: 13px;
 }
 .admin-detail-panel dl {
   display: grid;
@@ -1420,13 +1450,13 @@ select:focus-visible {
 }
 .admin-detail-panel dt {
   color: var(--muted);
-  font-size: 11px;
+  font-size: 13px;
 }
 .admin-detail-panel dd {
   overflow-wrap: anywhere;
   margin: 2px 0 0;
   color: var(--fg);
-  font-size: 12px;
+  font-size: 13px;
 }
 
 /* ---- Admin visual system: Well & Good -------------------------------
@@ -1555,7 +1585,7 @@ select:focus-visible {
   text-transform: none;
 }
 .admin-page .admin-console-tree-heading span {
-  font-size: 11px;
+  font-size: 13px;
 }
 .admin-page .admin-console-tree-item {
   min-height: 42px;
@@ -1646,7 +1676,7 @@ select:focus-visible {
 .admin-page .admin-data-table td {
   border-bottom-color: var(--admin-line);
   color: var(--admin-ink);
-  font-size: 12px;
+  font-size: 13px;
 }
 .admin-page .admin-data-table th {
   background: #f3f7f8;
@@ -1749,257 +1779,10 @@ select:focus-visible {
   color: var(--admin-danger);
 }
 
-/* ---- User visual system: Well & Good chat ---------------------------
- * A calmer daily workspace: warm paper surfaces, crisp hierarchy, restrained
- * botanical accents, and message bubbles that feel polished without getting
- * in the way of reading.
- * ------------------------------------------------------------------ */
-.chat-shell {
-  --chat-bg: #f6f8f7;
-  --chat-bg-soft: #eef5f1;
-  --chat-surface: rgba(255, 255, 255, 0.9);
-  --chat-surface-solid: #ffffff;
-  --chat-surface-soft: #f3f7f5;
-  --chat-ink: #182331;
-  --chat-muted: #6f7d8b;
-  --chat-line: #dce5e1;
-  --chat-line-strong: #c8d5cf;
-  --chat-accent: #2c806f;
-  --chat-accent-2: #6c63d9;
-  --chat-coral: #cc6b5a;
-  --chat-warning: #a86b00;
-  --chat-danger: #c94452;
-  --chat-shadow: 0 20px 60px rgba(29, 45, 58, 0.1);
-  --bg: var(--chat-bg);
-  --fg: var(--chat-ink);
-  --muted: var(--chat-muted);
-  --card-border: var(--chat-line);
-  --border: var(--chat-line);
-  --input-bg: #ffffff;
-  --input-border: var(--chat-line);
-  --input-focus: rgba(44, 128, 111, 0.62);
-  --accent: var(--chat-accent);
-  --accent-hover: #369684;
-  --accent-ring: rgba(44, 128, 111, 0.14);
-  --danger: var(--chat-danger);
-  background:
-    linear-gradient(135deg, #f8faf9 0%, #eef5f1 46%, #f7f1ee 100%);
-  color: var(--chat-ink);
-}
-.chat-shell .chat-side {
-  border-right: 1px solid var(--chat-line);
-  background: rgba(255, 255, 255, 0.68);
-  box-shadow: 18px 0 44px rgba(29, 45, 58, 0.06);
-}
-.chat-shell .chat-main,
-.chat-shell .thread-panel {
-  background: transparent;
-}
-.chat-shell .thread-panel {
-  border-left-color: var(--chat-line);
-  background: rgba(255, 255, 255, 0.72);
-  box-shadow: -18px 0 44px rgba(29, 45, 58, 0.06);
-}
-.chat-shell .thread-header,
-.chat-shell .chat-header {
-  border-bottom-color: var(--chat-line);
-  background: rgba(255, 255, 255, 0.78);
-  backdrop-filter: blur(14px);
-}
-.chat-shell .chat-header {
-  min-height: 72px;
-  box-shadow: 0 12px 34px rgba(29, 45, 58, 0.06);
-}
-.chat-shell .chat-header-team,
-.chat-shell .section-title,
-.chat-shell .item-muted,
-.chat-shell .msg-time,
-.chat-shell .msg-edited {
-  color: var(--chat-muted);
-}
-.chat-shell .chat-header-title {
-  color: var(--chat-ink);
-  font-size: 19px;
-  font-weight: 780;
-  letter-spacing: 0;
-}
-.chat-shell .section-title {
-  font-weight: 760;
-  letter-spacing: 0;
-  text-transform: none;
-}
-.chat-shell .item {
-  min-height: 36px;
-  border: 1px solid transparent;
-  border-radius: 8px;
-  color: var(--chat-ink);
-  font-weight: 620;
-}
-.chat-shell .item:hover {
-  border-color: rgba(44, 128, 111, 0.16);
-  background: rgba(44, 128, 111, 0.06);
-}
-.chat-shell .item-active,
-.chat-shell .item-active:hover {
-  border-color: rgba(44, 128, 111, 0.26);
-  background: linear-gradient(90deg, rgba(44, 128, 111, 0.13), rgba(108, 99, 217, 0.055));
-  color: var(--chat-ink);
-  box-shadow: inset 3px 0 0 var(--chat-accent);
-}
-.chat-shell .channel-hash {
-  color: var(--chat-accent);
-}
-.chat-shell .btn-ghost,
-.chat-shell .status-select,
-.chat-shell .search-input,
-.chat-shell .composer-input {
-  border-color: var(--chat-line);
-  background: #ffffff;
-  color: var(--chat-ink);
-  box-shadow: 0 8px 22px rgba(29, 45, 58, 0.045);
-}
-.chat-shell .btn-ghost {
-  border-radius: 8px;
-  font-weight: 690;
-}
-.chat-shell .btn-ghost:hover {
-  border-color: var(--chat-line-strong);
-  background: #f8fbfa;
-}
-.chat-shell .search-input {
-  min-width: 240px;
-  border-radius: 999px;
-}
-.chat-shell .search-input::placeholder,
-.chat-shell .composer-input::placeholder {
-  color: #96a4af;
-}
-.chat-shell .search-input:focus,
-.chat-shell .composer-input:focus,
-.chat-shell .status-select:focus {
-  border-color: rgba(44, 128, 111, 0.58);
-  box-shadow: 0 0 0 4px rgba(44, 128, 111, 0.13);
-}
-.chat-shell .chat-messages {
-  gap: 12px;
-  padding: 24px 30px;
-}
-.chat-shell .msg {
-  max-width: min(680px, 76%);
-  border-color: var(--chat-line);
-  border-radius: 8px;
-  background: rgba(255, 255, 255, 0.9);
-  box-shadow: 0 10px 30px rgba(29, 45, 58, 0.065);
-}
-.chat-shell .msg-me {
-  border-color: rgba(44, 128, 111, 0.24);
-  background: linear-gradient(180deg, rgba(235, 248, 243, 0.98), rgba(226, 242, 236, 0.98));
-}
-.chat-shell .msg-author {
-  color: var(--chat-ink);
-  font-weight: 760;
-}
-.chat-shell .msg-meta {
-  color: var(--chat-muted);
-}
-.chat-shell .msg-body {
-  color: var(--chat-ink);
-  line-height: 1.56;
-}
-.chat-shell .msg-actions {
-  border-color: var(--chat-line);
-  background: rgba(255, 255, 255, 0.96);
-  box-shadow: 0 14px 34px rgba(29, 45, 58, 0.16);
-}
-.chat-shell .action-btn {
-  color: var(--chat-muted);
-  border-radius: 7px;
-}
-.chat-shell .action-btn:hover {
-  background: rgba(44, 128, 111, 0.08);
-  color: var(--chat-ink);
-}
-.chat-shell .composer {
-  border-top-color: var(--chat-line);
-  background: rgba(255, 255, 255, 0.82);
-  box-shadow: 0 -12px 34px rgba(29, 45, 58, 0.06);
-  backdrop-filter: blur(14px);
-}
-.chat-shell .composer-input {
-  min-height: 46px;
-  border-radius: 8px;
-}
-.chat-shell .btn-primary {
-  border: 1px solid rgba(44, 128, 111, 0.7);
-  border-radius: 8px;
-  background: linear-gradient(180deg, #36a08c, #2c806f);
-  box-shadow: 0 12px 26px rgba(44, 128, 111, 0.2);
-}
-.chat-shell .avatar {
-  box-shadow: 0 8px 20px rgba(29, 45, 58, 0.15);
-}
-.chat-shell .status-dot {
-  border-color: #ffffff;
-}
-.chat-shell .unread,
-.chat-shell .mention-badge {
-  box-shadow: none;
-}
-.chat-shell .unread {
-  background: rgba(44, 128, 111, 0.11);
-  color: var(--chat-accent);
-}
-.chat-shell .mention-badge {
-  background: var(--chat-coral);
-}
-.chat-shell .reaction-chip,
-.chat-shell .msg-channel-chip,
-.chat-shell .search-chip,
-.chat-shell .file-chip,
-.chat-shell .link-preview,
-.chat-shell .discover-row {
-  border-color: var(--chat-line);
-  background: #ffffff;
-  color: var(--chat-ink);
-}
-.chat-shell .reaction-mine {
-  border-color: rgba(44, 128, 111, 0.3);
-  background: rgba(44, 128, 111, 0.1);
-}
-.chat-shell .link-preview {
-  border-left-color: var(--chat-accent);
-  box-shadow: 0 10px 28px rgba(29, 45, 58, 0.06);
-}
-.chat-shell .link-preview:hover {
-  background: #f9fcfb;
-}
-.chat-shell .link-preview-title,
-.chat-shell .discover-row-title {
-  color: var(--chat-ink);
-}
-.chat-shell .link-preview-desc,
-.chat-shell .link-preview-url,
-.chat-shell .discover-row-name,
-.chat-shell .discover-row-purpose {
-  color: var(--chat-muted);
-}
-.chat-shell .notify-menu,
-.chat-shell .emoji-picker,
-.chat-shell .mention-menu,
-.chat-shell .quick-switcher {
-  border-color: var(--chat-line);
-  background: rgba(255, 255, 255, 0.98);
-  color: var(--chat-ink);
-  box-shadow: 0 24px 70px rgba(29, 45, 58, 0.18);
-}
-.chat-shell .notify-radio,
-.chat-shell .notify-section-title {
-  color: var(--chat-ink);
-}
-.chat-shell .notify-radio:hover,
-.chat-shell .emoji-btn:hover {
-  background: rgba(44, 128, 111, 0.08);
-}
+/* The earlier "Well & Good" chat overlay (warm paper, green accents, bubble
+ * messages) was removed in the Mattermost-style redesign. The Mattermost v11
+ * layer near the end of this file is the single source of truth for the chat
+ * shell's visual personality now. */
 .reveal-card {
   margin: 0 0 12px;
   padding: 12px 14px;
@@ -2018,7 +1801,7 @@ select:focus-visible {
   padding: 6px 10px;
   border-radius: 6px;
   word-break: break-all;
-  font-size: 12px;
+  font-size: 13px;
   color: var(--fg);
 }
 .pat-list {
@@ -2028,7 +1811,7 @@ select:focus-visible {
   display: flex;
   flex-direction: column;
   gap: 4px;
-  font-size: 12px;
+  font-size: 13px;
 }
 .pat-list li {
   display: flex;
@@ -2110,7 +1893,7 @@ select:focus-visible {
   object-fit: contain;
 }
 .emoji-tile-name {
-  font-size: 11px;
+  font-size: 13px;
   color: var(--muted);
   max-width: 100%;
   overflow: hidden;
@@ -2233,7 +2016,7 @@ button.file-image {
   padding: 1px 5px;
   border-radius: 4px;
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: 12px;
+  font-size: 13px;
   color: #f1f5f9;
 }
 
@@ -2339,7 +2122,7 @@ button.file-image {
   display: flex;
   align-items: center;
   gap: 8px;
-  font-size: 11px;
+  font-size: 13px;
   color: var(--muted);
   padding: 2px 2px 0;
 }
@@ -2349,7 +2132,7 @@ button.file-image {
   padding: 0;
   color: var(--muted);
   cursor: pointer;
-  font-size: 11px;
+  font-size: 13px;
   text-decoration: underline;
 }
 .draft-clear:hover { color: var(--text); }
@@ -2395,7 +2178,7 @@ button.file-image {
   margin-bottom: 4px;
 }
 .schedule-custom label {
-  font-size: 12px;
+  font-size: 13px;
   color: var(--muted);
   flex: 0 0 auto;
 }
@@ -2421,7 +2204,7 @@ button.file-image {
 }
 .scheduled-row-time {
   color: var(--muted);
-  font-size: 12px;
+  font-size: 13px;
   margin-left: auto;
 }
 .scheduled-row-body {
@@ -2432,7 +2215,7 @@ button.file-image {
 }
 .scheduled-row-error {
   color: var(--danger, #c0392b);
-  font-size: 12px;
+  font-size: 13px;
   margin-top: 6px;
 }
 .scheduled-row-actions {
@@ -2458,7 +2241,7 @@ button.file-image {
   max-width: 100%;
   background: var(--surface);
   border: 1px solid var(--border);
-  border-left: 4px solid var(--accent, #6366f1);
+  border-left: 4px solid var(--accent, #1c58d9);
   border-radius: 8px;
   padding: 10px 12px;
   box-shadow: 0 6px 22px rgba(0, 0, 0, 0.15);
@@ -2683,29 +2466,104 @@ button.file-image {
    Phase 21 — Mattermost API compat wave 1
    ===================================================================== */
 
-/* Theme: light variant — overrides the dark defaults in :root. The webapp
-   sets <html data-theme="light"> based on the user's preferences row
-   (display_settings/theme); "system" resolves to either light or dark
-   based on prefers-color-scheme. */
+/* Theme overrides. The :root defaults are Mattermost-clean light tokens
+   (white surface, #1c58d9 accent). The webapp's theme picker sets
+   <html data-theme="light|dark"> via the prefs row display_settings/theme;
+   "system" resolves to either at runtime via prefers-color-scheme. The
+   light block below is intentionally a verbatim restatement of :root so
+   an explicit pick wins even if a sibling rule mutates :root in the
+   future; the dark block flips the palette to Mattermost's dark-mode
+   surface (#1f1f1f center, brighter #5d89ea accent for contrast). */
 html[data-theme="light"] {
-  --bg: #f6f7fb;
-  --bg-grad-1: #e0e7ff;
-  --bg-grad-2: #f6f7fb;
-  --card: rgba(15, 23, 42, 0.04);
-  --card-border: rgba(15, 23, 42, 0.10);
-  --fg: #0f172a;
-  --muted: #475569;
-  --accent: #4f46e5;
-  --accent-hover: #6366f1;
-  --accent-ring: rgba(79, 70, 229, 0.25);
-  --danger: #dc2626;
-  --input-bg: rgba(15, 23, 42, 0.05);
-  --input-border: rgba(15, 23, 42, 0.12);
-  --input-focus: rgba(79, 70, 229, 0.45);
-  --surface: rgba(255, 255, 255, 0.85);
-  --surface-2: rgba(255, 255, 255, 0.65);
+  --bg: #f4f5f7;
+  --bg-grad-1: #e9edf3;
+  --bg-grad-2: #f4f5f7;
+  --card: #ffffff;
+  --card-border: #d9dce3;
+  --fg: #1f2937;
+  --muted: #6b7280;
+  --accent: #1c58d9;
+  --accent-hover: #1649b8;
+  --accent-ring: rgba(28, 88, 217, 0.18);
+  --danger: #d24b4e;
+  --input-bg: #ffffff;
+  --input-border: #c5cad3;
+  --input-focus: rgba(28, 88, 217, 0.6);
+  --surface: #ffffff;
+  --surface-2: #f5f7fb;
   --border: var(--card-border);
   --text: var(--fg);
+}
+
+html[data-theme="dark"] {
+  --bg: #1f1f1f;
+  --bg-grad-1: #18181a;
+  --bg-grad-2: #1f1f1f;
+  --card: #2c2d31;
+  --card-border: #3a3b40;
+  --fg: #e8eaed;
+  --muted: #9aa0a6;
+  --accent: #5d89ea;
+  --accent-hover: #7299ee;
+  --accent-ring: rgba(93, 137, 234, 0.28);
+  --danger: #f15c5e;
+  --input-bg: #232428;
+  --input-border: #3a3b40;
+  --input-focus: rgba(93, 137, 234, 0.6);
+  --surface: #2c2d31;
+  --surface-2: #232428;
+  --border: var(--card-border);
+  --text: var(--fg);
+}
+
+/* In dark mode the login page should use a deeper navy wash so the
+   white-card hover doesn't blast the user's eyes. The login-card itself
+   already pulls --card so it darkens automatically. */
+html[data-theme="dark"] .login-page {
+  background:
+    radial-gradient(900px 600px at 18% -10%, rgba(93, 137, 234, 0.16), transparent 60%),
+    radial-gradient(700px 500px at 110% 110%, rgba(93, 137, 234, 0.10), transparent 55%),
+    linear-gradient(180deg, #161618, #1f1f1f);
+}
+
+/* Dark-mode chat shell: keep the deep navy sidebar (still readable on
+   dark) but flip the center channel from white to Mattermost's dark
+   surface so the message stream reads in dark mode without blowing out
+   the user's vision. The v11 layer below this file owns the light
+   defaults; here we only override the deltas. */
+html[data-theme="dark"] .chat-shell {
+  background: #1f1f1f;
+  color: var(--fg);
+}
+html[data-theme="dark"] .chat-shell .chat-main,
+html[data-theme="dark"] .chat-shell .chat-msgs,
+html[data-theme="dark"] .chat-shell .chat-header,
+html[data-theme="dark"] .chat-shell .chat-composer {
+  background: #1f1f1f;
+  color: var(--fg);
+  border-color: #2c2d31;
+}
+html[data-theme="dark"] .chat-shell .msg:hover { background: #232428; }
+html[data-theme="dark"] .chat-shell .msg-author { color: #e8eaed; }
+html[data-theme="dark"] .chat-shell .msg-time,
+html[data-theme="dark"] .chat-shell .msg-edited { color: #9aa0a6; }
+html[data-theme="dark"] .chat-shell .composer-input,
+html[data-theme="dark"] .chat-shell textarea,
+html[data-theme="dark"] .chat-shell input[type="text"],
+html[data-theme="dark"] .chat-shell input[type="email"],
+html[data-theme="dark"] .chat-shell input[type="password"] {
+  background: #232428;
+  color: var(--fg);
+  border-color: #3a3b40;
+}
+html[data-theme="dark"] .chat-shell .thread-panel {
+  background: #1f1f1f;
+  border-left-color: #2c2d31;
+}
+html[data-theme="dark"] .modal-card {
+  background: #2c2d31;
+  border-color: #3a3b40;
+  color: var(--fg);
 }
 
 /* Channel-header member chip. Subtle pill so it sits next to the channel
@@ -2716,7 +2574,7 @@ html[data-theme="light"] {
   gap: 4px;
   margin-left: 10px;
   padding: 2px 8px;
-  font-size: 11px;
+  font-size: 13px;
   border-radius: 999px;
   background: var(--surface-2);
   color: var(--muted);
@@ -2787,7 +2645,7 @@ html[data-theme="light"] {
 }
 .quick-switcher-sub {
   color: var(--muted);
-  font-size: 11px;
+  font-size: 13px;
   text-transform: uppercase;
   letter-spacing: 0.05em;
 }
@@ -2799,7 +2657,7 @@ html[data-theme="light"] {
 }
 .quick-switcher-hint {
   text-align: center;
-  font-size: 11px;
+  font-size: 13px;
   color: var(--muted);
   padding-top: 2px;
 }
@@ -2855,334 +2713,11 @@ html[data-theme="light"] {
   color: var(--text, var(--fg));
 }
 
-/* ---- User panel usability layer --------------------------------------
- * Sidebar and RHS are the daily navigation surfaces. Keep them calm,
- * dense, and predictable: stable widths, clear active states, visible
- * unread counts, persistent account controls, and a focused thread rail.
- * ------------------------------------------------------------------ */
-.chat-shell {
-  grid-template-columns: minmax(300px, 330px) minmax(0, 1fr) auto;
-}
-
-.chat-shell .chat-side {
-  padding: 18px 14px 14px;
-  gap: 8px;
-  scrollbar-gutter: stable;
-}
-
-.chat-shell .chat-side::-webkit-scrollbar,
-.chat-shell .thread-body::-webkit-scrollbar {
-  width: 10px;
-}
-
-.chat-shell .chat-side::-webkit-scrollbar-thumb,
-.chat-shell .thread-body::-webkit-scrollbar-thumb {
-  border: 3px solid rgba(255, 255, 255, 0.72);
-  border-radius: 8px;
-  background: rgba(111, 125, 139, 0.34);
-}
-
-.chat-shell .chat-side .login-brand {
-  position: sticky;
-  top: 0;
-  z-index: 4;
-  margin: -2px -4px 8px !important;
-  padding: 8px 4px 12px;
-  border-bottom: 1px solid rgba(220, 229, 225, 0.72);
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(255, 255, 255, 0.78));
-  backdrop-filter: blur(14px);
-}
-
-.chat-shell .chat-side .login-logo {
-  border-radius: 8px;
-  background: linear-gradient(135deg, #2c806f, #6c63d9);
-  color: #ffffff;
-  box-shadow: 0 10px 22px rgba(44, 128, 111, 0.2);
-}
-
-.chat-shell .chat-side .login-brand strong {
-  color: var(--chat-ink);
-  font-size: 15px;
-  font-weight: 780;
-  letter-spacing: 0;
-}
-
-.chat-shell .chat-side .section-title {
-  display: flex;
-  align-items: center;
-  min-height: 24px;
-  margin: 18px 6px 6px;
-  color: #536574;
-  font-size: 12px;
-}
-
-.chat-shell .chat-side .section-title::after {
-  content: "";
-  height: 1px;
-  flex: 1;
-  margin-left: 10px;
-  background: linear-gradient(90deg, rgba(200, 213, 207, 0.86), rgba(200, 213, 207, 0));
-}
-
-.chat-shell .chat-side .item-list {
-  gap: 3px;
-}
-
-.chat-shell .chat-side .item {
-  position: relative;
-  min-height: 40px;
-  padding: 8px 10px;
-  overflow: hidden;
-  line-height: 1.25;
-}
-
-.chat-shell .chat-side .item:focus-visible,
-.chat-shell .thread-header .action-btn:focus-visible,
-.chat-shell .thread-panel .composer-input:focus-visible {
-  outline: 2px solid rgba(44, 128, 111, 0.48);
-  outline-offset: 2px;
-}
-
-.chat-shell .chat-side .item-active,
-.chat-shell .chat-side .item-active:hover {
-  border-color: rgba(44, 128, 111, 0.32);
-  background: linear-gradient(90deg, rgba(44, 128, 111, 0.16), rgba(108, 99, 217, 0.07));
-  box-shadow:
-    inset 3px 0 0 var(--chat-accent),
-    0 8px 22px rgba(44, 128, 111, 0.09);
-}
-
-.chat-shell .chat-side .item-muted {
-  min-height: 36px;
-  color: #617283;
-  font-weight: 650;
-}
-
-.chat-shell .chat-side button.item-muted {
-  border-style: dashed;
-  background: rgba(255, 255, 255, 0.5);
-}
-
-.chat-shell .chat-side button.item-muted:hover {
-  border-color: rgba(44, 128, 111, 0.26);
-  background: rgba(44, 128, 111, 0.07);
-  color: var(--chat-ink);
-}
-
-.chat-shell .chat-side .item-badge {
-  width: 24px;
-  height: 24px;
-  border-radius: 8px;
-  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.42), 0 7px 16px rgba(29, 45, 58, 0.14);
-}
-
-.chat-shell .chat-side .channel-fav {
-  width: 22px;
-  height: 22px;
-  margin: 0 2px;
-  border-radius: 7px;
-}
-
-.chat-shell .chat-side .channel-fav:hover,
-.chat-shell .chat-side .channel-fav.is-fav {
-  background: rgba(251, 191, 36, 0.14);
-}
-
-.chat-shell .chat-side .unread,
-.chat-shell .chat-side .mention-badge,
-.chat-shell .chat-side .unread-badge {
-  min-width: 22px;
-  height: 20px;
-  padding: 0 7px;
-  border-radius: 8px;
-  font-size: 11px;
-  font-weight: 780;
-}
-
-.chat-shell .chat-side .unread-badge {
-  display: inline-grid;
-  place-items: center;
-  margin-left: auto;
-  border: 1px solid rgba(44, 128, 111, 0.18);
-  background: rgba(44, 128, 111, 0.11);
-  color: var(--chat-accent);
-}
-
-.chat-shell .chat-side > div:last-child {
-  position: sticky;
-  bottom: 0;
-  z-index: 4;
-  margin: auto -4px 0 !important;
-  padding: 12px 4px 0 !important;
-  border-top: 1px solid rgba(220, 229, 225, 0.9);
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.82), rgba(255, 255, 255, 0.98) 34%);
-  backdrop-filter: blur(14px);
-}
-
-.chat-shell .chat-side > div:last-child .status-select {
-  height: 34px;
-  margin-bottom: 2px;
-}
-
-.chat-shell .chat-side > div:last-child .btn-ghost {
-  height: 34px;
-  margin-top: 6px !important;
-}
-
-.chat-shell .chat-side > div:last-child label {
-  color: var(--chat-muted);
-}
-
-.chat-shell .chat-side > div:last-child label select {
-  border: 1px solid var(--chat-line);
-  background: #ffffff;
-  color: var(--chat-ink);
-}
-
-.chat-shell .thread-panel {
-  width: clamp(380px, 28vw, 430px);
-  border-left: 1px solid var(--chat-line);
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.9), rgba(246, 248, 247, 0.94));
-  box-shadow: -20px 0 54px rgba(29, 45, 58, 0.09);
-}
-
-.chat-shell .thread-header {
-  min-height: 64px;
-  padding: 14px 16px;
-  background: rgba(255, 255, 255, 0.9);
-  box-shadow: 0 12px 28px rgba(29, 45, 58, 0.06);
-}
-
-.chat-shell .thread-header strong {
-  color: var(--chat-ink);
-  font-size: 15px;
-  font-weight: 780;
-  letter-spacing: 0;
-}
-
-.chat-shell .thread-header .action-btn {
-  width: 32px;
-  height: 32px;
-  border: 1px solid var(--chat-line);
-  background: #ffffff;
-}
-
-.chat-shell .thread-body {
-  padding: 16px;
-  gap: 10px;
-  scrollbar-gutter: stable;
-}
-
-.chat-shell .thread-panel .msg,
-.chat-shell .thread-panel .msg-me {
-  width: 100%;
-  max-width: 100%;
-  align-self: stretch;
-  box-shadow: 0 9px 24px rgba(29, 45, 58, 0.055);
-}
-
-.chat-shell .thread-panel .msg:first-child {
-  border-color: rgba(44, 128, 111, 0.24);
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(241, 247, 244, 0.98));
-}
-
-.chat-shell .thread-divider {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin: 8px 0 0;
-  padding: 8px 10px;
-  border: 1px solid var(--chat-line);
-  border-radius: 8px;
-  background: rgba(255, 255, 255, 0.76);
-  color: #536574;
-  font-size: 12px;
-  font-weight: 740;
-  letter-spacing: 0;
-  text-transform: none;
-}
-
-.chat-shell .thread-divider::after {
-  content: "";
-  height: 1px;
-  flex: 1;
-  background: linear-gradient(90deg, rgba(200, 213, 207, 0.8), rgba(200, 213, 207, 0));
-}
-
-.chat-shell .thread-panel .chat-empty {
-  margin-top: 24px;
-  padding: 18px 14px;
-  border: 1px dashed var(--chat-line-strong);
-  border-radius: 8px;
-  background: rgba(255, 255, 255, 0.72);
-}
-
-.chat-shell .thread-panel .composer {
-  padding: 12px 14px 14px;
-  gap: 8px;
-  background: rgba(255, 255, 255, 0.92);
-}
-
-.chat-shell .thread-panel .composer-input {
-  min-height: 44px;
-  max-height: 128px;
-}
-
-.chat-shell .thread-panel .btn-primary {
-  min-width: 54px;
-  height: 38px;
-}
-
-@media (max-width: 960px) {
-  .chat-shell {
-    grid-template-columns: 1fr;
-    grid-template-rows: auto minmax(0, 1fr);
-  }
-
-  .chat-shell .chat-side {
-    max-height: 40vh;
-    padding: 12px;
-  }
-
-  .chat-shell .chat-side .login-brand,
-  .chat-shell .chat-side > div:last-child {
-    position: static;
-    margin-right: 0 !important;
-    margin-left: 0 !important;
-    backdrop-filter: none;
-  }
-
-  .chat-shell .thread-panel {
-    width: min(430px, 100vw);
-    background: #ffffff;
-  }
-
-  .chat-shell .thread-body {
-    padding: 14px;
-  }
-}
-
-@media (max-width: 640px) {
-  .chat-shell .chat-side {
-    max-height: 44vh;
-  }
-
-  .chat-shell .chat-side .item {
-    min-height: 38px;
-  }
-
-  .chat-shell .thread-panel {
-    width: 100vw;
-  }
-
-  .chat-shell .thread-header {
-    min-height: 58px;
-  }
-
-  .chat-shell .thread-panel .composer {
-    padding: 10px 12px 12px;
-  }
-}
+/* The earlier "User panel usability" mid-layer (warm sticky brand header,
+ * green sidebar accents, glassy backdrop blurs, larger items, cream gradient
+ * thread rail) was removed in the Mattermost-style redesign — its rules
+ * conflicted with the v11 layer below. Sidebar/thread/header personality is
+ * now defined exclusively by the v11 layer. */
 
 /* ---- Mattermost v11-style alignment ---------------------------------
  * The final user-facing layer intentionally pulls the workspace back toward
@@ -3276,7 +2811,7 @@ html[data-theme="light"] {
   min-height: 22px;
   margin: 16px 8px 4px;
   color: var(--chat-sidebar-muted);
-  font-size: 11px;
+  font-size: 13px;
   font-weight: 700;
   letter-spacing: 0;
   text-transform: uppercase;
@@ -3382,22 +2917,14 @@ html[data-theme="light"] {
   color: #ffffff;
 }
 
-.chat-shell .chat-side > div:last-child {
-  margin: auto -10px 0 !important;
-  padding: 10px 12px 0 !important;
-  border-top: 1px solid var(--chat-sidebar-line);
-  background: linear-gradient(180deg, rgba(22, 40, 72, 0.82), var(--chat-sidebar-2) 30%);
-  backdrop-filter: none;
-}
-
-.chat-shell .chat-side > div:last-child,
-.chat-shell .chat-side > div:last-child label,
-.chat-shell .chat-side > div:last-child div {
-  color: var(--chat-sidebar-muted);
-}
-
-.chat-shell .chat-side > div:last-child .status-select,
-.chat-shell .chat-side > div:last-child label select,
+/* Phase 34.5 — the sidebar bottom identity row was removed entirely;
+   identity now lives only in the header's user-menu-trigger. The old
+   .chat-side > div:last-child treatment painted the bottom block with a
+   dark gradient + auto-top margin; with the identity row gone, that
+   selector would land on the channel list and squash the layout, so it's
+   deleted. The .btn-ghost styling is kept here scoped to .chat-side so
+   any sidebar ghost buttons (none currently — but search/discover/more
+   actions historically used it) still read correctly against navy. */
 .chat-shell .chat-side .btn-ghost {
   height: 32px;
   border: 1px solid var(--chat-sidebar-line);
@@ -3430,7 +2957,7 @@ html[data-theme="light"] {
 
 .chat-shell .chat-header-team {
   color: var(--chat-muted);
-  font-size: 12px;
+  font-size: 13px;
 }
 
 .chat-shell .chat-header-title {
@@ -3475,7 +3002,7 @@ html[data-theme="light"] {
   min-height: 22px;
   margin-bottom: 2px;
   color: var(--chat-muted);
-  font-size: 12px;
+  font-size: 13px;
 }
 
 .chat-shell .msg-author {
@@ -3487,7 +3014,7 @@ html[data-theme="light"] {
 .chat-shell .msg-time,
 .chat-shell .msg-edited {
   color: #6b7280;
-  font-size: 11px;
+  font-size: 13px;
 }
 
 .chat-shell .msg-body,
@@ -3655,7 +3182,7 @@ html[data-theme="light"] {
   border-radius: 0;
   background: transparent;
   color: var(--chat-muted);
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 700;
 }
 
@@ -3694,8 +3221,7 @@ html[data-theme="light"] {
     border-bottom: 1px solid #14233f;
   }
 
-  .chat-shell .chat-side .login-brand,
-  .chat-shell .chat-side > div:last-child {
+  .chat-shell .chat-side .login-brand {
     position: static;
     margin-right: -10px !important;
     margin-left: -10px !important;
@@ -3743,6 +3269,772 @@ html[data-theme="light"] {
   }
 
   .chat-shell .composer {
+    min-width: 0;
     padding: 10px 12px 12px;
+  }
+
+  .chat-shell .composer-input,
+  .chat-shell .mention-picker-host {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .chat-shell .composer .btn-primary {
+    width: 64px !important;
+  }
+}
+
+/* =====================================================================
+   Phase 34 / 34.5 — Mattermost-v11 user menu + admin hamburger.
+   Sidebar carries a single .side-brand anchor at top (admin hamburger
+   to the left of the brand, opens the operations panel directly — no
+   intermediate dropdown for one item). The chat-header carries a
+   right-aligned avatar trigger that opens .user-menu, anchored top:56px
+   right:16px. Search input gets a leading 🔍 icon and a trailing × clear
+   button when results are showing. Phase 34.5 dropped the redundant
+   sidebar bottom identity row entirely — the user-menu-trigger in the
+   header is the single source of identity surfaces.
+   ===================================================================== */
+
+/* ── Sidebar brand row + hamburger ────────────────────────────────── */
+.chat-shell .side-brand {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0 -10px 8px;
+  padding: 12px 12px 10px;
+  border-bottom: 1px solid var(--chat-sidebar-line);
+  background: rgba(30, 50, 92, 0.98);
+}
+.chat-shell .side-brand.side-brand-no-burger {
+  padding-left: 14px;
+}
+.side-hamburger {
+  width: 30px;
+  height: 30px;
+  flex-shrink: 0;
+  display: inline-flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  gap: 4px;
+  border: 1px solid transparent;
+  background: transparent;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background 120ms ease, border-color 120ms ease;
+}
+.side-hamburger > span {
+  display: block;
+  width: 16px;
+  height: 2px;
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.82);
+  transition: background 120ms ease;
+}
+.side-hamburger:hover {
+  background: rgba(255, 255, 255, 0.12);
+  border-color: rgba(255, 255, 255, 0.20);
+}
+.side-hamburger:hover > span { background: #ffffff; }
+.side-hamburger:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px rgba(28, 88, 217, 0.55);
+}
+.side-brand-name {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-weight: 700;
+  font-size: 15px;
+  letter-spacing: 0.01em;
+  color: rgba(255, 255, 255, 0.95);
+}
+.side-brand-logo {
+  width: 28px;
+  height: 28px;
+  display: block;
+  flex: 0 0 auto;
+  filter: drop-shadow(0 2px 5px rgba(9, 18, 45, 0.28));
+}
+
+/* ── Chat-header right group + user-menu trigger ──────────────────── */
+.chat-shell .chat-header { gap: 14px; }
+.chat-header-right {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.chat-header-divider {
+  width: 1px;
+  height: 24px;
+  background: var(--chat-line);
+  flex-shrink: 0;
+}
+.search-form {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+.chat-shell .search-form .search-icon {
+  position: absolute;
+  left: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: 13px;
+  opacity: 0.55;
+  pointer-events: none;
+}
+.chat-shell .search-form .search-input {
+  padding-left: 30px;
+  padding-right: 30px;
+}
+.chat-shell .search-form .search-clear {
+  position: absolute;
+  right: 6px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 22px;
+  height: 22px;
+  display: grid;
+  place-items: center;
+  border: 0;
+  background: transparent;
+  color: #6b7280;
+  font-size: 16px;
+  line-height: 1;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease;
+}
+.chat-shell .search-form .search-clear:hover {
+  background: #eef2f8;
+  color: #1f2937;
+}
+.user-menu-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 36px;
+  padding: 2px 8px 2px 4px;
+  border: 1px solid transparent;
+  background: transparent;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background 120ms ease, border-color 120ms ease;
+}
+.user-menu-trigger:hover {
+  background: #f1f3f7;
+  border-color: #e1e4eb;
+}
+.user-menu-trigger:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px rgba(28, 88, 217, 0.55);
+}
+.user-menu-trigger[aria-expanded="true"] {
+  background: rgba(28, 88, 217, 0.08);
+  border-color: rgba(28, 88, 217, 0.30);
+}
+.user-menu-caret {
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1;
+  transition: transform 120ms ease;
+}
+.user-menu-trigger[aria-expanded="true"] .user-menu-caret {
+  transform: rotate(180deg);
+}
+
+/* ── User menu overlay layer ──────────────────────────────────────── */
+.user-menu-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 1500;
+  pointer-events: none;
+}
+.user-menu-backdrop {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  cursor: default;
+  pointer-events: auto;
+}
+.user-menu {
+  position: absolute;
+  top: 56px;
+  right: 16px;
+  width: min(320px, calc(100vw - 24px));
+  pointer-events: auto;
+  background: #ffffff;
+  color: #1f2937;
+  border: 1px solid #d9dce3;
+  border-radius: 10px;
+  box-shadow: 0 24px 56px -20px rgba(15, 23, 42, 0.42), 0 6px 16px rgba(15, 23, 42, 0.10);
+  padding: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  animation: user-menu-pop 140ms ease-out;
+  transform-origin: top right;
+}
+@keyframes user-menu-pop {
+  from { opacity: 0; transform: translateY(-4px) scale(0.985); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+.user-menu-head {
+  padding: 12px 14px 12px;
+}
+.user-menu-name {
+  font-size: 15px;
+  font-weight: 700;
+  color: #1f2937;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.user-menu-email {
+  margin-top: 2px;
+  font-size: 13px;
+  color: #6b7280;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.user-menu-current-status {
+  margin-top: 8px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 8px 3px 6px;
+  background: #f4f6fa;
+  border: 1px solid #e1e4eb;
+  border-radius: 999px;
+  font-size: 13px;
+  color: #4b5563;
+  font-weight: 500;
+}
+.user-menu-section { padding: 6px 8px 4px; }
+.user-menu-section-label {
+  padding: 0 4px 6px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #6b7280;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+.user-menu-status-row {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 4px;
+}
+.user-menu-status-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 8px;
+  border: 1px solid #e1e4eb;
+  background: #ffffff;
+  border-radius: 6px;
+  color: #1f2937;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 120ms ease, border-color 120ms ease, transform 80ms ease;
+}
+.user-menu-status-pill > span:nth-child(2) {
+  flex: 1;
+  text-align: left;
+}
+.user-menu-status-pill:hover { background: #f5f7fb; transform: translateY(-1px); }
+.user-menu-status-pill:active { transform: translateY(0); }
+.user-menu-status-pill.is-active {
+  background: rgba(28, 88, 217, 0.10);
+  border-color: rgba(28, 88, 217, 0.46);
+  color: #1c58d9;
+  font-weight: 600;
+}
+.user-menu-check {
+  font-size: 13px;
+  font-weight: 700;
+  color: #1c58d9;
+  line-height: 1;
+}
+.status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #9aa0a6;
+}
+.status-dot.status-online { background: #21a366; }
+.status-dot.status-away { background: #f5a623; }
+.status-dot.status-dnd { background: #d24b4e; }
+.status-dot.status-offline { background: #9aa0a6; }
+.user-menu-divider {
+  height: 1px;
+  margin: 4px -6px;
+  background: #ececf0;
+}
+.user-menu-item,
+.user-menu-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 8px 12px;
+  border: 0;
+  background: transparent;
+  border-radius: 4px;
+  color: #1f2937;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+  transition: background 100ms ease;
+}
+.user-menu-item:hover,
+.user-menu-row:hover {
+  background: #f1f3f7;
+}
+.user-menu-item:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+.user-menu-icon {
+  width: 20px;
+  flex-shrink: 0;
+  text-align: center;
+  font-size: 15px;
+  line-height: 1;
+}
+.user-menu-label {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  overflow: hidden;
+}
+.user-menu-label small {
+  color: #6b7280;
+  font-size: 13px;
+  font-weight: 400;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.user-menu-row {
+  cursor: default;
+}
+.user-menu-row input[type="checkbox"] {
+  flex-shrink: 0;
+  width: 16px;
+  height: 16px;
+  accent-color: #1c58d9;
+  cursor: pointer;
+}
+.user-menu-select {
+  height: 28px;
+  min-width: 100px;
+  padding: 0 8px;
+  font-size: 13px;
+  color: #1f2937;
+  background: #ffffff;
+  border: 1px solid #c5cad3;
+  border-radius: 4px;
+  cursor: pointer;
+}
+.user-menu-select:focus {
+  outline: none;
+  border-color: #1c58d9;
+  box-shadow: 0 0 0 2px rgba(28, 88, 217, 0.20);
+}
+.user-menu-item-danger { color: #b1383b; }
+.user-menu-item-danger:hover { background: rgba(210, 75, 78, 0.10); }
+
+/* Dark-mode overrides for the dropdown so the white card flips to a
+   matte dark surface that doesn't blow out the user's vision. */
+html[data-theme="dark"] .user-menu-trigger:hover {
+  background: rgba(255, 255, 255, 0.06);
+  border-color: rgba(255, 255, 255, 0.12);
+}
+html[data-theme="dark"] .user-menu {
+  background: #2c2d31;
+  color: #e8eaed;
+  border-color: #3a3b40;
+}
+html[data-theme="dark"] .user-menu-name { color: #e8eaed; }
+html[data-theme="dark"] .user-menu-email,
+html[data-theme="dark"] .user-menu-section-label,
+html[data-theme="dark"] .user-menu-label small {
+  color: #9aa0a6;
+}
+html[data-theme="dark"] .user-menu-status-pill {
+  background: #232428;
+  border-color: #3a3b40;
+  color: #e8eaed;
+}
+html[data-theme="dark"] .user-menu-status-pill:hover { background: #2f3034; }
+html[data-theme="dark"] .user-menu-status-pill.is-active {
+  background: rgba(93, 137, 234, 0.18);
+  border-color: rgba(93, 137, 234, 0.55);
+  color: #93b3f1;
+}
+html[data-theme="dark"] .user-menu-divider { background: #3a3b40; }
+html[data-theme="dark"] .user-menu-item,
+html[data-theme="dark"] .user-menu-row { color: #e8eaed; }
+html[data-theme="dark"] .user-menu-item:hover,
+html[data-theme="dark"] .user-menu-row:hover { background: #34353a; }
+html[data-theme="dark"] .user-menu-select {
+  background: #232428;
+  color: #e8eaed;
+  border-color: #3a3b40;
+}
+html[data-theme="dark"] .user-menu-item-danger { color: #f59295; }
+html[data-theme="dark"] .user-menu-item-danger:hover { background: rgba(241, 92, 94, 0.14); }
+html[data-theme="dark"] .user-menu-current-status {
+  background: #232428;
+  border-color: #3a3b40;
+  color: #b8bcc4;
+}
+html[data-theme="dark"] .user-menu-check { color: #93b3f1; }
+html[data-theme="dark"] .user-menu-trigger[aria-expanded="true"] {
+  background: rgba(93, 137, 234, 0.18);
+  border-color: rgba(93, 137, 234, 0.55);
+}
+html[data-theme="dark"] .chat-header-divider { background: #3a3b40; }
+html[data-theme="dark"] .chat-shell .search-form .search-clear { color: #9aa0a6; }
+html[data-theme="dark"] .chat-shell .search-form .search-clear:hover {
+  background: #34353a;
+  color: #e8eaed;
+}
+
+/* Mobile: drop the user-menu to fill more of the viewport so the
+   dropdown isn't clipped on a narrow screen. */
+@media (max-width: 640px) {
+  .user-menu {
+    top: 56px;
+    right: 8px;
+    left: 8px;
+    width: auto;
+  }
+}
+
+/* =====================================================================
+   Phase 34.6 — Polish pass for visual rhythm.
+   Targets: sidebar item-active bar weight, channel-list hover warmth,
+   section-title hierarchy, message hover tint, msg-actions shadow,
+   composer min-height + focus ring, thread empty-state, reaction-chip
+   pill shape. All overrides live at the bottom so the previous v11
+   blocks remain readable; remove this block to revert.
+   ===================================================================== */
+
+/* Sidebar list rhythm — bigger active bar, softer hover */
+.chat-shell .chat-side .item-active,
+.chat-shell .chat-side .item-active:hover {
+  box-shadow: inset 4px 0 0 #ffffff;
+}
+.chat-shell .chat-side .item-list {
+  gap: 2px;
+}
+.chat-shell .chat-side .section-title {
+  margin-top: 18px;
+  color: #b8c0d4;
+  font-size: 13px;
+  letter-spacing: 0.06em;
+}
+.chat-shell .chat-side .section-title:first-child {
+  margin-top: 6px;
+}
+
+/* Message stream — cooler hover tint, tighter actions shadow */
+.chat-shell .msg:hover,
+.chat-shell .msg-me:hover {
+  background: #f4f6fa;
+}
+.chat-shell .msg-actions {
+  box-shadow: 0 4px 12px rgba(15, 23, 42, 0.10);
+  border-color: #dde1e8;
+}
+
+/* Composer — slightly taller resting state, accent ring on focus */
+.chat-shell .composer-input {
+  min-height: 44px;
+  line-height: 1.5;
+}
+.chat-shell .composer-input:focus {
+  border-color: #1c58d9;
+  box-shadow: 0 0 0 3px rgba(28, 88, 217, 0.18);
+}
+
+/* Reaction chip → pill (Mattermost v11 reaction shape) */
+.chat-shell .reaction-chip {
+  border-radius: 999px;
+  padding: 2px 8px;
+  min-height: 22px;
+  font-size: 13px;
+}
+
+/* Thread panel empty-state — drop the dashed border, use a soft solid card */
+.chat-shell .thread-panel .chat-empty {
+  border: 1px solid #e1e4eb;
+  border-radius: 6px;
+  background: #f7f9fc;
+  color: var(--chat-muted);
+}
+
+/* msg-meta vertical alignment with the inline avatar — keep author and
+   timestamp on the same baseline so a +1px avatar doesn't rip the row. */
+.chat-shell .msg-meta {
+  align-items: center;
+  min-height: 24px;
+}
+
+/* Channel-stats chip in chat-header — match v11 token shape */
+.chat-shell .channel-stats-chip {
+  height: 22px;
+  padding: 0 8px;
+  border-radius: 11px;
+  border: 1px solid var(--chat-line);
+  background: #f7f9fc;
+  color: #4b5563;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+/* Dark-mode variants for the polish pass */
+html[data-theme="dark"] .chat-shell .msg:hover,
+html[data-theme="dark"] .chat-shell .msg-me:hover {
+  background: #232428;
+}
+html[data-theme="dark"] .chat-shell .msg-actions {
+  border-color: #3a3b40;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.36);
+}
+html[data-theme="dark"] .chat-shell .thread-panel .chat-empty {
+  border-color: #3a3b40;
+  background: #232428;
+}
+html[data-theme="dark"] .chat-shell .channel-stats-chip {
+  background: #232428;
+  border-color: #3a3b40;
+  color: #b8bcc4;
+}
+
+/* moyro accessibility + settings foundation. Keep content text at a
+   comfortable reading size and reserve 13px only for metadata/captions. */
+html,
+body,
+#root {
+  min-height: 100%;
+  font-family: "Noto Sans KR Variable", "Noto Sans KR", Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-size: 16px;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+}
+
+.chat-shell .msg-body,
+.chat-shell .composer-input,
+.chat-shell .chat-empty {
+  font-size: 16px;
+  line-height: 1.6;
+}
+
+.chat-shell .item,
+.chat-shell .btn-ghost,
+.chat-shell .btn-primary,
+.chat-shell .user-menu-item,
+.chat-shell .user-menu-row,
+.chat-shell .user-menu-select,
+.chat-shell .user-menu-status-pill {
+  font-size: 14px;
+}
+
+.chat-shell .section-title,
+.chat-shell .msg-time,
+.chat-shell .msg-edited,
+.chat-shell .user-menu-label small,
+.chat-shell .user-menu-email,
+.chat-shell .user-menu-section-label,
+.chat-shell .channel-stats-chip,
+.login-page .login-footer,
+.login-page .login-subtitle {
+  font-size: 13px;
+}
+
+/* Shared visible scrollbars for dense administrator and account menus. */
+.moyro-scrollbar,
+.user-menu {
+  scrollbar-gutter: stable;
+  scrollbar-width: thin;
+  scrollbar-color: #718198 transparent;
+}
+
+.moyro-scrollbar::-webkit-scrollbar,
+.user-menu::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+.moyro-scrollbar::-webkit-scrollbar-track,
+.user-menu::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.moyro-scrollbar::-webkit-scrollbar-thumb,
+.user-menu::-webkit-scrollbar-thumb {
+  min-height: 36px;
+  border: 2px solid transparent;
+  border-radius: 999px;
+  background: #718198;
+  background-clip: padding-box;
+}
+
+.moyro-scrollbar::-webkit-scrollbar-thumb:hover,
+.user-menu::-webkit-scrollbar-thumb:hover {
+  background: #52647e;
+  background-clip: padding-box;
+}
+
+.user-menu {
+  max-height: calc(100dvh - 72px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.user-menu-version {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 14px 12px;
+  color: #697386;
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.user-menu-version-brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-weight: 650;
+}
+
+/* URL-driven service administration and personal-settings layouts. */
+.moyro-settings-shell {
+  display: grid;
+  grid-template-columns: 280px minmax(0, 1fr);
+  width: 100%;
+  height: 100dvh;
+  min-height: 640px;
+  overflow: hidden;
+  background: #f5f7fb;
+}
+
+.moyro-settings-sidebar {
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  flex-direction: column;
+  border-right: 1px solid #dfe4ec;
+  background: #fff;
+}
+
+.moyro-settings-nav {
+  min-height: 0;
+  flex: 1;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.moyro-settings-main {
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  flex-direction: column;
+}
+
+.moyro-settings-header {
+  z-index: 2;
+  display: flex;
+  min-height: 72px;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 24px;
+  border-bottom: 1px solid #dfe4ec;
+  background: rgba(255, 255, 255, 0.96);
+}
+
+.moyro-settings-content {
+  min-width: 0;
+  min-height: 0;
+  flex: 1;
+  overflow: auto;
+  padding: clamp(20px, 3vw, 40px);
+}
+
+.moyro-mark {
+  display: block;
+  width: 40px;
+  height: 40px;
+  flex: 0 0 auto;
+  filter: drop-shadow(0 5px 7px rgba(49, 95, 234, 0.20));
+}
+
+.moyro-secret-value,
+.moyro-ai-output {
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+html[data-theme="dark"] .moyro-settings-shell {
+  background: #16181d;
+}
+
+html[data-theme="dark"] .moyro-settings-sidebar,
+html[data-theme="dark"] .moyro-settings-header {
+  border-color: #363a43;
+  background: #202228;
+}
+
+html[data-theme="dark"] .user-menu-version {
+  color: #adb4c2;
+}
+
+@media (max-width: 800px) {
+  .moyro-settings-shell {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(220px, 42dvh) minmax(0, 1fr);
+    min-height: 0;
+  }
+
+  .moyro-settings-sidebar {
+    border-right: 0;
+    border-bottom: 1px solid #dfe4ec;
+  }
+
+  .moyro-settings-header {
+    min-height: 64px;
+    padding-inline: 14px;
+  }
+
+  .moyro-settings-content {
+    padding: 18px 14px 28px;
+  }
+}
+
+@media (forced-colors: active) {
+  .moyro-scrollbar,
+  .user-menu {
+    forced-color-adjust: auto;
   }
 }

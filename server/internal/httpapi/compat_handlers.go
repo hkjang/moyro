@@ -5,7 +5,7 @@ import (
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/moddle/moddle/server/internal/ws"
+	"github.com/hkjang/moyro/server/internal/ws"
 )
 
 func (h *handlers) listTeamsForUserID(w http.ResponseWriter, r *http.Request, targetID string) {

@@ -2,7 +2,7 @@
 
 Status date: 2026-04-26
 
-Moddle targets Mattermost API v4 compatibility. The official Mattermost
+moyro targets Mattermost API v4 compatibility. The official Mattermost
 developer documentation describes the REST API as a JSON web service for
 clients, integrations, and servers, and points to API version 4 as the current
 server API. Mattermost documents endpoints with OpenAPI YAML in the
@@ -80,7 +80,7 @@ permission denial, and not-found behavior where applicable.
      assumptions.
 
 2. Core user/team/channel/post compatibility
-   - Add official aliases where Moddle currently uses `/users/me/...` helper
+   - Add official aliases where moyro currently uses `/users/me/...` helper
      routes instead of `/users/{user_id}/...`.
    - Fill high-traffic reads first: teams by id/name, team members, channel
      members by id, channel stats, post by id, file preview/link.
@@ -265,7 +265,7 @@ This is a working-tree measurement, not a clean release baseline. It means every
 official Mattermost API v4 method/path shape is currently routed locally. It
 does not mean full behavioral compatibility yet; enterprise/cloud/AI-only
 surfaces still need contract hardening or intentionally disabled responses where
-RelayChat does not provide the backing service.
+moyro does not provide the backing service.
 
 Recent admin-focused slices added Mattermost access-control and authentication
 operator surfaces:

@@ -1,4 +1,4 @@
-// Package plugin is the server-side Moddle Plugin SDK. Plugin authors embed
+// Package plugin is the server-side moyro Plugin SDK. Plugin authors embed
 // this and implement the Hooks they care about; the package performs the
 // HashiCorp go-plugin compatible handshake with the host and serves net/rpc.
 package plugin
@@ -19,10 +19,10 @@ const (
 	coreProtocolVersion = 1
 	appProtocolVersion  = 1
 
-	magicCookieKey   = "MODDLE_PLUGIN"
-	magicCookieValue = "moddle.v1"
+	magicCookieKey   = "MOYRO_PLUGIN"
+	magicCookieValue = "moyro.v1"
 
-	serviceName = "Moddle"
+	serviceName = "Moyro"
 )
 
 // Hooks is the minimum contract for every plugin. Implement additional
@@ -69,7 +69,7 @@ type Raw struct {
 // Call it from your plugin's main().
 func Serve(hooks Hooks) {
 	if os.Getenv(magicCookieKey) != magicCookieValue {
-		fmt.Fprintln(os.Stderr, "This is a Moddle plugin and cannot be executed directly.")
+		fmt.Fprintln(os.Stderr, "This is a moyro plugin and cannot be executed directly.")
 		os.Exit(1)
 	}
 

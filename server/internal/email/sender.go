@@ -77,7 +77,7 @@ func (s *SMTPSender) Send(ctx context.Context, to, subject, htmlBody, textBody s
 // multipart/alternative for text+html clients. Uses CRLF line endings as
 // required by the SMTP protocol.
 func composeMultipart(from, to, subject, htmlBody, textBody string) string {
-	boundary := fmt.Sprintf("moddle-%d", time.Now().UnixNano())
+	boundary := fmt.Sprintf("moyro-%d", time.Now().UnixNano())
 	var b strings.Builder
 	b.WriteString("From: " + from + "\r\n")
 	b.WriteString("To: " + to + "\r\n")

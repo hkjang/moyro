@@ -13,8 +13,8 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/moddle/moddle/server/internal/email"
-	"github.com/moddle/moddle/server/internal/store"
+	"github.com/hkjang/moyro/server/internal/email"
+	"github.com/hkjang/moyro/server/internal/store"
 )
 
 type Worker struct {

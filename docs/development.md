@@ -18,23 +18,22 @@ powershell -ExecutionPolicy Bypass -File scripts\dev.ps1
 The launcher starts the Docker Compose dev services, then opens separate
 PowerShell windows for:
 
-- `go run ./cmd/moddle` in `server/`
+- `go run ./cmd/moyro` in `server/`
 - `npm run dev -- --host 127.0.0.1 --port 5173` in `webapp/`
 
-It also points `MODDLE_PLUGIN_DIR` at the repo-level `plugins/` directory so
-local plugin fixtures are available during development.
+The server window receives the same four-variable bootstrap contract used by
+the release image. Values in the launcher are development-only fixtures.
 
 Useful switches:
 
 - `-SkipInfra` when PostgreSQL, Redis, and MinIO are already running
 - `-NoServer` to start only infrastructure and the web app
 - `-NoWeb` to start only infrastructure and the server
-- `-ServerPort 8066` to move the API server to another port
 - `-WebPort 5174` to move Vite to another port
 
 Before opening the server window, the launcher checks whether the requested
 server port is already occupied by a process from this repo. If it finds one,
-it stops that process so a stale `bin\moddle.exe` build cannot keep serving old
+it stops that process so a stale `bin\moyro.exe` build cannot keep serving old
 API routes while the web app is running fresh code.
 
 ## Local Services
@@ -53,21 +52,19 @@ This starts:
 
 ```powershell
 Set-Location server
-go run ./cmd/moddle
+go run ./cmd/moyro
 ```
 
-Useful environment variables:
+Required environment variables:
 
-- `MODDLE_LISTEN`, default `:8065`
-- `MODDLE_DATABASE_URL`, default local PostgreSQL URL
-- `MODDLE_REDIS_URL`, default local Redis URL
-- `MODDLE_JWT_SECRET`
-- `MODDLE_PLUGIN_DIR`, default `./plugins`
-- `MODDLE_FILE_BACKEND`, `fs` or `s3`
-- `MODDLE_FILE_ROOT`
-- `MODDLE_PUBLIC_BASE_URL`
-- `MODDLE_ALLOWED_OUTGOING_HOSTS`
-- OAuth, SMTP, S3, and link preview variables in `server/internal/config/config.go`
+- `POSTGRES_DSN`
+- `BOOTSTRAP_ADMIN`, a plain email address
+- `BOOTSTRAP_ADMIN_PASSWORD`, 12–72 bytes
+- `ENCRYPTION_KEY`, standard base64 for 32 random bytes
+
+The server binds to `:8065`. Runtime product settings belong in the
+administrator console rather than additional application environment
+variables.
 
 ## Webapp
 
@@ -81,31 +78,30 @@ In Vite development mode, the login screen auto-signs in with a local dev
 account. If the account does not exist yet, the webapp registers it once and
 then logs in.
 
-Default dev account:
+Bootstrap development account:
 
-- username/login: `webuser`
-- email: `web@x.com`
-- password: `P@ssw0rd1`
+- login/email: `admin@moyro.local`
+- password: `MoyroDev!2026`
 
 Override with `webapp/.env.local`:
 
 ```dotenv
-VITE_MODDLE_DEV_LOGIN_ID=webuser
-VITE_MODDLE_DEV_USERNAME=webuser
-VITE_MODDLE_DEV_EMAIL=web@x.com
-VITE_MODDLE_DEV_PASSWORD=P@ssw0rd1
+VITE_MOYRO_DEV_LOGIN_ID=webuser
+VITE_MOYRO_DEV_USERNAME=webuser
+VITE_MOYRO_DEV_EMAIL=web@x.com
+VITE_MOYRO_DEV_PASSWORD=P@ssw0rd1
 ```
 
 Disable auto-login when testing the login/OAuth/invite screens:
 
 ```dotenv
-VITE_MODDLE_DEV_AUTO_LOGIN=false
+VITE_MOYRO_DEV_AUTO_LOGIN=false
 ```
 
 You can also disable it in one browser profile without changing files:
 
 ```js
-localStorage.setItem("moddle.devAutoLogin.disabled", "true")
+localStorage.setItem("moyro.devAutoLogin.disabled", "true")
 ```
 
 Prefer TypeScript files in `webapp/src`. The neighboring `.js` files are
@@ -146,9 +142,9 @@ Get-NetTCPConnection -LocalPort 8065 -State Listen |
   Select-Object LocalAddress,LocalPort,OwningProcess
 ```
 
-Older local binaries such as `bin\moddle.exe` can occupy port `8065` and make
+Older local binaries such as `bin\moyro.exe` can occupy port `8065` and make
 Vite proxy requests to outdated API code. Run `scripts\dev.ps1` again to clear a
-repo-owned stale process and start the current `go run ./cmd/moddle` server.
+repo-owned stale process and start the current `go run ./cmd/moyro` server.
 
 ## Change Rules
 

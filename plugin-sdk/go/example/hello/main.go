@@ -1,11 +1,11 @@
-// Example Moddle server plugin: echoes OnActivate and appends "!" to posts.
+// Example moyro server plugin: echoes OnActivate and appends "!" to posts.
 package main
 
 import (
 	"context"
 	"encoding/json"
 
-	"github.com/moddle/moddle/plugin-sdk/go/plugin"
+	"github.com/hkjang/moyro/plugin-sdk/go/plugin"
 )
 
 type Hello struct{}

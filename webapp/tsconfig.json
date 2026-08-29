@@ -13,6 +13,7 @@
     "skipLibCheck": true,
     "resolveJsonModule": true,
     "isolatedModules": true,
+    "noEmit": true,
     "useDefineForClassFields": true,
     "baseUrl": ".",
     "paths": { "@/*": ["src/*"] }

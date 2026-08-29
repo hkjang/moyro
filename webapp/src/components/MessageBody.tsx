@@ -24,6 +24,7 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import rehypeSanitize from "rehype-sanitize";
 import { api, type LinkPreview } from "@/api/client";
+import { AuthenticatedImage } from "./AuthenticatedMedia";
 import { customEmojiByName } from "./EmojiPicker";
 
 type Props = {
@@ -41,11 +42,11 @@ const EMOJI_TOKEN = /(^|[^a-zA-Z0-9_])(:([a-z0-9_-]{1,40}):)/g;
 // Rewrite `:name:` into markdown image syntax when the name resolves to
 // a known custom emoji. Plain-text tokens (including leading whitespace)
 // are preserved exactly so the rest of the markdown parses unchanged.
-function rewriteEmojis(source: string, token: string): string {
+function rewriteEmojis(source: string): string {
   return source.replace(EMOJI_TOKEN, (whole, lead: string, _token: string, name: string) => {
     const emoji = customEmojiByName(name);
     if (!emoji) return whole;
-    const url = api.emojiImageURL(token, emoji.id);
+    const url = api.emojiImagePath(emoji.id);
     // Alt prefix `emoji:` lets the <img> override below switch to the
     // inline emoji styling without parsing the src again.
     return `${lead}![emoji:${name}](${url})`;
@@ -54,17 +55,15 @@ function rewriteEmojis(source: string, token: string): string {
 
 // Only allow images whose src points into our own API surface. Everything
 // else (arbitrary https, javascript:, data:, file:) is dropped silently.
-function isSafeImageSrc(src: string | undefined): boolean {
+function isSafeImageSrc(src: string | undefined): src is string {
   if (!src) return false;
-  // Relative path under /api/v4/ is ours. A leading slash is the
-  // canonical form the emoji/file endpoints return.
-  return src.startsWith("/api/v4/");
+  return /^\/api\/v4\/(?:files\/[^/?#]+(?:\/thumbnail)?|emoji\/[^/?#]+\/image)$/.test(src);
 }
 
 export function MessageBody({ source, token, linkMetadata }: Props) {
   // Memoize the emoji-rewritten string so ReactMarkdown only re-parses
   // when the source actually changes, not on every parent re-render.
-  const rewritten = useMemo(() => rewriteEmojis(source, token), [source, token]);
+  const rewritten = useMemo(() => rewriteEmojis(source), [source]);
   // Only previews with at least a title are worth rendering. `fetched_at`
   // being present without a title happens on SSRF-blocked / 4xx fetches
   // (we cache the failure to avoid re-hitting).
@@ -94,8 +93,9 @@ export function MessageBody({ source, token, linkMetadata }: Props) {
             if (!isSafeImageSrc(src)) return <>{alt ?? ""}</>;
             const isEmoji = typeof alt === "string" && alt.startsWith("emoji:");
             return (
-              <img
-                src={src}
+              <AuthenticatedImage
+                token={token}
+                path={src}
                 alt={alt ?? ""}
                 loading="lazy"
                 className={isEmoji ? "emoji-img" : "md-img"}
@@ -133,9 +133,10 @@ export function MessageBody({ source, token, linkMetadata }: Props) {
               className="link-preview"
             >
               {lp.image_url && (
-                <img
+                <AuthenticatedImage
+                  token={token}
+                  path={api.linkPreviewImagePath(lp.image_url)}
                   className="link-preview-img"
-                  src={api.linkPreviewImageURL(lp.image_url)}
                   alt=""
                   loading="lazy"
                 />

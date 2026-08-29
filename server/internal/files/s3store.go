@@ -36,7 +36,7 @@ type S3Storage struct {
 // consults cfg.FileBackend.
 func NewS3Storage(ctx context.Context, bucket, region, endpoint string) (*S3Storage, error) {
 	if bucket == "" {
-		return nil, errors.New("s3 storage requires MODDLE_S3_BUCKET")
+		return nil, errors.New("s3 storage requires a bucket")
 	}
 	loadCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()

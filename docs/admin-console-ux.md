@@ -2,7 +2,7 @@
 
 Status date: 2026-04-26
 
-RelayChat admin UX should converge on a Mattermost-style System Console rather
+moyro admin UX should converge on a Mattermost-style System Console rather
 than a chat-adjacent utility drawer.
 
 ## Structure

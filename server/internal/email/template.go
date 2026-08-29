@@ -34,7 +34,7 @@ const digestHTML = `<!doctype html>
   <div style="margin-top:4px;color:#333;">{{.Excerpt}}</div>
 </div>
 {{end}}
-<p style="margin-top:24px;"><a href="{{.BaseURL}}" style="background:#4c6ef5;color:#fff;padding:10px 16px;border-radius:4px;text-decoration:none;">RelayChat 열기</a></p>
+<p style="margin-top:24px;"><a href="{{.BaseURL}}" style="background:#4c6ef5;color:#fff;padding:10px 16px;border-radius:4px;text-decoration:none;">moyro 열기</a></p>
 <hr/>
 <p style="color:#868e96;font-size:12px;">이메일 수신을 원치 않으시면 프로필 설정에서 해제할 수 있습니다.</p>
 </body></html>`
@@ -46,7 +46,7 @@ const digestText = `안녕하세요, {{.Recipient}}님.
 {{range .Mentions}}- {{.Username}} (#{{.ChannelName}}, {{.PostedAt}}): {{.Excerpt}}
 {{end}}
 
-RelayChat 열기: {{.BaseURL}}
+moyro 열기: {{.BaseURL}}
 
 이메일 수신을 원치 않으시면 프로필 설정에서 해제할 수 있습니다.
 `
@@ -65,6 +65,6 @@ func RenderDigest(d DigestData) (string, string, string, error) {
 	if err := textTpl.Execute(&t, d); err != nil {
 		return "", "", "", err
 	}
-	subject := fmt.Sprintf("[RelayChat] 멘션 %d건이 기다리고 있어요", len(d.Mentions))
+	subject := fmt.Sprintf("[moyro] 멘션 %d건이 기다리고 있어요", len(d.Mentions))
 	return subject, h.String(), t.String(), nil
 }

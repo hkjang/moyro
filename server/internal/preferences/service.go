@@ -20,7 +20,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
-	"github.com/moddle/moddle/server/internal/store"
+	"github.com/hkjang/moyro/server/internal/store"
 )
 
 // Preference matches Mattermost's v4 preference shape exactly. Field names

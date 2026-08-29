@@ -15,9 +15,9 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/hkjang/moyro/server/internal/posts"
+	"github.com/hkjang/moyro/server/internal/store"
 	"github.com/jackc/pgx/v5"
-	"github.com/moddle/moddle/server/internal/posts"
-	"github.com/moddle/moddle/server/internal/store"
 )
 
 // OutgoingService owns CRUD for outgoing webhooks.
@@ -26,19 +26,19 @@ type OutgoingService struct{ db *store.DB }
 func NewOutgoing(db *store.DB) *OutgoingService { return &OutgoingService{db: db} }
 
 type OutgoingHook struct {
-	ID            string   `json:"id"`
-	Token         string   `json:"token"`
-	CreatorID     string   `json:"creator_id"`
-	TeamID        string   `json:"team_id"`
-	ChannelID     string   `json:"channel_id"`
-	TriggerWords  []string `json:"trigger_words"`
-	TriggerWhen   int      `json:"trigger_when"`
-	CallbackURLs  []string `json:"callback_urls"`
-	DisplayName   string   `json:"display_name"`
-	ContentType   string   `json:"content_type"`
-	CreateAt      int64    `json:"create_at"`
-	UpdateAt      int64    `json:"update_at"`
-	DeleteAt      int64    `json:"delete_at"`
+	ID           string   `json:"id"`
+	Token        string   `json:"token"`
+	CreatorID    string   `json:"creator_id"`
+	TeamID       string   `json:"team_id"`
+	ChannelID    string   `json:"channel_id"`
+	TriggerWords []string `json:"trigger_words"`
+	TriggerWhen  int      `json:"trigger_when"`
+	CallbackURLs []string `json:"callback_urls"`
+	DisplayName  string   `json:"display_name"`
+	ContentType  string   `json:"content_type"`
+	CreateAt     int64    `json:"create_at"`
+	UpdateAt     int64    `json:"update_at"`
+	DeleteAt     int64    `json:"delete_at"`
 }
 
 func (s *OutgoingService) Create(ctx context.Context, creatorID, teamID, channelID string, triggerWords, callbackURLs []string, triggerWhen int, displayName, contentType string) (*OutgoingHook, error) {
@@ -145,6 +145,28 @@ func (s *OutgoingService) Update(ctx context.Context, id string, triggerWords, c
 	return s.Get(ctx, id)
 }
 
+// RegenerateToken rotates an outgoing webhook's token to a fresh UUID and
+// returns the updated hook. Used by ops tooling to invalidate a leaked
+// token without tearing down + recreating the entire hook (which would
+// reset trigger words, callbacks, etc.). Returns ErrHookNotFound if the
+// hook is missing or soft-deleted.
+func (s *OutgoingService) RegenerateToken(ctx context.Context, id string) (*OutgoingHook, error) {
+	now := time.Now().UnixMilli()
+	newToken := uuid.NewString()
+	tag, err := s.db.Pool.Exec(ctx, `
+		UPDATE outgoing_webhooks
+		   SET token = $2, update_at = $3
+		 WHERE id = $1 AND delete_at = 0
+	`, id, newToken, now)
+	if err != nil {
+		return nil, err
+	}
+	if tag.RowsAffected() == 0 {
+		return nil, ErrHookNotFound
+	}
+	return s.Get(ctx, id)
+}
+
 func (s *OutgoingService) Delete(ctx context.Context, id string) error {
 	now := time.Now().UnixMilli()
 	tag, err := s.db.Pool.Exec(ctx, `
@@ -197,10 +219,10 @@ func (s *OutgoingService) candidatesFor(ctx context.Context, teamID, channelID s
 // slow or hanging endpoint can't delay post creation. It also enforces the
 // loop / depth safeguards the plan calls out.
 type Dispatcher struct {
-	svc       *OutgoingService
-	posts     *posts.Service
-	teamOf    TeamResolver
-	logger    *slog.Logger
+	svc    *OutgoingService
+	posts  *posts.Service
+	teamOf TeamResolver
+	logger *slog.Logger
 
 	client  *http.Client
 	workers int
@@ -212,7 +234,12 @@ type Dispatcher struct {
 	dedupMu sync.Mutex
 	dedup   map[string]time.Time
 
+	allowedMu    sync.RWMutex
 	allowedHosts map[string]struct{}
+	// allowedConfigured distinguishes the legacy secure-public fallback from
+	// an administrator-managed empty list. Once runtime settings load, an
+	// empty list means deny all outbound callbacks.
+	allowedConfigured bool
 }
 
 // TeamResolver maps a channel id to the team id that owns it. The
@@ -224,6 +251,28 @@ type dispatchJob struct {
 	hook OutgoingHook
 	post *posts.Post
 	user string // post author username, pre-resolved
+}
+
+var errOutgoingRedirect = errors.New("outgoing webhook redirects are disabled")
+
+// newOutboundHTTPClient deliberately rejects every redirect. Callback URLs
+// are checked against the administrator's allow-list before the request is
+// sent, but net/http would otherwise follow a 3xx response to a different
+// host without re-entering hostAllowed. Rejecting redirects is simpler and
+// safer than attempting to preserve method/body semantics while validating
+// every hop.
+func newOutboundHTTPClient() *http.Client {
+	return &http.Client{
+		Timeout: 10 * time.Second,
+		CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
+			return errOutgoingRedirect
+		},
+		Transport: &http.Transport{
+			MaxIdleConns:        100,
+			MaxIdleConnsPerHost: 4,
+			IdleConnTimeout:     30 * time.Second,
+		},
+	}
 }
 
 // NewDispatcher spins up the worker pool. workers<=0 defaults to 16.
@@ -240,23 +289,37 @@ func NewDispatcher(svc *OutgoingService, postSvc *posts.Service, teamOf TeamReso
 	}
 	d := &Dispatcher{
 		svc: svc, posts: postSvc, teamOf: teamOf, logger: logger,
-		client: &http.Client{
-			Timeout: 10 * time.Second,
-			Transport: &http.Transport{
-				MaxIdleConns:        100,
-				MaxIdleConnsPerHost: 4,
-				IdleConnTimeout:     30 * time.Second,
-			},
-		},
-		workers: workers,
-		jobs:    make(chan dispatchJob, 1024),
-		dedup:   map[string]time.Time{},
+		client:       newOutboundHTTPClient(),
+		workers:      workers,
+		jobs:         make(chan dispatchJob, 1024),
+		dedup:        map[string]time.Time{},
 		allowedHosts: allow,
 	}
 	for i := 0; i < workers; i++ {
 		go d.runWorker()
 	}
 	return d
+}
+
+// ConfigureAllowedHosts replaces the outbound callback allow-list at runtime.
+// Administrators edit this value through the database-backed site settings,
+// so reads and updates must remain race-free while webhook workers are active.
+// An empty administrator-managed list denies all outbound callbacks.
+func (d *Dispatcher) ConfigureAllowedHosts(hosts []string) {
+	if d == nil {
+		return
+	}
+	allow := make(map[string]struct{}, len(hosts))
+	for _, host := range hosts {
+		host = strings.ToLower(strings.TrimSpace(host))
+		if host != "" {
+			allow[host] = struct{}{}
+		}
+	}
+	d.allowedMu.Lock()
+	d.allowedHosts = allow
+	d.allowedConfigured = true
+	d.allowedMu.Unlock()
 }
 
 // QueueDepth reports the current number of pending callback jobs in the
@@ -362,7 +425,7 @@ func (d *Dispatcher) deliver(job dispatchJob) {
 			continue
 		}
 		req.Header.Set("Content-Type", job.hook.ContentType)
-		req.Header.Set("User-Agent", "Moddle-Webhook/1.0")
+		req.Header.Set("User-Agent", "moyro-webhook/1.0")
 		resp, err := d.client.Do(req)
 		if err != nil {
 			d.logger.Info("outgoing dispatch error", "hook", job.hook.ID, "err", err)
@@ -375,9 +438,9 @@ func (d *Dispatcher) deliver(job dispatchJob) {
 }
 
 // hostAllowed is the outbound request safety check.
-//   1. URL must parse + be http/https.
-//   2. If an allowlist is configured, host must be on it.
-//   3. Else, reject links to private / loopback / link-local addresses.
+//  1. URL must parse + be http/https.
+//  2. If an allowlist is configured, host must be on it.
+//  3. Else, reject links to private / loopback / link-local addresses.
 func (d *Dispatcher) hostAllowed(raw string) bool {
 	u, err := url.Parse(raw)
 	if err != nil {
@@ -390,9 +453,12 @@ func (d *Dispatcher) hostAllowed(raw string) bool {
 	if host == "" {
 		return false
 	}
-	if len(d.allowedHosts) > 0 {
-		_, ok := d.allowedHosts[strings.ToLower(host)]
-		return ok
+	d.allowedMu.RLock()
+	_, explicitlyAllowed := d.allowedHosts[strings.ToLower(host)]
+	hasManagedPolicy := d.allowedConfigured
+	d.allowedMu.RUnlock()
+	if hasManagedPolicy {
+		return explicitlyAllowed
 	}
 	// Resolve and check each address. We don't rebind the request to the
 	// resolved IP (TOCTOU-wise this is best-effort), but we do block the
@@ -414,22 +480,24 @@ func (d *Dispatcher) hostAllowed(raw string) bool {
 // that understand that shape work without adaptation.
 func outgoingPayload(job dispatchJob) map[string]any {
 	return map[string]any{
-		"token":         job.hook.Token,
-		"team_id":       job.hook.TeamID,
-		"channel_id":    job.post.ChannelID,
-		"timestamp":     job.post.CreateAt,
-		"user_id":       job.post.UserID,
-		"user_name":     job.user,
-		"post_id":       job.post.ID,
-		"text":          job.post.Message,
-		"trigger_word":  firstMatch(job.post.Message, job.hook.TriggerWords, job.hook.TriggerWhen),
-		"file_ids":      job.post.FileIDs,
+		"token":        job.hook.Token,
+		"team_id":      job.hook.TeamID,
+		"channel_id":   job.post.ChannelID,
+		"timestamp":    job.post.CreateAt,
+		"user_id":      job.post.UserID,
+		"user_name":    job.user,
+		"post_id":      job.post.ID,
+		"text":         job.post.Message,
+		"trigger_word": firstMatch(job.post.Message, job.hook.TriggerWords, job.hook.TriggerWhen),
+		"file_ids":     job.post.FileIDs,
 	}
 }
 
 // matchTrigger applies the Mattermost semantics:
-//   triggerWhen == 0 → first word of message equals a trigger
-//   triggerWhen == 1 → trigger appears anywhere (case-insensitive)
+//
+//	triggerWhen == 0 → first word of message equals a trigger
+//	triggerWhen == 1 → trigger appears anywhere (case-insensitive)
+//
 // Empty trigger list = never match (don't accidentally broadcast every post).
 func matchTrigger(message string, triggers []string, when int) bool {
 	if len(triggers) == 0 {

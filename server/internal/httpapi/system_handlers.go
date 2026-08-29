@@ -4,24 +4,26 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+
+	"github.com/hkjang/moyro/server/internal/buildinfo"
+	"github.com/hkjang/moyro/server/internal/config"
 )
 
 func (h *handlers) getClientConfig(w http.ResponseWriter, r *http.Request) {
-	baseURL := "http://localhost:8065"
+	build := buildinfo.Current()
+	baseURL := h.effectivePublicBaseURL(r)
+	siteName := h.effectiveSiteName()
 	linkPreviews := true
 	if h.cfg != nil {
-		if h.cfg.PublicBaseURL != "" {
-			baseURL = h.cfg.PublicBaseURL
-		}
 		linkPreviews = h.cfg.LinkPreviewsEnabled
 	}
 
 	writeJSON(w, http.StatusOK, map[string]string{
-		"Version":                          "0.1.0",
-		"BuildNumber":                      "dev",
-		"BuildDate":                        "",
-		"BuildHash":                        "",
-		"SiteName":                         "Moddle",
+		"Version":                          build.Version,
+		"BuildNumber":                      build.Version,
+		"BuildDate":                        build.BuildDate,
+		"BuildHash":                        build.Commit,
+		"SiteName":                         siteName,
 		"SiteURL":                          baseURL,
 		"WebsocketURL":                     websocketURLForBase(baseURL),
 		"DiagnosticId":                     "",
@@ -46,6 +48,40 @@ func (h *handlers) getClientConfig(w http.ResponseWriter, r *http.Request) {
 		"TeammateNameDisplay":              "username",
 		"ThreadAutoFollow":                 "true",
 	})
+}
+
+func (h *handlers) effectiveSiteName() string {
+	if h != nil && h.native != nil {
+		if name := strings.TrimSpace(h.native.currentSiteSettings().SiteName); name != "" {
+			return name
+		}
+	}
+	return "moyro"
+}
+
+// effectivePublicBaseURL prefers the administrator-managed database value.
+// Before it is configured, it derives the origin from the direct request so
+// an air-gapped deployment is not hard-coded to localhost. Forwarded headers
+// remain ignored; administrators behind a proxy should save the canonical URL.
+func (h *handlers) effectivePublicBaseURL(r *http.Request) string {
+	if h != nil && h.native != nil {
+		if base := strings.TrimSpace(h.native.currentSiteSettings().PublicBaseURL); base != "" {
+			return strings.TrimRight(base, "/")
+		}
+	}
+	// Preserve explicit transitional values used by compatibility tests and
+	// embedders, but do not let the fixed process default leak to remote users.
+	if h != nil && h.cfg != nil {
+		if base := strings.TrimSpace(h.cfg.PublicBaseURL); base != "" && base != config.DefaultPublicBaseURL {
+			return strings.TrimRight(base, "/")
+		}
+	}
+	if r != nil {
+		if origin, err := externalOrigin(r); err == nil {
+			return origin
+		}
+	}
+	return config.DefaultPublicBaseURL
 }
 
 func (h *handlers) getClientLicense(w http.ResponseWriter, r *http.Request) {

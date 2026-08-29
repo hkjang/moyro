@@ -1,19 +1,22 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useDispatch, useSelector } from "react-redux";
 import type { RootState } from "@/store";
-import { setAuth } from "@/store/authSlice";
+import { clearAuth, setAuth } from "@/store/authSlice";
 import { api } from "@/api/client";
-import { LoginView } from "./LoginView";
-import { ChatView } from "./ChatView";
+import { AppRouter } from "@/app/AppRouter";
 
 export function App() {
   const token = useSelector((s: RootState) => s.auth.token);
   const dispatch = useDispatch();
+  const initialTokenRef = useRef(token);
   // consumingHash flips true while we're resolving a `#token=...` redirect
   // from an OAuth callback. Prevents the LoginView from flashing between
   // "not logged in" and "logged in" when the fragment is present.
   const [consumingHash, setConsumingHash] = useState<boolean>(
     () => window.location.hash.startsWith("#token="),
+  );
+  const [restoringSession, setRestoringSession] = useState<boolean>(
+    () => Boolean(initialTokenRef.current) && !window.location.hash.startsWith("#token="),
   );
 
   // On mount, if the URL carries a #token= fragment, the OAuth callback
@@ -44,18 +47,25 @@ export function App() {
     );
   }, [dispatch]);
 
+  useEffect(() => {
+    const storedToken = initialTokenRef.current;
+    if (!storedToken || window.location.hash.startsWith("#token=")) return;
+    api.me(storedToken).then(
+      (user) => dispatch(setAuth({ token: storedToken, user })),
+      () => dispatch(clearAuth()),
+    ).finally(() => setRestoringSession(false));
+  }, [dispatch]);
+
   return (
-    <div style={{ fontFamily: "system-ui, sans-serif", height: "100vh" }}>
-      {consumingHash ? (
+    <div style={{ height: "100vh" }}>
+      {consumingHash || restoringSession ? (
         <div className="login-page">
           <div className="login-card">
             <p className="login-subtitle">로그인 중…</p>
           </div>
         </div>
-      ) : token ? (
-        <ChatView />
       ) : (
-        <LoginView />
+        <AppRouter />
       )}
     </div>
   );

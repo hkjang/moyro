@@ -20,8 +20,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/hkjang/moyro/server/internal/store"
 	"github.com/jackc/pgx/v5"
-	"github.com/moddle/moddle/server/internal/store"
 )
 
 var (
@@ -152,9 +152,10 @@ func (s *Service) ListForTeam(ctx context.Context, teamID string) ([]Invite, err
 
 // Revoke stamps the invite as revoked. Idempotent — a second revoke on
 // the same token is a no-op at the data layer.
-func (s *Service) Revoke(ctx context.Context, id string) error {
+func (s *Service) Revoke(ctx context.Context, id, teamID string) error {
 	_, err := s.db.Pool.Exec(ctx, `
-		UPDATE invite_tokens SET revoked_at = $2 WHERE id = $1 AND revoked_at = 0
-	`, id, time.Now().UnixMilli())
+		UPDATE invite_tokens SET revoked_at = $3
+		WHERE id = $1 AND team_id = $2 AND revoked_at = 0
+	`, id, teamID, time.Now().UnixMilli())
 	return err
 }

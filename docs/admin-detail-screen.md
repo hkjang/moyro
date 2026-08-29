@@ -2,7 +2,7 @@
 
 Status date: 2026-04-28
 
-RelayChat Admin is a dedicated full-page System Console, not a modal over the
+moyro Admin is a dedicated full-page System Console, not a modal over the
 chat workspace. The admin surface excludes general chat and message composition.
 
 ## Scope

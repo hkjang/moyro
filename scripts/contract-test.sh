@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Smoke test the core /api/v4 contract against a running moddle server.
+# Smoke test the core /api/v4 contract against a running moyro server.
 # Usage: BASE=http://localhost:8065 ./scripts/contract-test.sh
 set -euo pipefail
 
@@ -101,7 +101,7 @@ ok "reaction remove"
 say "upload file"
 TMPDIR="${TMPDIR:-/tmp}"
 mkdir -p "$TMPDIR"
-TMPF="$TMPDIR/moddle-contract-$SUFFIX.txt"
+TMPF="$TMPDIR/moyro-contract-$SUFFIX.txt"
 printf "contract test payload" > "$TMPF"
 # Windows curl.exe (git-bash) can't resolve MSYS /tmp paths — translate to Windows form.
 if command -v cygpath >/dev/null 2>&1; then
