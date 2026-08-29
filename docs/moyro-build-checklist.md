@@ -1,8 +1,8 @@
 # moyro 구현·검증 체크리스트
 
-이 문서는 [제품·기술 사양](moyro-product-spec.md)을 구현하기 위해 작성한 **계획 당시 체크리스트**이자 현재 진행 상태표다. 2026-08-29 `v0.1.1` 릴리스 후보를 다시 감사해, 소스 구현과 **현재 최종 source에 대해** 해당 로컬 자동 검증이 확인된 항목만 체크한다. 이전 source의 Docker 이미지 기반 브라우저·격리망 결과는 회귀 이력일 뿐 현재 이미지의 통과 증거로 재사용하지 않는다. GitHub push·tag·Release·Pages 공개처럼 아직 remote 대상에서 확인하지 않은 항목도 workflow나 스크립트가 존재해도 미완료로 유지한다.
+이 문서는 [제품·기술 사양](moyro-product-spec.md)을 구현하기 위해 작성한 **계획 당시 체크리스트**이자 현재 진행 상태표다. 2026-08-29 공개한 `v0.1.1`을 다시 감사해, 소스 구현과 **최종 tag source 및 공개 자산에 대해** 자동·수동 검증이 확인된 항목만 체크한다. 이전 source의 Docker 이미지 기반 브라우저·격리망 결과는 현재 릴리스의 통과 증거로 재사용하지 않았다.
 
-`v0.1.1` 후보의 Go 전체 race·vet·reachable vulnerability 검사, Go Plugin SDK, web 의존성 감사·typecheck·production build, PostgreSQL 15·16 실 E2E가 통과했다. 후보 Docker 이미지에서도 보안 경계와 핵심 계약을 포함한 Chromium 27개 E2E가 통과했고 25개 제품 화면을 다시 캡처했다. 최종 tag commit 기반 오프라인 archive와 원격 GitHub 결과는 아래 Phase 9에서 각각 실제 확인한 뒤 기록한다. `v0.1.0` 원격 검증 결과는 문서 끝에 별도 배포 이력으로 보존한다.
+`v0.1.1`의 Go 전체 race·vet·reachable vulnerability 검사, Go Plugin SDK, web 의존성 감사·typecheck·production build, PostgreSQL 15·16 실 E2E가 통과했다. 최종 tag Docker 이미지와 GitHub Release에서 재다운로드한 이미지 모두 격리망 검증을 통과했으며, 보안 경계와 핵심 계약을 포함한 Chromium 27개 E2E도 통과했다. 공개 자산으로 25개 제품 화면을 다시 캡처했고 GitHub Pages 공개 파일까지 원본 해시와 대조했다.
 
 ## Phase 0 — 기준선과 이름
 
@@ -96,17 +96,29 @@
 - [x] 제품·API·가이드·홍보 페이지 표시 버전을 `v0.1.1`로 맞추고 OpenAPI 계약을 갱신한다.
 - [x] 현재 최종 source로 25개 전체 화면 캡처를 다시 생성하고 27개 Chromium 제품 E2E를 통과한다.
 - [x] PostgreSQL 15·16에서 migration·session·예약 lease·Webhook delivery 통합 테스트를 통과한다.
-- [ ] 최종 tag commit metadata로 `linux/amd64` non-root image와 단일 gzip archive를 만들고 내부 전용 network에서 재검증한다.
-- [ ] `main`과 `v0.1.1` tag를 push하고 GitHub CI·Release·Pages 배포 성공을 확인한다.
-- [ ] GitHub Release가 `moyro-v0.1.1.tar.gz` 자산 하나만 제공하는지 재다운로드해 검증한다.
+- [x] 최종 tag commit metadata로 `linux/amd64` non-root image와 단일 gzip archive를 만들고 내부 전용 network에서 재검증한다.
+- [x] `main`과 `v0.1.1` tag를 push하고 GitHub CI·Release·Pages 배포 성공을 확인한다.
+- [x] GitHub Release가 `moyro-v0.1.1.tar.gz` 자산 하나만 제공하는지 재다운로드해 검증한다.
 
 ## 최종 완료 조건
 
-- [ ] 현재 저장소가 제공하는 모든 자동 검증이 최종 local release-candidate run에서 통과한다.
-- [ ] 최종 image의 제품 E2E 대상 화면에 console error와 허용하지 않은 failed network request가 없다.
+- [x] 현재 저장소가 제공하는 모든 자동 검증이 최종 local release-candidate run에서 통과한다.
+- [x] 최종 image의 제품 E2E 대상 화면에 console error와 허용하지 않은 failed network request가 없다.
 - [x] SMTP·S3·Redis·link preview·runtime plugin 등 문서화한 미지원 관리 mutation은 501 AppError를 반환하고 거짓 저장 성공을 내지 않는다.
-- [ ] 최종 local release candidate archive의 image label, tag, version API와 화면 version 일치를 검증한다.
+- [x] 최종 local release candidate archive의 image label, tag, version API와 화면 version 일치를 검증한다.
 - [x] GitHub remote, release 권한, 첫 release tag를 확인한 뒤에만 실제 배포한다.
+
+## v0.1.1 배포 기록
+
+- 소스: [커밋 `122bfc169013c215d3b8f049e77753f2e76c2440`](https://github.com/hkjang/moyro/commit/122bfc169013c215d3b8f049e77753f2e76c2440), `main`, tag `v0.1.1`
+- CI: [전체 검증과 PostgreSQL 15·16](https://github.com/hkjang/moyro/actions/runs/33237576608) 성공
+- 홍보·가이드·25개 화면: [GitHub Pages](https://hkjang.github.io/moyro/)
+- 릴리스: [moyro v0.1.1](https://github.com/hkjang/moyro/releases/tag/v0.1.1)
+- 사용자 지정 릴리스 자산: `moyro-v0.1.1.tar.gz` 1개, 16,319,898 bytes
+- Docker 이미지 태그: `moyro:v0.1.1`
+- SHA-256: `972f2af4b4ee63c5883ea51ddc06a5d0711bc3abff394baf68d0764d289cef68`
+- 원격 자산을 재다운로드한 뒤 내부 전용 Docker network에서 기동, UI, 버전, bootstrap 로그인, 재시작을 검증했다.
+- 재다운로드한 이미지로 Chromium 27개 E2E와 최종 제품 화면 25개를 다시 생성했고, `v0.1.1`과 build `122bfc16` 표시를 확인했다.
 
 ## v0.1.0 배포 기록
 
