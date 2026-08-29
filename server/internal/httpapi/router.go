@@ -3,12 +3,14 @@ package httpapi
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net/http"
 	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
+	"github.com/hkjang/moyro/server/internal/application/postcommand"
 	"github.com/hkjang/moyro/server/internal/audit"
 	"github.com/hkjang/moyro/server/internal/auth"
 	"github.com/hkjang/moyro/server/internal/bookmarks"
@@ -29,11 +31,13 @@ import (
 	"github.com/hkjang/moyro/server/internal/posts"
 	"github.com/hkjang/moyro/server/internal/preferences"
 	"github.com/hkjang/moyro/server/internal/ratelimit"
+	"github.com/hkjang/moyro/server/internal/rbac"
 	"github.com/hkjang/moyro/server/internal/reactions"
 	"github.com/hkjang/moyro/server/internal/registration"
 	"github.com/hkjang/moyro/server/internal/reminders"
 	"github.com/hkjang/moyro/server/internal/savedposts"
 	"github.com/hkjang/moyro/server/internal/scheduled"
+	"github.com/hkjang/moyro/server/internal/secrets"
 	"github.com/hkjang/moyro/server/internal/sidebar"
 	"github.com/hkjang/moyro/server/internal/slashcmd"
 	"github.com/hkjang/moyro/server/internal/store"
@@ -44,6 +48,7 @@ import (
 	"github.com/hkjang/moyro/server/internal/webhooks"
 	"github.com/hkjang/moyro/server/internal/webui"
 	"github.com/hkjang/moyro/server/internal/ws"
+	"github.com/jackc/pgx/v5"
 )
 
 // Backend bundles the HTTP handler with the background workers the router
@@ -69,7 +74,17 @@ func NewRouter(cfg *config.Config, db *store.DB, hub *ws.Hub, host *pluginhost.H
 // start them (main.go attaches them to its shutdown context).
 func New(cfg *config.Config, db *store.DB, hub *ws.Hub, host *pluginhost.Host, logger *slog.Logger) *Backend {
 	hub.SetAudienceResolver(ws.DatabaseAudienceResolver(db))
-	authSvc := auth.New(db, cfg.JWTSecret, cfg.TokenTTL)
+	// Construct the root-key-backed manager once and share its immutable,
+	// domain-separated primitives with sessions, settings and credential stores.
+	secretManager, secretManagerErr := secrets.New(cfg.EncryptionKey)
+	if secretManagerErr != nil {
+		logger.Error("secret manager unavailable", "err", secretManagerErr)
+	}
+	rbacService, rbacServiceErr := rbac.NewPostgres(db.Pool)
+	if rbacServiceErr != nil {
+		logger.Error("rbac service unavailable", "err", rbacServiceErr)
+	}
+	authSvc := auth.New(db, cfg.JWTSecret, cfg.TokenTTL, secretManager)
 	teamSvc := teams.New(db)
 	channelSvc := channels.New(db)
 	postSvc := posts.New(db)
@@ -91,9 +106,7 @@ func New(cfg *config.Config, db *store.DB, hub *ws.Hub, host *pluginhost.Host, l
 	fileSvc := files.New(db, fileStorage)
 	statusSvc := userstatus.New(db)
 	auditSvc := audit.New(db, logger)
-	slashSvc := slashcmd.New(postSvc, channelSvc, statusSvc, &pluginCommandAdapter{host: host})
 	botSvc := bots.New(db)
-	incomingSvc := webhooks.NewIncoming(db, postSvc)
 	outgoingSvc := webhooks.NewOutgoing(db)
 	emojiSvc := emojis.New(db, fileSvc)
 	oauthReg := oauth.NewRegistry(cfg)
@@ -146,6 +159,48 @@ func New(cfg *config.Config, db *store.DB, hub *ws.Hub, host *pluginhost.Host, l
 		return ch.TeamID, nil
 	}
 	outDispatcher := webhooks.NewDispatcher(outgoingSvc, postSvc, teamOf, logger, 16, cfg.AllowedOutgoingHosts)
+	postCommandSvc := postcommand.New(postcommand.Dependencies{
+		Channels:     channelSvc,
+		Posts:        postSvc,
+		Files:        fileSvc,
+		Users:        authSvc,
+		Bots:         botSvc,
+		Plugins:      host,
+		Events:       hub,
+		Outgoing:     outDispatcher,
+		LinkPreviews: linkSvc,
+		Audit:        auditSvc,
+		AuthorizeCreate: func(ctx context.Context, actorID, channelID string) (bool, error) {
+			if rbacServiceErr != nil {
+				return false, rbacServiceErr
+			}
+			if _, err := authSvc.UserByID(ctx, actorID); errors.Is(err, pgx.ErrNoRows) {
+				return false, nil
+			} else if err != nil {
+				return false, err
+			}
+			channel, err := channelSvc.Get(ctx, channelID)
+			if errors.Is(err, pgx.ErrNoRows) {
+				return false, nil
+			}
+			if err != nil {
+				return false, err
+			}
+			if channel == nil {
+				return false, nil
+			}
+			if channel.DeleteAt != 0 {
+				return false, nil
+			}
+			return rbacService.Allowed(ctx, rbac.UserPrincipal(actorID), rbac.PermissionCreatePost, rbac.Scope{
+				TeamID: channel.TeamID, ChannelID: channel.ID,
+			})
+		},
+		Logger:             logger,
+		IncrementPostCount: metrics.IncPostsCreated,
+	})
+	slashSvc := slashcmd.New(postCommandSvc, channelSvc, statusSvc, &pluginCommandAdapter{host: host})
+	incomingSvc := webhooks.NewIncoming(db, postCommandSvc)
 
 	// Feed the moyro_webhook_queue_depth prometheus gauge on a slow tick.
 	// Running inside NewRouter keeps the dispatcher from knowing about
@@ -164,6 +219,7 @@ func New(cfg *config.Config, db *store.DB, hub *ws.Hub, host *pluginhost.Host, l
 		teams:        teamSvc,
 		channels:     channelSvc,
 		posts:        postSvc,
+		postCommands: postCommandSvc,
 		reactions:    reactionSvc,
 		files:        fileSvc,
 		status:       statusSvc,
@@ -195,7 +251,11 @@ func New(cfg *config.Config, db *store.DB, hub *ws.Hub, host *pluginhost.Host, l
 		logger:       logger,
 	}
 	nativeCtx, nativeCancel := context.WithTimeout(context.Background(), 15*time.Second)
-	if native, err := newNativeServices(nativeCtx, cfg, db, h, logger); err != nil {
+	if secretManagerErr != nil {
+		logger.Warn("moyro management services unavailable", "err", secretManagerErr)
+	} else if rbacServiceErr != nil {
+		logger.Warn("moyro management services unavailable", "err", rbacServiceErr)
+	} else if native, err := newNativeServices(nativeCtx, cfg, db, h, logger, secretManager, rbacService); err != nil {
 		logger.Warn("moyro management services unavailable", "err", err)
 	} else {
 		h.native = native
@@ -263,7 +323,8 @@ func New(cfg *config.Config, db *store.DB, hub *ws.Hub, host *pluginhost.Host, l
 	// The four-variable runtime contract has no trusted-proxy allow-list, so
 	// accepting those headers from a directly exposed container would let an
 	// attacker rotate the rate-limit and audit address at will. Peer
-	// RemoteAddr remains the authoritative address in v0.1.0.
+	// RemoteAddr remains the authoritative address until a trusted-proxy
+	// allow-list becomes part of the supported runtime contract.
 	r.Use(middleware.Recoverer)
 	r.Use(requestLog(logger))
 	// Prometheus HTTP duration histogram. Registered after chi's route
@@ -284,7 +345,11 @@ func New(cfg *config.Config, db *store.DB, hub *ws.Hub, host *pluginhost.Host, l
 	// PAT pre-middleware: if the bearer token begins with "mdp_", resolve
 	// it to a user id and inject into context. Downstream requireAuth
 	// detects the pre-set id and skips JWT parsing.
-	patMW := pat.With(botSvc, SetUserIDOnContext)
+	patMW := pat.With(botSvc, func(ctx context.Context, userID, credentialID string) context.Context {
+		return setPrincipalOnContext(ctx, rbac.Principal{
+			UserID: userID, CredentialID: credentialID,
+		})
+	})
 
 	r.Route("/api/v4", func(r chi.Router) {
 		r.Use(middleware.Timeout(30 * time.Second))
@@ -1383,7 +1448,7 @@ func New(cfg *config.Config, db *store.DB, hub *ws.Hub, host *pluginhost.Host, l
 		r.NotFound(ui.ServeHTTP)
 	}
 
-	scheduledWorker := scheduled.NewWorker(scheduledSvc, postSvc, fileSvc, hub, logger)
+	scheduledWorker := scheduled.NewWorker(scheduledSvc, postSvc, postCommandSvc, fileSvc, hub, logger)
 	remindersWorker := reminders.NewWorker(reminderSvc, postSvc, hub, logger)
 
 	return &Backend{Router: r, Scheduled: scheduledWorker, Reminders: remindersWorker, Approvals: newApprovalExecutor(h.native, logger)}

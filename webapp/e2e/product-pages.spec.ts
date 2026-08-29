@@ -4,6 +4,10 @@ import path from "node:path";
 const baseURL = process.env.MOYRO_BASE_URL ?? "http://127.0.0.1:8065";
 const adminLogin = process.env.MOYRO_ADMIN ?? "admin@moyro.local";
 const adminPassword = process.env.MOYRO_ADMIN_PASSWORD ?? "MoyroRelease!2026";
+const expectedRawVersion = (process.env.MOYRO_EXPECTED_VERSION ?? "").trim();
+const expectedDisplayVersion = expectedRawVersion
+  ? (expectedRawVersion.startsWith("v") ? expectedRawVersion : `v${expectedRawVersion}`)
+  : "";
 const screenshotDir = path.resolve(
   import.meta.dirname,
   process.env.MOYRO_CAPTURE_DIR ?? "../../docs/assets/screenshots",
@@ -48,7 +52,10 @@ test("public login page exposes the service version", async ({ page }) => {
   await page.goto("/login");
   await expect(page.getByRole("heading", { name: "moyro" })).toBeVisible();
   await expect(page.locator(".login-logo[aria-hidden='true']")).toBeVisible();
-  await expect(page.getByText(/^moyro v/)).toBeVisible();
+  if (!expectedDisplayVersion) {
+    throw new Error("MOYRO_EXPECTED_VERSION is required for product release verification");
+  }
+  await expect(page.getByText(`moyro ${expectedDisplayVersion}`, { exact: true })).toBeVisible();
   await settle(page);
   await capture(page, "login.jpg");
   assertNoRuntimeIssues(issues, "/login");
@@ -530,7 +537,14 @@ test("core REST contracts preserve 400, 401, 403, 404 and offset pagination", as
   expect(cleanupPrivateChannel.status()).toBe(200);
 });
 
-const routedPages = [
+type RoutedPage = {
+  path: () => string;
+  file: string;
+  marker: string;
+  verifyBrand?: boolean;
+};
+
+const routedPages: readonly RoutedPage[] = [
   { path: () => `/workspace/${seed.teamId}/channel/${seed.channelId}`, file: "workspace-channel.jpg", marker: "moyro 릴리스" },
   { path: () => `/workspace/${seed.teamId}/saved`, file: "workspace-saved.jpg", marker: "저장" },
   { path: () => `/workspace/${seed.teamId}/scheduled`, file: "workspace-scheduled.jpg", marker: "예약" },
@@ -549,7 +563,13 @@ const routedPages = [
   { path: () => "/admin/security/keys", file: "admin-key-policy.jpg", marker: "키 정책" },
   { path: () => "/admin/integrations/mcp", file: "admin-mcp.jpg", marker: "MCP" },
   { path: () => "/admin/workflows/review", file: "admin-approval.jpg", marker: "검토 · 승인" },
-] as const;
+  {
+    path: () => "/admin/operations",
+    file: "admin-operations.jpg",
+    marker: "호환 운영 API",
+    verifyBrand: false,
+  },
+];
 
 for (const route of routedPages) {
   test(`${route.file} renders and survives refresh`, async ({ page }) => {
@@ -558,7 +578,9 @@ for (const route of routedPages) {
     const target = route.path();
     await page.goto(target);
     await expect(page.getByText(route.marker, { exact: false }).first()).toBeVisible();
-    await expect(page.locator(".side-brand-logo, .moyro-mark").first()).toBeVisible();
+    if (route.verifyBrand !== false) {
+      await expect(page.locator(".side-brand-logo, .moyro-mark").first()).toBeVisible();
+    }
     await settle(page);
     expect(new URL(page.url()).pathname).toBe(target);
     await page.reload();
@@ -575,23 +597,22 @@ test("profile context menu shows version, admin and optional approval entries", 
   const issues = collectRuntimeIssues(page);
   await page.goto(`/workspace/${seed.teamId}/channel/${seed.channelId}`);
   await page.getByRole("button", { name: "계정 메뉴 열기" }).click();
-  await expect(page.getByLabel(/서비스 버전/)).toBeVisible();
+  const accountMenu = page.getByRole("menu", { name: "계정 메뉴" });
+  const menuScroll = page.locator(".user-menu-scroll");
+  await expect(page.getByLabel(`서비스 버전 ${expectedDisplayVersion}`, { exact: true })).toBeVisible();
   await expect(page.locator(".user-menu-version-brand svg[aria-hidden='true']")).toBeVisible();
+  await expect(page.getByRole("menuitem", { name: /로그아웃/ })).toBeVisible();
   await expect(page.getByRole("menuitem", { name: /서비스 관리/ })).toBeVisible();
   await expect(page.getByRole("menuitem", { name: /내 승인 요청/ })).toBeVisible();
+  const menuBounds = await accountMenu.boundingBox();
+  const viewportHeight = await page.evaluate(() => window.innerHeight);
+  expect(menuBounds).not.toBeNull();
+  expect((menuBounds?.y ?? 0) + (menuBounds?.height ?? 0)).toBeLessThanOrEqual(viewportHeight);
+  await page.getByRole("menuitem", { name: /세션 관리/ }).scrollIntoViewIfNeeded();
+  await expect(page.getByRole("menuitem", { name: /세션 관리/ })).toBeVisible();
+  await menuScroll.evaluate((element) => { element.scrollTop = 0; });
   await capture(page, "workspace-profile-menu.jpg");
   assertNoRuntimeIssues(issues, "profile context menu");
-});
-
-test("legacy operations console renders without browser errors", async ({ page }) => {
-  await installAuthenticatedSession(page, auth);
-  const issues = collectRuntimeIssues(page);
-  await page.goto("/admin/operations");
-  await expect(page.locator("body")).toContainText(/관리|시스템|운영/);
-  await settle(page);
-  expect(new URL(page.url()).pathname).toBe("/admin/operations");
-  await capture(page, "admin-operations.jpg");
-  assertNoRuntimeIssues(issues, "/admin/operations");
 });
 
 test("representative pages remain usable at a mobile viewport", async ({ page }) => {

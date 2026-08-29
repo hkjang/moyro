@@ -37,6 +37,29 @@ const expectedScreenshotDimensions = new Map(expectedScreenshots.map((name) => [
   name,
   name.startsWith("mobile-") ? { width: 430, height: 932 } : { width: 1440, height: 1000 },
 ]));
+const captureSpec = readFileSync(join(root, "webapp", "e2e", "product-pages.spec.ts"), "utf8");
+const capturedScreenshotNames = new Set(
+  [...captureSpec.matchAll(/["'`]([a-z0-9][a-z0-9-]*\.jpg)["'`]/g)].map((match) => match[1]),
+);
+const routedCatalogStart = captureSpec.indexOf("const routedPages");
+const routedCatalogEnd = captureSpec.indexOf("for (const route of routedPages)", routedCatalogStart);
+const routedCatalog = routedCatalogStart >= 0 && routedCatalogEnd > routedCatalogStart
+  ? captureSpec.slice(routedCatalogStart, routedCatalogEnd)
+  : "";
+const capturedNavigationRoutes = new Set(
+  [...routedCatalog.matchAll(/path:\s*\(\)\s*=>\s*["'](\/(?:settings|admin)\/[^"']+)["']/g)]
+    .map((match) => match[1]),
+);
+const navigationRoutes = new Set();
+for (const source of [
+  join(root, "webapp", "src", "layouts", "PersonalSettingsLayout.tsx"),
+  join(root, "webapp", "src", "layouts", "AdminLayout.tsx"),
+]) {
+  const contents = readFileSync(source, "utf8");
+  for (const match of contents.matchAll(/to:\s*["'](\/(?:settings|admin)\/[^"']+)["']/g)) {
+    navigationRoutes.add(match[1]);
+  }
+}
 
 const failures = [];
 const htmlFiles = walk(docs).filter((file) => file.endsWith(".html"));
@@ -77,6 +100,27 @@ for (const name of expectedScreenshots) {
     failures.push(`cannot read JPEG dimensions for ${name}: ${error.message}`);
   }
   if (!allHTML.includes(`screenshots/${name}`)) failures.push(`screenshot is not used by any page: ${name}`);
+  if (!capturedScreenshotNames.has(name)) failures.push(`screenshot is not produced by product-pages.spec.ts: ${name}`);
+}
+
+for (const name of capturedScreenshotNames) {
+  if (!expectedScreenshotDimensions.has(name)) {
+    failures.push(`product-pages.spec.ts writes an uncatalogued screenshot: ${name}`);
+  }
+}
+
+if (!routedCatalog) {
+  failures.push("cannot locate the routedPages capture catalog in product-pages.spec.ts");
+}
+for (const route of navigationRoutes) {
+  if (!capturedNavigationRoutes.has(route)) {
+    failures.push(`navigable settings/admin route has no routed screenshot: ${route}`);
+  }
+}
+for (const route of capturedNavigationRoutes) {
+  if (!navigationRoutes.has(route)) {
+    failures.push(`routed screenshot no longer has a settings/admin navigation entry: ${route}`);
+  }
 }
 
 for (const [name, expected] of expectedBrandPNGs) {
@@ -182,6 +226,18 @@ for (const required of [
   if (!index.includes(required)) failures.push(`index.html is missing required SEO/navigation marker: ${required}`);
 }
 
+for (const releasePage of [
+  join(docs, "index.html"),
+  join(docs, "screens.html"),
+  join(docs, "guides", "user-guide.html"),
+  join(docs, "guides", "admin-guide.html"),
+  join(docs, "guides", "offline-deployment.html"),
+]) {
+  const html = htmlByFile.get(releasePage) ?? "";
+  if (!html.includes("v0.1.1")) failures.push(`v0.1.1 release marker is missing in ${relative(root, releasePage)}`);
+  if (html.includes("v0.1.0")) failures.push(`stale v0.1.0 release marker remains in ${relative(root, releasePage)}`);
+}
+
 const sitemap = readFileSync(join(docs, "sitemap.xml"), "utf8");
 for (const page of ["https://hkjang.github.io/moyro/", "https://hkjang.github.io/moyro/screens.html"]) {
   if (!sitemap.includes(page)) failures.push(`sitemap is missing canonical URL: ${page}`);
@@ -208,7 +264,8 @@ if (failures.length) {
 }
 console.log(
   `Pages verification passed: ${htmlFiles.length} HTML pages, ` +
-  `${expectedScreenshots.length} product screenshots, ${expectedBrandPNGs.size} brand PNGs.`,
+  `${expectedScreenshots.length} product screenshots, ${navigationRoutes.size} navigable settings/admin routes, ` +
+  `${expectedBrandPNGs.size} brand PNGs.`,
 );
 
 function walk(directory) {

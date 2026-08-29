@@ -17,6 +17,7 @@ import { useDispatch, useSelector } from "react-redux";
 import { api, prefsApi, type SessionRow } from "@/api/client";
 import { AuthenticatedImage, isExternalImageURL } from "@/components/AuthenticatedMedia";
 import { SettingsCard, SettingsPage } from "@/components/settings/SettingsPrimitives";
+import { useSystemInfo } from "@/features/system/SystemInfoContext";
 import type { RootState } from "@/store";
 import { setAuth } from "@/store/authSlice";
 
@@ -139,17 +140,24 @@ export function AppearanceSettingsPage() {
 
 export function NotificationSettingsPage() {
   const token = useSelector((state: RootState) => state.auth.token);
+  const systemInfo = useSystemInfo();
+  const emailDigestAvailable = systemInfo.capabilities?.email_digest?.enabled === true;
   const [digest, setDigest] = useState(false);
   const [loaded, setLoaded] = useState(false);
   const [message, setMessage] = useState("");
 
   useEffect(() => {
-    if (!token) return;
+    if (!token || !systemInfo.loaded) return;
+    if (!emailDigestAvailable) {
+      setDigest(false);
+      setLoaded(true);
+      return;
+    }
     api.getEmailPrefs(token).then(
       (value) => { setDigest(value.digest_enabled); setLoaded(true); },
       (err: unknown) => { setLoaded(true); setMessage(err instanceof Error ? err.message : "알림 설정을 불러오지 못했습니다."); },
     );
-  }, [token]);
+  }, [emailDigestAvailable, systemInfo.loaded, token]);
 
   async function update(next: boolean) {
     if (!token) return;
@@ -168,7 +176,8 @@ export function NotificationSettingsPage() {
   return (
     <SettingsPage title="알림" description="내 계정의 이메일과 기본 알림 방식을 관리합니다.">
       <SettingsCard title="이메일 요약">
-        <FormControlLabel control={<Switch checked={digest} disabled={!loaded} onChange={(event) => void update(event.target.checked)} />} label="놓친 멘션을 하루 한 번 이메일로 받기" />
+        <FormControlLabel control={<Switch checked={digest} disabled={!loaded || !emailDigestAvailable} onChange={(event) => void update(event.target.checked)} />} label="놓친 멘션을 하루 한 번 이메일로 받기" />
+        {systemInfo.loaded && !emailDigestAvailable && <Alert severity="info" sx={{ mt: 2 }}>현재 릴리스는 SMTP 관리 설정과 이메일 요약 발송을 지원하지 않습니다.</Alert>}
         {message && <Typography variant="body2" sx={{ mt: 2 }} role="status">{message}</Typography>}
       </SettingsCard>
     </SettingsPage>

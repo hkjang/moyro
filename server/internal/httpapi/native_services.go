@@ -57,16 +57,14 @@ func (n *nativeServices) revealOptionalSecret(ctx context.Context, section, key 
 	return string(value), nil
 }
 
-func newNativeServices(ctx context.Context, cfg *config.Config, db *store.DB, h *handlers, logger *slog.Logger) (*nativeServices, error) {
-	secretManager, err := secrets.New(cfg.EncryptionKey)
-	if err != nil {
-		return nil, err
+func newNativeServices(ctx context.Context, cfg *config.Config, db *store.DB, h *handlers, logger *slog.Logger, secretManager *secrets.Manager, rbacService *rbac.Service) (*nativeServices, error) {
+	if secretManager == nil {
+		return nil, errors.New("nil secret manager")
+	}
+	if rbacService == nil {
+		return nil, errors.New("nil rbac service")
 	}
 	settingsService, err := settings.NewPostgres(db.Pool, secretManager)
-	if err != nil {
-		return nil, err
-	}
-	rbacService, err := rbac.NewPostgres(db.Pool)
 	if err != nil {
 		return nil, err
 	}
@@ -136,7 +134,7 @@ func newNativeServices(ctx context.Context, cfg *config.Config, db *store.DB, h 
 	}
 
 	mcpService, err := mcpserver.New(mcpserver.Dependencies{
-		Teams: h.teams, Channels: h.channels, Posts: h.posts, Approval: approvalService,
+		Teams: h.teams, Channels: h.channels, Posts: h.posts, PostCommands: h.postCommands, Approval: approvalService,
 		UserID: UserIDFromContext,
 		CredentialID: func(ctx context.Context) string {
 			principal, ok := PrincipalFromContext(ctx)

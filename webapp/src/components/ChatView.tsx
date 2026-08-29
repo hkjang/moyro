@@ -490,11 +490,15 @@ export function ChatView() {
   // defaults to `digest_enabled=true` so first-time users see the checkbox
   // ticked. A fetch error leaves the checkbox disabled rather than lying.
   useEffect(() => {
-    if (!token) { setDigestEnabled(null); return; }
+    if (!token || !systemInfo.loaded) { setDigestEnabled(null); return; }
+    if (systemInfo.capabilities?.email_digest?.enabled !== true) {
+      setDigestEnabled(false);
+      return;
+    }
     api.getEmailPrefs(token)
       .then((p) => setDigestEnabled(!!p.digest_enabled))
       .catch(() => setDigestEnabled(null));
-  }, [token]);
+  }, [systemInfo.capabilities?.email_digest?.enabled, systemInfo.loaded, token]);
 
   // ---- Load posts (+ reactions + file infos) when channel changes ----
   useEffect(() => {
@@ -2223,6 +2227,7 @@ export function ChatView() {
           theme={theme}
           onChangeTheme={setTheme}
           digestEnabled={digestEnabled}
+          digestAvailable={systemInfo.capabilities?.email_digest?.enabled === true}
           onToggleDigest={async (next) => {
             if (!token) return;
             const prev = digestEnabled;
@@ -2820,7 +2825,9 @@ function Composer({ token, channelID, onSend, onTyping, onUpload, onSchedule, us
               ref={textareaRef}
               className="composer-input"
               rows={1}
-              placeholder={uploading ? "업로드 중…" : "메시지를 입력하세요… (Shift+Enter 줄바꿈)"}
+              aria-label="메시지 입력"
+              title="Shift+Enter로 줄바꿈"
+              placeholder={uploading ? "업로드 중…" : "메시지를 입력하세요…"}
               value={value}
               onChange={(e) => {
                 setValue(e.target.value);
@@ -4370,6 +4377,7 @@ function UserMenuOverlay(props: {
   theme: "light" | "dark" | "system";
   onChangeTheme: (next: "light" | "dark" | "system") => void;
   digestEnabled: boolean | null;
+  digestAvailable: boolean;
   onToggleDigest: (next: boolean) => void;
   uploadingAvatar: boolean;
   onUploadAvatar: () => void;
@@ -4407,6 +4415,7 @@ function UserMenuOverlay(props: {
         onClick={props.onClose}
       />
       <div className="user-menu" role="menu" aria-label="계정 메뉴">
+        <div className="user-menu-scroll">
         <div className="user-menu-head">
           <div className="user-menu-name">{props.username || "사용자"}</div>
           {props.email && <div className="user-menu-email">{props.email}</div>}
@@ -4539,12 +4548,12 @@ function UserMenuOverlay(props: {
           <span className="user-menu-icon">📧</span>
           <span className="user-menu-label">
             이메일 알림 수신
-            <small>하루 한 번 놓친 멘션 요약</small>
+            <small>{props.digestAvailable ? "하루 한 번 놓친 멘션 요약" : "현재 릴리스에서 이메일 요약을 지원하지 않습니다"}</small>
           </span>
           <input
             type="checkbox"
             checked={props.digestEnabled === true}
-            disabled={props.digestEnabled === null}
+            disabled={props.digestEnabled === null || !props.digestAvailable}
             onChange={(e) => props.onToggleDigest(e.target.checked)}
           />
         </label>
@@ -4592,21 +4601,22 @@ function UserMenuOverlay(props: {
             <small>로그인된 기기 보기 · 종료</small>
           </span>
         </button>
+        </div>
 
-        <div className="user-menu-divider" />
-
-        <button
-          type="button"
-          className="user-menu-item user-menu-item-danger"
-          role="menuitem"
-          onClick={props.onLogout}
-        >
-          <span className="user-menu-icon">↩</span>
-          <span className="user-menu-label">로그아웃</span>
-        </button>
-        <div className="user-menu-version" aria-label={`서비스 버전 ${props.version}`}>
-          <span className="user-menu-version-brand"><BrandMark size={20} />moyro {props.version}</span>
-          {props.buildHash && <span>build {props.buildHash.slice(0, 8)}</span>}
+        <div className="user-menu-footer">
+          <button
+            type="button"
+            className="user-menu-item user-menu-item-danger"
+            role="menuitem"
+            onClick={props.onLogout}
+          >
+            <span className="user-menu-icon">↩</span>
+            <span className="user-menu-label">로그아웃</span>
+          </button>
+          <div className="user-menu-version" aria-label={`서비스 버전 ${props.version}`}>
+            <span className="user-menu-version-brand"><BrandMark size={20} />moyro {props.version}</span>
+            {props.buildHash && <span>build {props.buildHash.slice(0, 8)}</span>}
+          </div>
         </div>
       </div>
     </div>

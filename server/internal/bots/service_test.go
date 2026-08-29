@@ -8,6 +8,7 @@ import (
 func TestResolveTokenQueryRejectsInactiveUsersAtomically(t *testing.T) {
 	canonical := strings.Join(strings.Fields(resolveTokenSQL), " ")
 	for _, required := range []string{
+		"SELECT pat.id, pat.user_id, pat.revoked_at",
 		"JOIN users AS u ON u.id = pat.user_id",
 		"u.delete_at = 0",
 		"WHERE pat.token_hash = $1",

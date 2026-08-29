@@ -3873,25 +3873,25 @@ textarea {
 
 /* Shared visible scrollbars for dense administrator and account menus. */
 .moyro-scrollbar,
-.user-menu {
+.user-menu-scroll {
   scrollbar-gutter: stable;
   scrollbar-width: thin;
   scrollbar-color: #718198 transparent;
 }
 
 .moyro-scrollbar::-webkit-scrollbar,
-.user-menu::-webkit-scrollbar {
+.user-menu-scroll::-webkit-scrollbar {
   width: 10px;
   height: 10px;
 }
 
 .moyro-scrollbar::-webkit-scrollbar-track,
-.user-menu::-webkit-scrollbar-track {
+.user-menu-scroll::-webkit-scrollbar-track {
   background: transparent;
 }
 
 .moyro-scrollbar::-webkit-scrollbar-thumb,
-.user-menu::-webkit-scrollbar-thumb {
+.user-menu-scroll::-webkit-scrollbar-thumb {
   min-height: 36px;
   border: 2px solid transparent;
   border-radius: 999px;
@@ -3900,15 +3900,27 @@ textarea {
 }
 
 .moyro-scrollbar::-webkit-scrollbar-thumb:hover,
-.user-menu::-webkit-scrollbar-thumb:hover {
+.user-menu-scroll::-webkit-scrollbar-thumb:hover {
   background: #52647e;
   background-clip: padding-box;
 }
 
 .user-menu {
   max-height: calc(100dvh - 72px);
+  overflow: hidden;
+}
+
+.user-menu-scroll {
+  min-height: 0;
   overflow-y: auto;
   overscroll-behavior: contain;
+}
+
+.user-menu-footer {
+  flex: 0 0 auto;
+  padding-top: 4px;
+  border-top: 1px solid #ececf0;
+  background: inherit;
 }
 
 .user-menu-version {
@@ -4010,6 +4022,10 @@ html[data-theme="dark"] .user-menu-version {
   color: #adb4c2;
 }
 
+html[data-theme="dark"] .user-menu-footer {
+  border-color: #3a3b40;
+}
+
 @media (max-width: 800px) {
   .moyro-settings-shell {
     grid-template-columns: minmax(0, 1fr);
@@ -4034,7 +4050,7 @@ html[data-theme="dark"] .user-menu-version {
 
 @media (forced-colors: active) {
   .moyro-scrollbar,
-  .user-menu {
+  .user-menu-scroll {
     forced-color-adjust: auto;
   }
 }

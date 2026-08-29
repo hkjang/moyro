@@ -3,19 +3,82 @@ package mcpserver
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"reflect"
 	"testing"
 
+	"github.com/hkjang/moyro/server/internal/application/postcommand"
 	"github.com/hkjang/moyro/server/internal/approval"
 	"github.com/hkjang/moyro/server/internal/channels"
 	"github.com/hkjang/moyro/server/internal/posts"
 	"github.com/hkjang/moyro/server/internal/teams"
 )
 
+type capturePostCommands struct {
+	command postcommand.Command
+	post    *posts.Post
+	err     error
+	calls   int
+}
+
+func (c *capturePostCommands) Execute(_ context.Context, command postcommand.Command) (*posts.Post, error) {
+	c.calls++
+	c.command = command
+	return c.post, c.err
+}
+
 func testDependencies() Dependencies {
 	return Dependencies{
 		Teams: teams.New(nil), Channels: channels.New(nil), Posts: posts.New(nil),
-		UserID:    func(context.Context) string { return "user-1" },
-		Authorize: func(context.Context, string, string, string) (bool, error) { return true, nil },
+		PostCommands: &capturePostCommands{},
+		UserID:       func(context.Context) string { return "user-1" },
+		Authorize:    func(context.Context, string, string, string) (bool, error) { return true, nil },
+	}
+}
+
+func TestNewRequiresPostCommandExecutor(t *testing.T) {
+	deps := testDependencies()
+	deps.PostCommands = nil
+	if _, err := New(deps); err == nil {
+		t.Fatal("New should fail closed without a post command executor")
+	}
+}
+
+func TestExecutePostCommandPreservesMCPMetadataAndErrors(t *testing.T) {
+	wantPost := &posts.Post{ID: "post-1"}
+	executor := &capturePostCommands{post: wantPost}
+	service := &Service{deps: Dependencies{
+		PostCommands: executor,
+		CredentialID: func(context.Context) string { return "key-1" },
+	}}
+	input := createPostInput{ChannelID: "channel-1", RootID: "root-1", Message: "message"}
+
+	post, err := service.executePostCommand(context.Background(), "user-1", input, "approval-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if post != wantPost || executor.calls != 1 {
+		t.Fatalf("Execute result = %#v, calls = %d", post, executor.calls)
+	}
+	wantCommand := postcommand.Command{
+		Source: postcommand.SourceMCP, ActorID: "user-1", ChannelID: "channel-1",
+		RootID: "root-1", Message: "message", ApprovalRequestID: "approval-1", CredentialID: "key-1",
+	}
+	if !reflect.DeepEqual(executor.command, wantCommand) {
+		t.Fatalf("post command = %#v, want %#v", executor.command, wantCommand)
+	}
+
+	wantErr := errors.New("plugin rejected")
+	executor.err = wantErr
+	if _, err := service.executePostCommand(context.Background(), "user-1", input, ""); !errors.Is(err, wantErr) {
+		t.Fatalf("Execute error = %v, want %v", err, wantErr)
+	}
+}
+
+func TestPostWriteAnnotationsDoNotClaimIdempotency(t *testing.T) {
+	annotations := postWriteAnnotations()
+	if annotations.IdempotentHint {
+		t.Fatal("direct MCP post writes must not advertise idempotency without durable replay")
 	}
 }
 

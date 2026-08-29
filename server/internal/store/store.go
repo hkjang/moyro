@@ -2,8 +2,6 @@ package store
 
 import (
 	"context"
-	_ "embed"
-	"errors"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -28,15 +26,4 @@ func (d *DB) Close() {
 	if d.Pool != nil {
 		d.Pool.Close()
 	}
-}
-
-//go:embed schema.sql
-var schemaSQL string
-
-func Migrate(ctx context.Context, db *DB) error {
-	if db == nil || db.Pool == nil {
-		return errors.New("store: nil db")
-	}
-	_, err := db.Pool.Exec(ctx, schemaSQL)
-	return err
 }

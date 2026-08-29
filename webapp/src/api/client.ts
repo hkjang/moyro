@@ -347,6 +347,12 @@ export type SystemInfo = {
   oidc_provider_name?: string;
   approval_enabled?: boolean;
   local_signup_enabled?: boolean;
+  capabilities?: {
+    email_digest?: {
+      configured: boolean;
+      enabled: boolean;
+    };
+  };
 };
 
 export type ClientConfig = {

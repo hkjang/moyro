@@ -2,7 +2,7 @@
 set -euo pipefail
 
 if [[ $# -lt 2 ]]; then
-  echo "usage: $0 <image> <absolute-capture-directory>" >&2
+  echo "usage: $0 <image> <capture-directory>" >&2
   exit 2
 fi
 
@@ -16,6 +16,7 @@ app_container="moyro-e2e-app-${suffix}"
 db_volume="moyro-e2e-db-${suffix}"
 app_volume="moyro-e2e-app-${suffix}"
 base_url="http://127.0.0.1:${port}"
+expected_version="${MOYRO_EXPECTED_VERSION:-${image##*:}}"
 admin_email="admin@moyro.local"
 admin_password="MoyroRelease!2026"
 encryption_key="MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY="
@@ -35,6 +36,7 @@ cleanup() {
 trap cleanup EXIT INT TERM
 
 mkdir -p "${capture_dir}"
+capture_dir="$(cd "${capture_dir}" && pwd -P)"
 # Browser tests run on the host and need the published loopback port. The
 # separate release verifier performs the strict internal-only/offline check.
 docker network create "${network}" >/dev/null
@@ -78,5 +80,6 @@ curl --fail --silent --show-error "${base_url}/api/v4/system/ping" >/dev/null
   MOYRO_ADMIN="${admin_email}" \
   MOYRO_ADMIN_PASSWORD="${admin_password}" \
   MOYRO_CAPTURE_DIR="${capture_dir}" \
+  MOYRO_EXPECTED_VERSION="${expected_version}" \
   npx playwright test e2e/product-pages.spec.ts --project=chromium
 )

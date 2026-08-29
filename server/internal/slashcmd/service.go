@@ -12,6 +12,7 @@ import (
 	"errors"
 	"strings"
 
+	"github.com/hkjang/moyro/server/internal/application/postcommand"
 	"github.com/hkjang/moyro/server/internal/channels"
 	"github.com/hkjang/moyro/server/internal/posts"
 	"github.com/hkjang/moyro/server/internal/userstatus"
@@ -42,10 +43,11 @@ type Response struct {
 
 // ExecuteArgs is the input. TeamID/ChannelID/UserID identify context.
 type ExecuteArgs struct {
-	TeamID    string
-	ChannelID string
-	UserID    string
-	Command   string // full raw command string including the leading slash
+	TeamID       string
+	ChannelID    string
+	UserID       string
+	Command      string // full raw command string including the leading slash
+	CredentialID string
 }
 
 // Plugin dispatcher interface — kept narrow so the plugin host can satisfy
@@ -54,15 +56,19 @@ type Plugin interface {
 	ExecuteCommand(ctx context.Context, trigger, args string, channelID, userID string) (*Response, bool, error)
 }
 
-type Service struct {
-	posts    *posts.Service
-	channels *channels.Service
-	status   *userstatus.Service
-	plugins  Plugin // may be nil; unknown commands fail if so
+type PostExecutor interface {
+	Execute(ctx context.Context, command postcommand.Command) (*posts.Post, error)
 }
 
-func New(postSvc *posts.Service, chanSvc *channels.Service, statusSvc *userstatus.Service, plugin Plugin) *Service {
-	return &Service{posts: postSvc, channels: chanSvc, status: statusSvc, plugins: plugin}
+type Service struct {
+	postCommands PostExecutor
+	channels     *channels.Service
+	status       *userstatus.Service
+	plugins      Plugin // may be nil; unknown commands fail if so
+}
+
+func New(postCommands PostExecutor, chanSvc *channels.Service, statusSvc *userstatus.Service, plugin Plugin) *Service {
+	return &Service{postCommands: postCommands, channels: chanSvc, status: statusSvc, plugins: plugin}
 }
 
 // ErrUnknown is returned when no built-in matches and no plugin handles the
@@ -86,6 +92,20 @@ func (s *Service) Execute(ctx context.Context, a ExecuteArgs) (*Response, error)
 			return nil, err
 		}
 		if handled {
+			if resp == nil {
+				return nil, errors.New("plugin handled command without a response")
+			}
+			// An in-channel plugin response is a real message, not merely an HTTP
+			// rendering hint. Route it through the same command lifecycle as the
+			// built-ins so hooks, unread state, events and integrations cannot vary
+			// by slash-command implementation.
+			if resp.ResponseType == InChannel && resp.Post == nil {
+				p, err := s.createPost(ctx, a, trigger, resp.Text)
+				if err != nil {
+					return nil, err
+				}
+				resp.Post = p
+			}
 			return resp, nil
 		}
 	}
@@ -125,7 +145,7 @@ var builtins = map[string]handler{
 // /shrug [message] — posts "<message> ¯\_(ツ)_/¯" as a normal in-channel post.
 func cmdShrug(ctx context.Context, s *Service, a ExecuteArgs, arg string) (*Response, error) {
 	msg := strings.TrimSpace(arg + " ¯\\_(ツ)_/¯")
-	p, err := s.posts.Create(ctx, a.ChannelID, a.UserID, "", msg, nil, nil)
+	p, err := s.createPost(ctx, a, "shrug", msg)
 	if err != nil {
 		return nil, err
 	}
@@ -140,8 +160,7 @@ func cmdMe(ctx context.Context, s *Service, a ExecuteArgs, arg string) (*Respons
 		return &Response{ResponseType: Ephemeral, Text: "Usage: /me <action>"}, nil
 	}
 	msg := "*" + arg + "*"
-	props := map[string]any{"from_me_command": true}
-	p, err := s.posts.Create(ctx, a.ChannelID, a.UserID, "", msg, props, nil)
+	p, err := s.createPost(ctx, a, "me", msg)
 	if err != nil {
 		return nil, err
 	}
@@ -155,11 +174,22 @@ func cmdCode(ctx context.Context, s *Service, a ExecuteArgs, arg string) (*Respo
 		return &Response{ResponseType: Ephemeral, Text: "Usage: /code <snippet>"}, nil
 	}
 	msg := "```\n" + arg + "\n```"
-	p, err := s.posts.Create(ctx, a.ChannelID, a.UserID, "", msg, nil, nil)
+	p, err := s.createPost(ctx, a, "code", msg)
 	if err != nil {
 		return nil, err
 	}
 	return &Response{ResponseType: InChannel, Text: msg, Post: p}, nil
+}
+
+func (s *Service) createPost(ctx context.Context, a ExecuteArgs, trigger, message string) (*posts.Post, error) {
+	return s.postCommands.Execute(ctx, postcommand.Command{
+		Source:       postcommand.SourceSlashCommand,
+		ActorID:      a.UserID,
+		ChannelID:    a.ChannelID,
+		Message:      message,
+		SlashCommand: trigger,
+		CredentialID: a.CredentialID,
+	})
 }
 
 // cmdStatus returns a handler that flips the caller's presence. Since the

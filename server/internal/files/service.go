@@ -7,9 +7,9 @@ import (
 	"errors"
 	"fmt"
 	"image"
-	_ "image/gif"  // decoder registration
+	_ "image/gif" // decoder registration
 	"image/jpeg"
-	_ "image/png"  // decoder registration
+	_ "image/png" // decoder registration
 	"io"
 	"os"
 	"path/filepath"
@@ -17,8 +17,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
 	"github.com/hkjang/moyro/server/internal/store"
+	"github.com/jackc/pgx/v5"
 	xdraw "golang.org/x/image/draw"
 )
 
@@ -27,9 +27,9 @@ type FileInfo struct {
 	UserID        string `json:"user_id"`
 	PostID        string `json:"post_id"`
 	ChannelID     string `json:"channel_id"`
-	Path          string `json:"-"`              // filesystem path, not exposed
-	ThumbnailPath string `json:"-"`              // filesystem path for thumbnail (if any)
-	HasThumbnail  bool   `json:"has_thumbnail"`  // convenience flag so clients skip the thumbnail URL when absent
+	Path          string `json:"-"`             // filesystem path, not exposed
+	ThumbnailPath string `json:"-"`             // filesystem path for thumbnail (if any)
+	HasThumbnail  bool   `json:"has_thumbnail"` // convenience flag so clients skip the thumbnail URL when absent
 	Width         int    `json:"width"`
 	Height        int    `json:"height"`
 	Name          string `json:"name"`
@@ -241,17 +241,43 @@ func (s *Service) Open(ctx context.Context, id string) (io.ReadCloser, *FileInfo
 }
 
 // AssociateWithPost binds the given file_ids to a post, but only for
-// unattached files owned by the caller. Ids that don't match are silently
-// skipped rather than rejected — matches Mattermost's lenient behavior.
+// unattached files owned by the caller. It returns the canonical subset that
+// is now attached to this post, including files attached by an earlier attempt.
+// Ids that don't match are silently skipped — Mattermost's lenient behavior.
 func (s *Service) AssociateWithPost(ctx context.Context, ownerID string, fileIDs []string, postID, channelID string) ([]string, error) {
 	if len(fileIDs) == 0 {
 		return nil, nil
 	}
 	rows, err := s.db.Pool.Query(ctx, `
-		UPDATE file_infos
-		SET post_id=$1, channel_id=$2, update_at=$3
-		WHERE user_id=$4 AND post_id IS NULL AND id = ANY($5::text[])
-		RETURNING id
+		WITH requested AS (
+			SELECT input.id, MIN(input.ordinality) AS ordinality
+			FROM unnest($5::text[]) WITH ORDINALITY AS input(id, ordinality)
+			GROUP BY input.id
+		), existing AS (
+			SELECT requested.id
+			FROM requested
+			JOIN file_infos ON file_infos.id = requested.id
+			WHERE file_infos.user_id = $4
+			  AND file_infos.post_id = $1
+			  AND file_infos.delete_at = 0
+		), updated AS (
+			UPDATE file_infos
+			SET post_id=$1, channel_id=$2, update_at=$3
+			FROM requested
+			WHERE file_infos.id = requested.id
+			  AND file_infos.user_id=$4
+			  AND file_infos.post_id IS NULL
+			  AND file_infos.delete_at=0
+			RETURNING file_infos.id
+		), attached AS (
+			SELECT id FROM existing
+			UNION
+			SELECT id FROM updated
+		)
+		SELECT requested.id
+		FROM requested
+		JOIN attached ON attached.id = requested.id
+		ORDER BY requested.ordinality
 	`, postID, channelID, time.Now().UnixMilli(), ownerID, fileIDs)
 	if err != nil {
 		return nil, err

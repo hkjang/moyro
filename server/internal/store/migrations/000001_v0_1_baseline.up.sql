@@ -1,4 +1,5 @@
--- moyro schema. Mattermost-compatible field names where feasible.
+-- moyro:irreversible
+-- Moyro v0.1 baseline schema. Mattermost-compatible field names where feasible.
 
 CREATE TABLE IF NOT EXISTS users (
     id              TEXT PRIMARY KEY,

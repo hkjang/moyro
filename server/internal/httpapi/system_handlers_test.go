@@ -35,6 +35,56 @@ func TestGetClientConfig(t *testing.T) {
 	if got["EnableCommands"] != "true" || got["EnableCustomEmoji"] != "true" {
 		t.Fatalf("expected common client capability flags, got %#v", got)
 	}
+	if got["SendEmailNotifications"] != "false" {
+		t.Fatalf("SendEmailNotifications = %q, want false without SMTP", got["SendEmailNotifications"])
+	}
+
+	h.cfg.SMTPHost = "smtp.internal"
+	rr = httptest.NewRecorder()
+	h.getClientConfig(rr, req)
+	if err := json.NewDecoder(rr.Body).Decode(&got); err != nil {
+		t.Fatalf("decode SMTP-enabled response: %v", err)
+	}
+	if got["SendEmailNotifications"] != "true" {
+		t.Fatalf("SendEmailNotifications = %q, want true with SMTP", got["SendEmailNotifications"])
+	}
+}
+
+func TestNativeSystemInfoReportsEmailDigestCapability(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct {
+		name string
+		host string
+		want bool
+	}{
+		{name: "disabled", want: false},
+		{name: "configured", host: "smtp.internal", want: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			h := &handlers{cfg: &config.Config{SMTPHost: test.host}}
+			recorder := httptest.NewRecorder()
+			h.nativeSystemInfo(recorder, httptest.NewRequest(http.MethodGet, "/api/moyro/v1/system/info", nil))
+			if recorder.Code != http.StatusOK {
+				t.Fatalf("status = %d, want 200", recorder.Code)
+			}
+			var body struct {
+				Capabilities struct {
+					EmailDigest struct {
+						Configured bool `json:"configured"`
+						Enabled    bool `json:"enabled"`
+					} `json:"email_digest"`
+				} `json:"capabilities"`
+			}
+			if err := json.NewDecoder(recorder.Body).Decode(&body); err != nil {
+				t.Fatalf("decode response: %v", err)
+			}
+			if body.Capabilities.EmailDigest.Configured != test.want || body.Capabilities.EmailDigest.Enabled != test.want {
+				t.Fatalf("email capability = %#v, want %v", body.Capabilities.EmailDigest, test.want)
+			}
+		})
+	}
 }
 
 func TestGetClientLicenseRequiresOldFormat(t *testing.T) {

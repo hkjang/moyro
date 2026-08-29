@@ -2,12 +2,15 @@ package httpapi
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"strconv"
 	"time"
 
 	"github.com/go-chi/chi/v5"
+
+	"github.com/hkjang/moyro/server/internal/buildinfo"
 )
 
 type compatRole struct {
@@ -177,7 +180,7 @@ func writeAdminCompatNotSupported(w http.ResponseWriter, id, feature string) {
 		w,
 		http.StatusNotImplemented,
 		id,
-		feature+" is not dynamically supported in moyro v0.1.0",
+		fmt.Sprintf("%s is not dynamically supported in moyro %s", feature, buildinfo.Current().Version),
 	)
 }
 

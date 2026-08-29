@@ -29,9 +29,9 @@ moyro 프로세스가 직접 읽는 환경변수는 정확히 네 개다.
 | `BOOTSTRAP_ADMIN_PASSWORD` | 예 | 최초 관리자 생성에만 사용하며 로그·감사 payload·DB 평문에 남기지 않는다. |
 | `ENCRYPTION_KEY` | 예 | 정확히 32바이트를 base64로 인코딩한 root key. JWT 서명과 DB 비밀 암호화용 하위 키를 분리 파생한다. |
 
-HTTP listen 주소 `:8065`, 로컬 파일 저장소 `/var/lib/moyro/files`, 플러그인 디렉터리 `/var/lib/moyro/plugins`, 웹 정적 자산 위치는 이미지 계약으로 고정한다. v0.1.0에서 OIDC, AI, webhook outbound allowlist는 관리자 설정 전까지 비활성이다. SMTP, Redis, S3, outbound link preview와 런타임 플러그인 lifecycle 변경은 이 릴리스의 운영 범위에 포함하지 않으며 호환 API에서도 거짓 성공을 반환하지 않는다.
+HTTP listen 주소 `:8065`, 로컬 파일 저장소 `/var/lib/moyro/files`, 플러그인 디렉터리 `/var/lib/moyro/plugins`, 웹 정적 자산 위치는 이미지 계약으로 고정한다. v0.1.1에서 OIDC, AI, webhook outbound allowlist는 관리자 설정 전까지 비활성이다. SMTP, Redis, S3, outbound link preview와 런타임 플러그인 lifecycle 변경은 이 릴리스의 운영 범위에 포함하지 않으며 호환 API에서도 거짓 성공을 반환하지 않는다.
 
-v0.1.0의 지원 배포 단위는 PostgreSQL에 연결된 moyro 애플리케이션 컨테이너 **한 개**다. 관리자 설정의 DB commit과 live snapshot 전환은 이 프로세스 안에서 직렬화한다. 여러 애플리케이션 replica, Redis fan-out, HA 설정 전파는 후속 범위이며 이 릴리스에서 지원한다고 주장하지 않는다.
+v0.1.1의 지원 배포 단위는 PostgreSQL에 연결된 moyro 애플리케이션 컨테이너 **한 개**다. 관리자 설정의 DB commit과 live snapshot 전환은 이 프로세스 안에서 직렬화한다. 여러 애플리케이션 replica, Redis fan-out, HA 설정 전파는 후속 범위이며 이 릴리스에서 지원한다고 주장하지 않는다.
 
 ### 2.2 이미지와 릴리스
 
@@ -44,7 +44,7 @@ v0.1.0의 지원 배포 단위는 PostgreSQL에 연결된 moyro 애플리케이�
 
 ## 3. 설정과 비밀 관리
 
-v0.1.0이 지원하는 운영 설정은 관리 페이지와 DB-backed API로 관리한다. 공개 설정, 일반 설정, 비밀 설정을 명시적으로 구분한다.
+v0.1.1이 지원하는 운영 설정은 관리 페이지와 DB-backed API로 관리한다. 공개 설정, 일반 설정, 비밀 설정을 명시적으로 구분한다.
 
 - 일반 설정은 JSON 값과 revision을 저장한다. 현재 role permission처럼
   revision을 입력받는 변경 표면은 optimistic concurrency를 강제하며,
@@ -53,8 +53,8 @@ v0.1.0이 지원하는 운영 설정은 관리 페이지와 DB-backed API로 관
 - 설정 section과 key로 구성한 row identity를 AEAD AAD에 결합해 다른 설정 row로 ciphertext를 옮겨도 복호화되지 않게 한다.
 - provider의 공개 JSON과 새 비밀은 같은 PostgreSQL transaction으로 저장한 뒤 검증된 live snapshot으로 전환한다.
 - 지원되는 설정 변경은 감사 이벤트를 남긴다.
-- root `ENCRYPTION_KEY`는 관리 페이지에서 변경하지 않는다. v0.1.0에는 온라인 rewrap 절차가 없으므로 인스턴스 수명 동안 고정하고 별도로 백업한다.
-- Site URL, 조직명, 가입 정책, outbound webhook host allowlist, Keycloak, AI, MCP, 키 정책, 승인 정책을 관리자 설정 catalog에 포함한다. SMTP·S3·Redis는 v0.1.0 미지원이며 저장 가능한 것처럼 표시하지 않는다.
+- root `ENCRYPTION_KEY`는 관리 페이지에서 변경하지 않는다. v0.1.1에는 온라인 rewrap 절차가 없으므로 인스턴스 수명 동안 고정하고 별도로 백업한다.
+- Site URL, 조직명, 가입 정책, outbound webhook host allowlist, Keycloak, AI, MCP, 키 정책, 승인 정책을 관리자 설정 catalog에 포함한다. SMTP·S3·Redis는 v0.1.1 미지원이며 저장 가능한 것처럼 표시하지 않는다.
 
 ## 4. 인증과 권한
 
@@ -89,7 +89,7 @@ v0.1.0이 지원하는 운영 설정은 관리 페이지와 DB-backed API로 관
 
 권한을 문자열 상수 비교가 아니라 DB 역할과 permission 연결로 평가한다. 기존 Mattermost 호환 role 문자열은 assignment source로 유지하되 각 role을 DB 정의에 resolve한다.
 
-핵심 permission namespace는 `system.settings.*`, `oidc.*`, `ai.*`, `keys.*`, `approval.*`, `mcp.*`와 채팅 resource permission으로 구성한다. 역할 permission 변경은 다음 요청부터 반영하며, 기본 `system_admin` 역할에서는 복구 권한인 `manage_system`을 제거할 수 없다. 사용자별 system-admin assignment lifecycle은 v0.1.0의 native 관리 표면에 포함하지 않는다.
+핵심 permission namespace는 `system.settings.*`, `oidc.*`, `ai.*`, `keys.*`, `approval.*`, `mcp.*`와 채팅 resource permission으로 구성한다. 역할 permission 변경은 다음 요청부터 반영하며, 기본 `system_admin` 역할에서는 복구 권한인 `manage_system`을 제거할 수 없다. 사용자별 system-admin assignment lifecycle은 v0.1.1의 native 관리 표면에 포함하지 않는다.
 
 ## 5. 사용자 키 관리
 
@@ -100,7 +100,7 @@ v0.1.0이 지원하는 운영 설정은 관리 페이지와 DB-backed API로 관
 - 관리자가 role permission을 회수하면 기존 키 권한도 즉시 축소된다.
 - 사용자 요청 회전은 새 키를 만들고 이전 키를 configurable grace 기간 동안 `retiring`으로 둔 뒤 폐기한다.
 - 폐기된 키는 다시 활성화하지 않고 새 secret을 발급한다.
-- 개인 페이지는 자기 키 생성·회전·폐기를, 관리자 페이지는 허용 scope·TTL·회전 유예와 역할별 권한을 관리한다. v0.1.0은 일정 기반 자동 회전을 실행하지 않는다.
+- 개인 페이지는 자기 키 생성·회전·폐기를, 관리자 페이지는 허용 scope·TTL·회전 유예와 역할별 권한을 관리한다. v0.1.1은 일정 기반 자동 회전을 실행하지 않는다.
 
 ## 6. AI
 
@@ -126,13 +126,13 @@ Mattermost 호환 endpoint는 `/api/v4`에 유지하고 moyro 기능은 `/api/mo
 - Write tools: `create_post`, `reply_to_thread`
 - Review tools: `list_pending_approvals`, `approve_request`, `reject_request`
 
-MCP와 REST는 같은 Principal, Authorizer, approval engine, audit service를 사용한다. 설정 secret, API key 평문, 관리자 전용 데이터는 MCP resource로 노출하지 않는다. 보호된 write는 입력의 idempotency key로 중복 승인 요청을 합치며, 승인된 side effect는 request ID로 중복 실행을 막는다. 정책이 적용되지 않는 직접 게시에는 v0.1.0에서 별도 idempotency 보장을 주장하지 않는다.
+MCP와 REST는 같은 Principal, Authorizer, approval engine, audit service를 사용한다. 설정 secret, API key 평문, 관리자 전용 데이터는 MCP resource로 노출하지 않는다. 보호된 write는 입력의 idempotency key로 중복 승인 요청을 합치며, 승인된 side effect는 request ID로 중복 실행을 막는다. 정책이 적용되지 않는 직접 게시에는 v0.1.1에서 별도 idempotency 보장을 주장하지 않는다.
 
 ## 8. 선택적 팀장 검토·승인
 
 승인 기능의 기본값은 비활성이다.
 
-- 적용 가능한 action type, reviewer 역할, 자기 승인 허용 여부, 반려 사유 요구와 만료를 관리자가 설정한다. v0.1.0의 승인 quorum은 한 명으로 고정한다.
+- 적용 가능한 action type, reviewer 역할, 자기 승인 허용 여부, 반려 사유 요구와 만료를 관리자가 설정한다. v0.1.1의 승인 quorum은 한 명으로 고정한다.
 - 적용 정책이 없거나 비활성이면 승인 record를 만들지 않고 기존 동작을 즉시 수행한다.
 - 활성 정책에 해당하면 MCP write 결과에 승인 대기 상태와 request ID를 반환하고 승인 후 outbox를 통해 한 번만 실행한다.
 - 기본 reviewer role은 `team_lead`와 `system_admin`이며 관리자가 role permission mapping을 바꿀 수 있다.
@@ -176,7 +176,7 @@ UI framework는 MUI Core와 MUI X Community DataGrid, navigation은 React Router
 ## 10. 호환성과 보안 검증 기준
 
 다음은 production 수준의 호환성과 보안을 주장하기 위한 목표 기준이다.
-v0.1.0에서 실제 자동화된 범위와 아직 남은 회귀 항목은
+v0.1.1에서 실제 자동화된 범위와 아직 남은 회귀 항목은
 [구현·검증 체크리스트](moyro-build-checklist.md)에 구분해 기록한다. 태그
 workflow는 그 시점의 로컬 unit/build/browser/offline image gate가 모두
 통과해야만 release asset을 게시한다.

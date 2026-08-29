@@ -9,9 +9,9 @@ Server plugins are discovered from the fixed local plugin directory and loaded
 by `server/internal/pluginhost`. The location is not an application runtime
 environment variable.
 
-### v0.1.0 trust boundary
+### v0.1.1 trust boundary
 
-Native server plugins are operator-provisioned, fully trusted code in v0.1.0.
+Native server plugins are operator-provisioned, fully trusted code in v0.1.1.
 They execute with the same service UID and share the container process
 namespace, data volume, and network. The launcher supplies only the handshake
 cookie in the plugin command environment as defense-in-depth hygiene, but that

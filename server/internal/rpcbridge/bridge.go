@@ -43,7 +43,7 @@ type Client struct {
 // Launch starts the plugin executable and waits for the handshake.
 func Launch(ctx context.Context, exe string, logger *slog.Logger) (*Client, error) {
 	cmd := exec.CommandContext(ctx, exe)
-	// v0.1.0 native plugins are operator-provisioned, fully trusted code. Keep
+	// Native plugins are operator-provisioned, fully trusted code. Keep
 	// their direct command environment minimal as defense-in-depth hygiene: this
 	// is not a sandbox or a secret-isolation boundary because the process shares
 	// the service UID, process namespace, volume, and network. The RPC SDK itself

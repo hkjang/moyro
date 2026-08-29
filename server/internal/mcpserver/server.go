@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync/atomic"
 
+	"github.com/hkjang/moyro/server/internal/application/postcommand"
 	"github.com/hkjang/moyro/server/internal/approval"
 	"github.com/hkjang/moyro/server/internal/channels"
 	"github.com/hkjang/moyro/server/internal/posts"
@@ -27,10 +28,15 @@ type Authorizer func(context.Context, string, string, string) (bool, error)
 type ApprovedAuthorizer func(context.Context, string, string, string, string, string) (bool, error)
 type AuditLogger func(context.Context, string, string, string, string, error)
 
+type PostCommandExecutor interface {
+	Execute(context.Context, postcommand.Command) (*posts.Post, error)
+}
+
 type Dependencies struct {
 	Teams             *teams.Service
 	Channels          *channels.Service
 	Posts             *posts.Service
+	PostCommands      PostCommandExecutor
 	Approval          *approval.Service
 	UserID            UserIDResolver
 	CredentialID      CredentialIDResolver
@@ -54,7 +60,7 @@ type Policy struct {
 }
 
 func New(deps Dependencies) (*Service, error) {
-	if deps.Teams == nil || deps.Channels == nil || deps.Posts == nil || deps.UserID == nil {
+	if deps.Teams == nil || deps.Channels == nil || deps.Posts == nil || deps.PostCommands == nil || deps.UserID == nil {
 		return nil, errors.New("mcpserver: incomplete dependencies")
 	}
 	if deps.Authorize == nil {
@@ -221,7 +227,7 @@ type decideApprovalOutput struct {
 
 func (s *Service) registerTools() {
 	readOnly := &mcp.ToolAnnotations{ReadOnlyHint: true, OpenWorldHint: boolPointer(false)}
-	write := &mcp.ToolAnnotations{ReadOnlyHint: false, DestructiveHint: boolPointer(false), OpenWorldHint: boolPointer(false), IdempotentHint: true}
+	write := postWriteAnnotations()
 	review := &mcp.ToolAnnotations{ReadOnlyHint: false, DestructiveHint: boolPointer(true), OpenWorldHint: boolPointer(false), IdempotentHint: true}
 
 	mcp.AddTool(s.server, &mcp.Tool{
@@ -252,6 +258,16 @@ func (s *Service) registerTools() {
 		mcp.AddTool(s.server, &mcp.Tool{
 			Name: "reject_request", Title: "Reject a request", Description: "Rejects a pending request. The reason is retained for the requester.", Annotations: review,
 		}, s.rejectRequest)
+	}
+}
+
+func postWriteAnnotations() *mcp.ToolAnnotations {
+	// Direct writes have no durable idempotency record. idempotency_key only
+	// deduplicates approval submissions, so advertising the tools themselves as
+	// idempotent would be misleading when no approval policy applies.
+	return &mcp.ToolAnnotations{
+		ReadOnlyHint: false, DestructiveHint: boolPointer(false),
+		OpenWorldHint: boolPointer(false), IdempotentHint: false,
 	}
 }
 
@@ -435,7 +451,7 @@ func (s *Service) createPostCommon(ctx context.Context, tool string, input creat
 			return nil, createPostOutput{ApprovalRequired: true, ApprovalRequest: result.Request}, nil
 		}
 	}
-	post, err := s.deps.Posts.Create(ctx, input.ChannelID, uid, input.RootID, input.Message, map[string]any{"from_mcp": true}, nil)
+	post, err := s.executePostCommand(ctx, uid, input, "")
 	s.audit(ctx, uid, tool, "channel", input.ChannelID, err)
 	return nil, createPostOutput{Post: post}, err
 }
@@ -555,9 +571,7 @@ func (s *Service) ExecuteApproved(ctx context.Context, request *approval.Request
 	}
 	post, err := s.deps.Posts.GetByApprovalRequest(ctx, request.ID)
 	if err != nil {
-		post, err = s.deps.Posts.Create(ctx, input.ChannelID, request.RequesterID, input.RootID, input.Message, map[string]any{
-			"from_mcp": true, "approval_request_id": request.ID,
-		}, nil)
+		post, err = s.executePostCommandWithCredential(ctx, request.RequesterID, input, request.ID, payload.CredentialID)
 		if err != nil {
 			// A concurrent retry may have won the partial unique index.
 			if existing, lookupErr := s.deps.Posts.GetByApprovalRequest(ctx, request.ID); lookupErr == nil {
@@ -573,6 +587,26 @@ func (s *Service) ExecuteApproved(ctx context.Context, request *approval.Request
 		return post, request, err
 	}
 	return post, executed, nil
+}
+
+func (s *Service) executePostCommand(ctx context.Context, actorID string, input createPostInput, approvalRequestID string) (*posts.Post, error) {
+	credentialID := ""
+	if s.deps.CredentialID != nil {
+		credentialID = s.deps.CredentialID(ctx)
+	}
+	return s.executePostCommandWithCredential(ctx, actorID, input, approvalRequestID, credentialID)
+}
+
+func (s *Service) executePostCommandWithCredential(ctx context.Context, actorID string, input createPostInput, approvalRequestID, credentialID string) (*posts.Post, error) {
+	return s.deps.PostCommands.Execute(ctx, postcommand.Command{
+		Source:            postcommand.SourceMCP,
+		ActorID:           actorID,
+		ChannelID:         input.ChannelID,
+		RootID:            input.RootID,
+		Message:           input.Message,
+		ApprovalRequestID: approvalRequestID,
+		CredentialID:      credentialID,
+	})
 }
 
 func (s *Service) readResource(ctx context.Context, request *mcp.ReadResourceRequest) (*mcp.ReadResourceResult, error) {

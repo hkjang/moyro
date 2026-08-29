@@ -44,10 +44,14 @@ func (h *handlers) getClientConfig(w http.ResponseWriter, r *http.Request) {
 		"EnableSignUpWithEmail":            "true",
 		"ExperimentalPrimaryTeam":          "",
 		"ExperimentalTownSquareIsReadOnly": "false",
-		"SendEmailNotifications":           "false",
+		"SendEmailNotifications":           boolString(h.emailDigestEnabled()),
 		"TeammateNameDisplay":              "username",
 		"ThreadAutoFollow":                 "true",
 	})
+}
+
+func (h *handlers) emailDigestEnabled() bool {
+	return h != nil && h.cfg != nil && strings.TrimSpace(h.cfg.SMTPHost) != ""
 }
 
 func (h *handlers) effectiveSiteName() string {

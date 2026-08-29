@@ -40,9 +40,9 @@ moyro가 지향한 것은 **Mattermost 화면을 그대로 복제한 메신저**
 ### 역사 복원의 한계
 
 - Git 이력은 2026-04-24의 `55d6ccf` (`chore: establish moyro baseline`)에서 시작한다. 이 첫 커밋에 이미 서버, 웹앱, SDK, 문서 등 약 2.9만 줄이 한꺼번에 들어와 있어 그 이전의 실제 기획·개발 과정은 복원할 수 없다.
-- 현재 저장소에는 23개 커밋만 있고, 원격 저장소와 태그가 설정되어 있지 않다. 따라서 이 문서의 “원래 방향”은 창업자나 작성자의 회고가 아니라 **저장소 최초 스냅샷에서 확인되는 방향**을 뜻한다.
+- `v0.1.1` 안정화 작업 직전 `main`에는 27개 커밋과 `origin` 원격 저장소, 배포가 검증된 `v0.1.0` 태그가 있었다. 이 기록도 최초 스냅샷 이전의 기획 과정을 복원하지는 못하므로, 이 문서의 “원래 방향”은 창업자나 작성자의 회고가 아니라 **저장소 최초 스냅샷에서 확인되는 방향**을 뜻한다.
 - [requirements.md](requirements.md)는 README에서 레거시 계획 문서로 분류되어 현재 동작의 기준 문서는 아니다. 다만 최초 커밋에 들어온 뒤 변경되지 않았으므로 원래 의도를 파악하는 사료로 사용하고, 반드시 현재 문서와 코드로 교차 검증했다. 현재 파일 자체는 정상적인 UTF-8 한국어로 읽힌다. ([README.md](../README.md):103-114)
-- 분석 시점의 작업 트리에는 커밋되지 않은 Phase 25 이후의 대규모 API·UI 변경이 있다. 아래 현황에서는 커밋 기준선과 진행 중 변경을 구분한다.
+- 분석 시점의 작업 트리에는 `v0.1.1` 안정화 후보가 있다. 번호형 DB migration, 공통 Post Command, 예약 작업 lease, 세션 JTI 해시, SMTP capability, durable webhook delivery와 route lazy loading을 포함하므로 아래 현황에서는 마지막 배포 태그와 릴리스 후보를 구분한다.
 
 ## 3. 프로젝트가 풀고자 한 문제
 
@@ -81,7 +81,7 @@ moyro가 지향한 것은 **Mattermost 화면을 그대로 복제한 메신저**
 
 ### 목표 2 — 호환 프록시가 아닌 독립적인 채팅 제품을 만든다
 
-moyro은 요청을 원본 Mattermost 서버로 전달하는 프록시가 아니다. 자체 PostgreSQL 모델과 서비스로 사용자, 팀, 공개·비공개 채널, DM/GM, 포스트, 스레드, 검색, 파일, 반응, 상태를 직접 처리한다. ([schema.sql](../server/internal/store/schema.sql):1-153)
+moyro은 요청을 원본 Mattermost 서버로 전달하는 프록시가 아니다. 자체 PostgreSQL 모델과 서비스로 사용자, 팀, 공개·비공개 채널, DM/GM, 포스트, 스레드, 검색, 파일, 반응, 상태를 직접 처리한다. ([v0.1 baseline migration](../server/internal/store/migrations/000001_v0_1_baseline.up.sql):1-154)
 
 MVP에는 다음 범위가 포함되었다. ([requirements.md](requirements.md):40-53, 148-151)
 
@@ -154,7 +154,7 @@ flowchart LR
     A["System Console"] --> B
 ```
 
-이 구조에서 대체 가능한 것은 내부 구현이고, 안정적으로 유지해야 하는 것은 바깥쪽 계약이다. 이 때문에 데이터 모델도 Mattermost에 가까운 필드명을 사용하지만, 내부 ID와 서비스 구성은 독립적으로 선택할 수 있다. ([schema.sql](../server/internal/store/schema.sql):1-2, [architecture.md](architecture.md):65-81)
+이 구조에서 대체 가능한 것은 내부 구현이고, 안정적으로 유지해야 하는 것은 바깥쪽 계약이다. 이 때문에 데이터 모델도 Mattermost에 가까운 필드명을 사용하지만, 내부 ID와 서비스 구성은 독립적으로 선택할 수 있다. ([v0.1 baseline migration](../server/internal/store/migrations/000001_v0_1_baseline.up.sql):1-3, [architecture.md](architecture.md):65-81)
 
 ## 6. 처음 계획한 성장 단계
 
@@ -179,7 +179,7 @@ flowchart LR
 | 2026-04-25 | 공식 OpenAPI와 로컬 route shape 비교 도구, 핵심 API alias, 로그인·읽음 상태 호환 추가 | 호환성을 감각이 아닌 수치와 클라이언트 부팅 흐름으로 관리하기 시작 |
 | 2026-04-26~28 | 관리자·Enterprise·Access Control 경로와 System Console 확대 | 일반 채팅에서 조직 운영·관리 호환으로 범위 확장 |
 | 2026-04-28~29 | 관리자와 사용자 화면의 시각 체계 정리, Mattermost 작업 흐름에 맞춘 UI | 기능 폭 이후 사용성과 친숙도 보강 |
-| 현재 미커밋 작업 | Phase 25 이후 다수 API wave, 채널 bookmark·custom profile·post acknowledgement·TOS 영속화, 계정 UI 변경 | route stub 일부를 실제 저장·행동으로 전환하면서 사용자 흐름도 계속 조정하는 중 |
+| v0.1.1 릴리스 후보 | 번호형 migration, 공통 Post Command, 예약 lease/idempotency, 세션 JTI 해시, SMTP capability, PostgreSQL webhook delivery, handler 분할과 route lazy loading | 기능 폭을 더 넓히기보다 공통 권한·감사 경계와 재시작·다중 worker 안전성, 배포 검증을 강화하는 중 |
 
 최초 기준선 이후 22개 커밋의 제목은 `feat` 12개, `style` 4개, `fix` 3개, `chore`·`test`·`docs` 각 1개다. 짧은 기간에 호환 범위와 화면을 빠르게 넓혔다는 장점이 있지만, 동작 계약·운영·테스트의 깊이가 그 속도를 따라가야 하는 단계라는 뜻이기도 하다.
 
@@ -202,16 +202,19 @@ flowchart LR
 | 영역 | 현재 판단 | 근거와 남은 거리 |
 | --- | --- | --- |
 | 채팅 Foundation | 대체로 구현 | 인증, 팀·채널, DM/GM, 포스트·스레드, 파일, 반응, 검색, 읽음·멘션 상태가 소스와 스키마에 존재. 현재 로드맵도 `mostly present`로 평가한다. |
-| REST route shape | 넓게 확보한 미커밋 작업 | 2026-04-28 작업 트리 audit는 공식 539개 중 539개 match, 100%를 기록한다. 그러나 이는 당시 작업 트리 측정이며 행동 호환이나 clean release 수치가 아니다. ([mattermost-api-compatibility.md](mattermost-api-compatibility.md):252-268) |
+| REST route shape | 넓게 확보 | 2026-04-28 작업 트리 audit는 공식 539개 중 539개 match, 100%를 기록한다. 그러나 이는 당시 작업 트리 측정이며 행동 호환이나 현재 고정 릴리스 계약 수치가 아니다. ([mattermost-api-compatibility.md](mattermost-api-compatibility.md):252-268) |
 | 행동·오류 계약 | 부분 구현 | router와 handler에 이메일 확인, MFA, 채널 view, 업로드, recap, AI, cloud 등 200/빈 응답 stub이 다수 명시되어 있다. 성공·오류·권한·not-found 계약 테스트가 더 필요하다. |
 | 실제 클라이언트 호환 | 입증 부족 | 자체 React 웹앱은 동작하지만 공식 desktop/mobile/SDK의 end-to-end 호환 결과와 버전별 지원표는 없다. 최초 “샘플 80%” 기준도 자동화된 결과로 남아 있지 않다. |
-| 서버 플러그인 | 핵심 경로 동작 | manifest, subprocess, RPC, 게시 전·후 hook과 명령 순서는 구현·테스트됐다. v0.1.0 플러그인은 운영자가 이미지에 넣은 완전 신뢰 native code이며 비신뢰 코드 격리 경계가 아니다. 런타임 upload/install/enable/disable 경로는 이제 거짓 성공 대신 명시적인 not-supported 오류를 반환하지만, 동적 lifecycle, 설정 영속화, health, 재시작과 `ServeHTTP` 노출은 후속 범위다. ([admin_compat_handlers.go](../server/internal/httpapi/admin_compat_handlers.go), [plugin-system.md](plugin-system.md)) |
+| 서버 플러그인 | 핵심 경로 동작 | manifest, subprocess, RPC, 게시 전·후 hook과 명령 순서는 구현·테스트됐다. v0.1.1 플러그인은 운영자가 이미지에 넣은 완전 신뢰 native code이며 비신뢰 코드 격리 경계가 아니다. 런타임 upload/install/enable/disable 경로는 이제 거짓 성공 대신 명시적인 not-supported 오류를 반환하지만, 동적 lifecycle, 설정 영속화, health, 재시작과 `ServeHTTP` 노출은 후속 범위다. ([admin_compat_handlers.go](../server/internal/httpapi/admin_compat_handlers.go), [plugin-system.md](plugin-system.md)) |
 | 웹 플러그인 | 골격 | runtime과 registry는 있으나 현재 `ChatView`가 registry 상태를 구독·렌더링하지 않는다. admin bundle discovery, 오류 격리와 SDK 계약 테스트도 부족하다. ([registry.ts](../webapp/src/plugins/registry.ts):28-76, [runtime.ts](../webapp/src/plugins/runtime.ts):21-59) |
 | System Console | 지원 기능은 실제 API에 연결 | 별도 full-page 운영 면과 사이트·OIDC·AI·키·역할·MCP·승인 관리 API가 연결돼 있다. 유효 권한에 따라 위임 관리자 메뉴와 route를 제한하며, 레거시 호환 화면의 미지원 변경은 명시적인 not-supported 응답을 사용한다. Enterprise 전체 호환 화면이 실제 제품 기능이라는 뜻은 아니다. ([AdminAccessContext.tsx](../webapp/src/features/admin/AdminAccessContext.tsx), [AppRouter.tsx](../webapp/src/app/AppRouter.tsx)) |
 | WebSocket 권한 경계 | 차단 위험 해결, 회귀 유지 필요 | channel/team event는 DB membership으로 audience를 해석하고 resolver가 없거나 실패하면 fail closed한다. user 전용과 전역 event 의미도 분리해 단위 회귀 테스트를 추가했다. 실제 PostgreSQL을 둔 다중 사용자 E2E는 계속 릴리스 회귀 항목으로 유지한다. ([hub.go](../server/internal/ws/hub.go), [audience.go](../server/internal/ws/audience.go), [hub_test.go](../server/internal/ws/hub_test.go)) |
 | 세션 폐기 | 차단 위험 해결, 회귀 유지 필요 | HTTP와 WebSocket의 최초 인증은 JWT 서명뿐 아니라 live session, 만료와 active user를 확인한다. logout은 session을 삭제하고 기존 WebSocket도 즉시 종료한다. revoke·inactive까지 포함한 실제 서버 통합 회귀는 계속 보강 대상이다. ([auth.go](../server/internal/auth/auth.go), [handler.go](../server/internal/ws/handler.go), [handlers.go](../server/internal/httpapi/handlers.go)) |
+| 메시지 쓰기 경로 | 핵심 경로 통합 | REST, MCP 직접·승인 실행, 예약 worker, Incoming Webhook과 내장·플러그인 Slash Command의 in-channel 결과가 공통 Post Command를 호출해 권한, plugin hook, mention/unread, 실시간 event, webhook enqueue와 감사를 같은 순서로 적용한다. 저수준 `posts.Service`는 저장 adapter 역할만 맡는다. |
+| DB 변경 관리 | 번호형 migration 도입 | 체크섬과 적용 이력을 기록하는 순차 migration과 PostgreSQL 15/16 lifecycle test를 도입했다. v0.1 baseline은 불변 migration으로 보존한다. |
+| 비동기 내구성 | lease/outbox 도입, 원자성 경계 남음 | 예약 발송은 claim token·lease·attempt·unique result post로 중복을 막고, outgoing webhook은 PostgreSQL delivery/attempt/DLQ 상태로 재시작 후 복구된다. 다만 post 저장과 webhook enqueue는 아직 별도 transaction이라 그 사이의 crash gap은 남아 있다. |
 | 운영 | 부분 구현 | health, metrics, Redis fan-out, S3, SMTP worker는 존재. 실제 K8s 배포, backup/restore, 운영 config reference, 완전한 HA 검증은 문서상 다음 작업이다. |
-| 보안·Enterprise | 제품 범위는 구현, 호환 표면은 혼합 | DB RBAC·감사·rate limit, Keycloak OIDC, 개인 API/MCP 키와 승인 정책은 구현됐다. MFA, LDAP/SAML, 보존 정책, 플러그인 서명·sandbox 같은 Mattermost Enterprise 범위는 미지원 또는 후속이며 v0.1.0 플러그인은 완전 신뢰 코드다. |
+| 보안·Enterprise | 제품 범위는 구현, 호환 표면은 혼합 | DB RBAC·감사·rate limit, Keycloak OIDC, 개인 API/MCP 키와 승인 정책은 구현됐다. MFA, LDAP/SAML, 보존 정책, 플러그인 서명·sandbox 같은 Mattermost Enterprise 범위는 미지원 또는 후속이며 v0.1.1 플러그인은 완전 신뢰 코드다. |
 | 모바일·음성·화상 | 범위 밖 또는 후속 | MVP에서 음성·화상은 제외되고 모바일은 후속 단계다. 현재 저장소에는 네이티브 모바일 앱이 없다. |
 
 WebSocket audience와 live-session 검증은 최초 분석에서 확인한 릴리스 차단 위험이었으나 현재 후보에서 수정됐다. 이 평가는 단위·패키지 테스트와 정적 소스 감사에 근거하며 별도 침투 테스트 결과는 아니다. 따라서 해결된 항목을 다시 깨뜨리지 않도록 통합·브라우저 회귀 gate는 유지해야 한다.
@@ -222,12 +225,12 @@ WebSocket audience와 live-session 검증은 최초 분석에서 확인한 릴�
 
 - `server`의 `go test ./...`: 통과. 현재 서버에는 139개의 `Test*` 함수가 있지만 여전히 직접 테스트가 없는 서비스 패키지가 있다.
 - `plugin-sdk/go`의 `go test ./...`: 통과.
-- 웹앱 `npm run typecheck`와 `npm run build`: 통과. Vite는 단일 JavaScript chunk 크기 경고를 출력하므로 성능 최적화는 후속 과제다.
+- 웹앱 `npm run typecheck`와 `npm run build`: 통과. route lazy loading으로 main JavaScript는 1,359.40 kB에서 237.19 kB로 줄었지만, 데이터 그리드가 포함된 개인 키 feature chunk는 추가 분리 대상이다.
 - 현재 후보로 linux/amd64 non-root Docker 이미지를 빌드하고 Playwright 제품 route·새로고침·권한 변경·승인 idempotency·세션 폐기·REST 오류 계약·로그인/프로필 버전·모바일 viewport·브라우저 오류 검증 27개를 릴리스 gate로 실행한다. ([package.json](../webapp/package.json), [product-pages.spec.ts](../webapp/e2e/product-pages.spec.ts))
 - 최신 E2E에서 캡처한 25개 화면을 Pages에 반영했다. 정적 검증은 5개 HTML의 링크·JSON-LD와 JPEG SOF 실제 크기/HTML 선언을 확인하며, desktop `1440x1000`과 mobile `430x932` 기준으로 통과했다.
-- tag workflow는 `moyro-v0.1.0.tar.gz`를 만든 뒤 내부 전용 Docker network에서 다시 load해 offline startup, web UI/version, bootstrap login, restart와 정확히 네 개의 애플리케이션 환경변수를 검증한 자산 하나만 GitHub Release에 게시한다. Pages workflow는 `docs/` 홍보·가이드·실제 제품 캡처를 별도로 배포한다.
-- 저장소의 OpenAPI 초안은 23개 path, 25개 operation만 기술하고 있어 수백 개 실제 route의 현재 계약 문서 역할을 하지 못한다. 로드맵도 OpenAPI와 handler 수렴을 다음 작업으로 둔다. ([roadmap.md](roadmap.md):16-21)
-- 현재 작업 트리 기준 `handlers.go`는 약 10,100줄, `ChatView.tsx`는 약 4,600줄, `IntegrationsPanel.tsx`는 약 1,900줄이다. 폭을 빠르게 넓힌 결과로, 동작 변경 없이 기능 경계를 분리해야 한다는 로드맵의 진단과 일치한다.
+- tag workflow는 `moyro-v0.1.1.tar.gz`를 만든 뒤 내부 전용 Docker network에서 다시 load해 offline startup, web UI/version, bootstrap login, restart와 정확히 네 개의 애플리케이션 환경변수를 검증한 자산 하나만 GitHub Release에 게시한다. Pages workflow는 `docs/` 홍보·가이드·실제 제품 캡처를 별도로 배포한다.
+- 저장소의 OpenAPI 3.1 초안은 v0.1.1 세션·예약 메시지 계약을 포함해 28개 path, 31개 operation을 기술한다. Redocly 구조 검증은 통과하지만 수백 개 실제 route의 완전한 계약 문서는 아니므로 router와 OpenAPI 수렴은 계속 필요하다. ([roadmap.md](roadmap.md):16-21)
+- `handlers.go` 약 10,100줄은 `handlers.go` 4,875줄과 `compat_wave_handlers.go` 5,084줄로 분할했다. `ChatView.tsx` 약 4,620줄, `IntegrationsPanel.tsx` 약 1,945줄 등 다음 분리 대상에는 CI source-size ratchet을 적용해 다시 커지지 않게 했다.
 
 ## 9. 원래 방향에서 제외되거나 후순위였던 것
 

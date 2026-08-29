@@ -1,13 +1,10 @@
 package webhooks
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
-	"io"
 	"log/slog"
-	"net"
 	"net/http"
 	"net/url"
 	"strings"
@@ -226,13 +223,8 @@ type Dispatcher struct {
 
 	client  *http.Client
 	workers int
-	jobs    chan dispatchJob
-
-	// Per-hook+channel dedup window: we key on `hook_id|channel_id` and
-	// only dispatch if the last send for that key is older than 2s.
-	// Keeps a hot trigger (e.g. shared word) from thundering callbacks.
-	dedupMu sync.Mutex
-	dedup   map[string]time.Time
+	queue   *DeliveryService
+	wake    chan struct{}
 
 	allowedMu    sync.RWMutex
 	allowedHosts map[string]struct{}
@@ -255,6 +247,8 @@ type dispatchJob struct {
 
 var errOutgoingRedirect = errors.New("outgoing webhook redirects are disabled")
 
+const maximumWebhookDepth = 3
+
 // newOutboundHTTPClient deliberately rejects every redirect. Callback URLs
 // are checked against the administrator's allow-list before the request is
 // sent, but net/http would otherwise follow a 3xx response to a different
@@ -275,13 +269,17 @@ func newOutboundHTTPClient() *http.Client {
 	}
 }
 
-// NewDispatcher spins up the worker pool. workers<=0 defaults to 16.
-// `allowedHosts` optionally gates outbound requests to a hostname allow-list;
-// when nil, the dispatcher falls back to a safer default of blocking
-// private/link-local IPs.
+// NewDispatcher spins up the worker pool. workers<=0 defaults to 16. A nil
+// `allowedHosts` leaves workers paused until ConfigureAllowedHosts loads the
+// durable policy; a non-nil empty list is an explicit deny-all policy. This
+// distinction keeps startup fail-closed without turning preserved work dead
+// merely because settings have not finished loading yet.
 func NewDispatcher(svc *OutgoingService, postSvc *posts.Service, teamOf TeamResolver, logger *slog.Logger, workers int, allowedHosts []string) *Dispatcher {
 	if workers <= 0 {
 		workers = 16
+	}
+	if logger == nil {
+		logger = slog.Default()
 	}
 	allow := map[string]struct{}{}
 	for _, h := range allowedHosts {
@@ -289,14 +287,17 @@ func NewDispatcher(svc *OutgoingService, postSvc *posts.Service, teamOf TeamReso
 	}
 	d := &Dispatcher{
 		svc: svc, posts: postSvc, teamOf: teamOf, logger: logger,
-		client:       newOutboundHTTPClient(),
-		workers:      workers,
-		jobs:         make(chan dispatchJob, 1024),
-		dedup:        map[string]time.Time{},
-		allowedHosts: allow,
+		client:            newOutboundHTTPClient(),
+		workers:           workers,
+		wake:              make(chan struct{}, workers),
+		allowedHosts:      allow,
+		allowedConfigured: allowedHosts != nil,
 	}
-	for i := 0; i < workers; i++ {
-		go d.runWorker()
+	if svc != nil && svc.db != nil && svc.db.Pool != nil {
+		d.queue = NewDeliveryService(svc.db)
+		for i := 0; i < workers; i++ {
+			go d.runWorker()
+		}
 	}
 	return d
 }
@@ -320,74 +321,16 @@ func (d *Dispatcher) ConfigureAllowedHosts(hosts []string) {
 	d.allowedHosts = allow
 	d.allowedConfigured = true
 	d.allowedMu.Unlock()
+	d.signalWorkers(d.workers)
 }
 
-// QueueDepth reports the current number of pending callback jobs in the
-// dispatcher's buffered channel. Non-blocking snapshot; useful as a
-// Prometheus gauge and for operators deciding when to scale workers.
-func (d *Dispatcher) QueueDepth() int { return len(d.jobs) }
-
-// Dispatch matches active outgoing hooks for a post and enqueues callback
-// jobs. Non-blocking — if the queue is full, we drop with a warn so the
-// caller (createPost) isn't stalled.
-func (d *Dispatcher) Dispatch(ctx context.Context, post *posts.Post, authorUsername string) {
-	if post == nil || post.Message == "" {
-		return
-	}
-	// Depth cap: refuse to run if this post is already webhook-originated
-	// and the chain is at max depth. Prevents accidental loops.
-	depth := 0
-	if v, ok := post.Props["webhook_depth"]; ok {
-		if f, ok := v.(float64); ok {
-			depth = int(f)
-		}
-	}
-	if depth >= 3 {
-		return
-	}
-	teamID, err := d.teamOf(ctx, post.ChannelID)
-	if err != nil || teamID == "" {
-		return
-	}
-	hooks, err := d.svc.candidatesFor(ctx, teamID, post.ChannelID)
-	if err != nil {
-		d.logger.Warn("outgoing candidate query failed", "err", err)
-		return
-	}
-	for _, h := range hooks {
-		if !matchTrigger(post.Message, h.TriggerWords, h.TriggerWhen) {
-			continue
-		}
-		if !d.dedupOK(h.ID, post.ChannelID) {
-			continue
-		}
-		select {
-		case d.jobs <- dispatchJob{hook: h, post: withDepth(post, depth+1), user: authorUsername}:
-		default:
-			d.logger.Warn("outgoing dispatch queue full; dropping", "hook", h.ID)
-		}
-	}
-}
-
-func (d *Dispatcher) dedupOK(hookID, channelID string) bool {
-	key := hookID + "|" + channelID
-	now := time.Now()
-	d.dedupMu.Lock()
-	defer d.dedupMu.Unlock()
-	if last, ok := d.dedup[key]; ok && now.Sub(last) < 2*time.Second {
+func (d *Dispatcher) policyReady() bool {
+	if d == nil {
 		return false
 	}
-	d.dedup[key] = now
-	// Opportunistic cleanup so the map doesn't grow forever.
-	if len(d.dedup) > 1024 {
-		cutoff := now.Add(-1 * time.Minute)
-		for k, t := range d.dedup {
-			if t.Before(cutoff) {
-				delete(d.dedup, k)
-			}
-		}
-	}
-	return true
+	d.allowedMu.RLock()
+	defer d.allowedMu.RUnlock()
+	return d.allowedConfigured
 }
 
 func withDepth(p *posts.Post, depth int) *posts.Post {
@@ -405,42 +348,9 @@ func withDepth(p *posts.Post, depth int) *posts.Post {
 	return &cp
 }
 
-func (d *Dispatcher) runWorker() {
-	for job := range d.jobs {
-		d.deliver(job)
-	}
-}
-
-func (d *Dispatcher) deliver(job dispatchJob) {
-	for _, cb := range job.hook.CallbackURLs {
-		if !d.hostAllowed(cb) {
-			d.logger.Warn("outgoing callback host blocked", "url", cb, "hook", job.hook.ID)
-			continue
-		}
-		body := outgoingPayload(job)
-		raw, _ := json.Marshal(body)
-		req, err := http.NewRequest(http.MethodPost, cb, bytes.NewReader(raw))
-		if err != nil {
-			d.logger.Warn("build outgoing request failed", "err", err)
-			continue
-		}
-		req.Header.Set("Content-Type", job.hook.ContentType)
-		req.Header.Set("User-Agent", "moyro-webhook/1.0")
-		resp, err := d.client.Do(req)
-		if err != nil {
-			d.logger.Info("outgoing dispatch error", "hook", job.hook.ID, "err", err)
-			continue
-		}
-		// Drain + close so the connection can be reused.
-		io.Copy(io.Discard, resp.Body)
-		resp.Body.Close()
-	}
-}
-
 // hostAllowed is the outbound request safety check.
 //  1. URL must parse + be http/https.
-//  2. If an allowlist is configured, host must be on it.
-//  3. Else, reject links to private / loopback / link-local addresses.
+//  2. Host must be on the explicit allow-list. Empty means deny all.
 func (d *Dispatcher) hostAllowed(raw string) bool {
 	u, err := url.Parse(raw)
 	if err != nil {
@@ -457,39 +367,24 @@ func (d *Dispatcher) hostAllowed(raw string) bool {
 	_, explicitlyAllowed := d.allowedHosts[strings.ToLower(host)]
 	hasManagedPolicy := d.allowedConfigured
 	d.allowedMu.RUnlock()
-	if hasManagedPolicy {
-		return explicitlyAllowed
-	}
-	// Resolve and check each address. We don't rebind the request to the
-	// resolved IP (TOCTOU-wise this is best-effort), but we do block the
-	// obvious footguns: 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16,
-	// 169.254.0.0/16, 127.0.0.0/8.
-	ips, err := net.LookupIP(host)
-	if err != nil {
-		return false
-	}
-	for _, ip := range ips {
-		if ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsUnspecified() {
-			return false
-		}
-	}
-	return true
+	return hasManagedPolicy && explicitlyAllowed
 }
 
 // outgoingPayload mirrors Mattermost's classic JSON body so existing tools
 // that understand that shape work without adaptation.
 func outgoingPayload(job dispatchJob) map[string]any {
 	return map[string]any{
-		"token":        job.hook.Token,
-		"team_id":      job.hook.TeamID,
-		"channel_id":   job.post.ChannelID,
-		"timestamp":    job.post.CreateAt,
-		"user_id":      job.post.UserID,
-		"user_name":    job.user,
-		"post_id":      job.post.ID,
-		"text":         job.post.Message,
-		"trigger_word": firstMatch(job.post.Message, job.hook.TriggerWords, job.hook.TriggerWhen),
-		"file_ids":     job.post.FileIDs,
+		"token":               job.hook.Token,
+		"team_id":             job.hook.TeamID,
+		"channel_id":          job.post.ChannelID,
+		"timestamp":           job.post.CreateAt,
+		"user_id":             job.post.UserID,
+		"user_name":           job.user,
+		"post_id":             job.post.ID,
+		"text":                job.post.Message,
+		"trigger_word":        firstMatch(job.post.Message, job.hook.TriggerWords, job.hook.TriggerWhen),
+		"file_ids":            job.post.FileIDs,
+		"moyro_webhook_depth": webhookDepth(job.post),
 	}
 }
 

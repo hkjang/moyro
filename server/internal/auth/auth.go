@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"time"
 
@@ -29,18 +30,28 @@ var (
 )
 
 const (
-	minimumPasswordBytes = 12
-	maximumPasswordBytes = 72 // bcrypt's defined input limit
+	minimumPasswordBytes    = 12
+	maximumPasswordBytes    = 72 // bcrypt's defined input limit
+	sessionIssuer           = "moyro"
+	sessionJTIDigestPurpose = "session-jti/v1"
+	sessionJTIDigestSize    = 32
 )
 
-type Service struct {
-	db        *store.DB
-	jwtSecret []byte
-	ttl       time.Duration
+// SessionDigester is implemented by secrets.Manager. Keeping this interface
+// narrow prevents the auth package from receiving Moyro's root encryption key.
+type SessionDigester interface {
+	Digest(purpose string, secret []byte) ([]byte, error)
 }
 
-func New(db *store.DB, jwtSecret []byte, ttl time.Duration) *Service {
-	return &Service{db: db, jwtSecret: jwtSecret, ttl: ttl}
+type Service struct {
+	db              *store.DB
+	jwtSecret       []byte
+	ttl             time.Duration
+	sessionDigester SessionDigester
+}
+
+func New(db *store.DB, jwtSecret []byte, ttl time.Duration, sessionDigester SessionDigester) *Service {
+	return &Service{db: db, jwtSecret: jwtSecret, ttl: ttl, sessionDigester: sessionDigester}
 }
 
 // ValidatePassword applies the local-account password boundary at the service
@@ -119,6 +130,15 @@ func scanUserRow(rows pgx.Rows) (User, error) {
 type Claims struct {
 	UserID string `json:"sub"`
 	jwt.RegisteredClaims
+	// SessionID is hydrated from PostgreSQL after authentication. It is never
+	// signed into or serialized with the bearer JWT.
+	SessionID string `json:"-"`
+}
+
+type issuedSessionToken struct {
+	Token     string
+	JTIHash   []byte
+	ExpiresAt int64
 }
 
 func (s *Service) Register(ctx context.Context, username, email, password string) (*User, error) {
@@ -185,28 +205,41 @@ func (s *Service) LoginWithDevice(ctx context.Context, loginID, password, device
 	if err := bcrypt.CompareHashAndPassword([]byte(hash), []byte(password)); err != nil {
 		return nil, "", ErrInvalidCredentials
 	}
-	tok, err := s.issueToken(u.ID)
+	issued, err := s.issueToken(u.ID)
 	if err != nil {
 		return nil, "", err
 	}
 	now := time.Now()
 	_, err = tx.Exec(ctx, `
-		INSERT INTO sessions (id, user_id, token, device_id, expires_at, create_at)
-		VALUES ($1,$2,$3,$4,$5,$6)
-	`, uuid.NewString(), u.ID, tok, deviceID, now.Add(s.ttl).UnixMilli(), now.UnixMilli())
+			INSERT INTO sessions (id, user_id, token, jti_hash, device_id, expires_at, create_at)
+			VALUES ($1,$2,$3,$4,$5,$6,$7)
+		`, uuid.NewString(), u.ID, issued.Token, issued.JTIHash, deviceID, issued.ExpiresAt, now.UnixMilli())
 	if err != nil {
 		return nil, "", err
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return nil, "", err
 	}
-	return &u, tok, nil
+	return &u, issued.Token, nil
 }
 
 // Revoke deletes the session identified by the given JWT token. Returns nil
 // even if the session was not found so logout is idempotent.
 func (s *Service) Revoke(ctx context.Context, token string) error {
-	_, err := s.db.Pool.Exec(ctx, `DELETE FROM sessions WHERE token = $1`, token)
+	claims, err := s.Parse(token)
+	if err != nil {
+		// Logout remains idempotent for credentials that do not identify a JWT
+		// session (for example a PAT authenticated through the same route).
+		return nil
+	}
+	digest, err := s.digestJTI(claims.ID)
+	if err != nil {
+		return err
+	}
+	_, err = s.db.Pool.Exec(ctx, `
+		DELETE FROM sessions
+		WHERE jti_hash=$1 OR (jti_hash IS NULL AND token=$2)
+	`, digest, token)
 	return err
 }
 
@@ -214,50 +247,83 @@ func (s *Service) Revoke(ctx context.Context, token string) error {
 // row, exactly like the end of Login. Exposed so sibling packages (OAuth
 // callback) can complete a sign-in without re-implementing token minting.
 func (s *Service) IssueSession(ctx context.Context, userID string) (string, error) {
-	tok, err := s.issueToken(userID)
+	issued, err := s.issueToken(userID)
 	if err != nil {
 		return "", err
 	}
 	now := time.Now()
 	_, err = s.db.Pool.Exec(ctx, `
-		INSERT INTO sessions (id, user_id, token, expires_at, create_at)
-		VALUES ($1,$2,$3,$4,$5)
-	`, uuid.NewString(), userID, tok, now.Add(s.ttl).UnixMilli(), now.UnixMilli())
+			INSERT INTO sessions (id, user_id, token, jti_hash, expires_at, create_at)
+			VALUES ($1,$2,$3,$4,$5,$6)
+		`, uuid.NewString(), userID, issued.Token, issued.JTIHash, issued.ExpiresAt, now.UnixMilli())
 	if err != nil {
 		return "", err
 	}
-	return tok, nil
+	return issued.Token, nil
 }
 
-func (s *Service) issueToken(userID string) (string, error) {
+func (s *Service) issueToken(userID string) (issuedSessionToken, error) {
+	if strings.TrimSpace(userID) == "" {
+		return issuedSessionToken{}, errors.New("session subject is required")
+	}
 	now := time.Now()
+	expiresAt := now.Add(s.ttl)
 	claims := &Claims{
 		UserID: userID,
 		RegisteredClaims: jwt.RegisteredClaims{
 			ID:        uuid.NewString(),
-			ExpiresAt: jwt.NewNumericDate(now.Add(s.ttl)),
+			ExpiresAt: jwt.NewNumericDate(expiresAt),
 			IssuedAt:  jwt.NewNumericDate(now),
-			Issuer:    "moyro",
+			Issuer:    sessionIssuer,
 		},
 	}
-	return jwt.NewWithClaims(jwt.SigningMethodHS256, claims).SignedString(s.jwtSecret)
+	token, err := jwt.NewWithClaims(jwt.SigningMethodHS256, claims).SignedString(s.jwtSecret)
+	if err != nil {
+		return issuedSessionToken{}, err
+	}
+	digest, err := s.digestJTI(claims.ID)
+	if err != nil {
+		return issuedSessionToken{}, err
+	}
+	return issuedSessionToken{Token: token, JTIHash: digest, ExpiresAt: expiresAt.UnixMilli()}, nil
 }
 
 func (s *Service) Parse(tokenStr string) (*Claims, error) {
 	tok, err := jwt.ParseWithClaims(tokenStr, &Claims{}, func(t *jwt.Token) (any, error) {
-		if _, ok := t.Method.(*jwt.SigningMethodHMAC); !ok {
+		if t.Method != jwt.SigningMethodHS256 {
 			return nil, errors.New("unexpected signing method")
 		}
 		return s.jwtSecret, nil
-	})
+	},
+		jwt.WithValidMethods([]string{jwt.SigningMethodHS256.Alg()}),
+		jwt.WithIssuer(sessionIssuer),
+		jwt.WithExpirationRequired(),
+	)
 	if err != nil {
 		return nil, err
 	}
 	c, ok := tok.Claims.(*Claims)
-	if !ok || !tok.Valid {
+	if !ok || !tok.Valid || strings.TrimSpace(c.UserID) == "" || strings.TrimSpace(c.ID) == "" {
 		return nil, errors.New("invalid token")
 	}
 	return c, nil
+}
+
+func (s *Service) digestJTI(jti string) ([]byte, error) {
+	if s.sessionDigester == nil {
+		return nil, errors.New("session digester is unavailable")
+	}
+	if strings.TrimSpace(jti) == "" {
+		return nil, errors.New("session jti is required")
+	}
+	digest, err := s.sessionDigester.Digest(sessionJTIDigestPurpose, []byte(jti))
+	if err != nil {
+		return nil, fmt.Errorf("digest session jti: %w", err)
+	}
+	if len(digest) != sessionJTIDigestSize {
+		return nil, fmt.Errorf("digest session jti: got %d bytes, want %d", len(digest), sessionJTIDigestSize)
+	}
+	return digest, nil
 }
 
 // Authenticate validates both the signed JWT and its live database session.
@@ -269,24 +335,38 @@ func (s *Service) Authenticate(ctx context.Context, tokenStr string) (*Claims, e
 		return nil, ErrInvalidSession
 	}
 
-	var valid bool
-	err = s.db.Pool.QueryRow(ctx, `
-		SELECT EXISTS (
-			SELECT 1
-			FROM sessions AS s
-			JOIN users AS u ON u.id = s.user_id
-			WHERE s.token = $1
-			  AND s.user_id = $2
-			  AND s.expires_at > $3
-			  AND u.delete_at = 0
-		)
-	`, tokenStr, claims.UserID, time.Now().UnixMilli()).Scan(&valid)
+	digest, err := s.digestJTI(claims.ID)
 	if err != nil {
 		return nil, err
 	}
-	if !valid {
+	var sessionID string
+	var hasDigest bool
+	err = s.db.Pool.QueryRow(ctx, `
+			SELECT s.id, s.jti_hash IS NOT NULL
+			FROM sessions AS s
+			JOIN users AS u ON u.id = s.user_id
+			WHERE (s.jti_hash = $1 OR (s.jti_hash IS NULL AND s.token = $2))
+			  AND s.user_id = $3
+			  AND s.expires_at > $4
+			  AND u.delete_at = 0
+			LIMIT 1
+		`, digest, tokenStr, claims.UserID, time.Now().UnixMilli()).Scan(&sessionID, &hasDigest)
+	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrInvalidSession
 	}
+	if err != nil {
+		return nil, err
+	}
+	if !hasDigest {
+		// Legacy v0.1 rows contain only the raw token. Backfill only after its
+		// signature, issuer, subject, JTI, user and expiry have all validated.
+		if _, err := s.db.Pool.Exec(ctx, `
+			UPDATE sessions SET jti_hash=$1 WHERE id=$2 AND jti_hash IS NULL
+		`, digest, sessionID); err != nil {
+			return nil, err
+		}
+	}
+	claims.SessionID = sessionID
 	return claims, nil
 }
 
@@ -506,13 +586,11 @@ func (s *Service) Reactivate(ctx context.Context, targetID string) (bool, error)
 	return cmd.RowsAffected() > 0, nil
 }
 
-// Session is the admin-visible shape of a sessions row. Token is the raw
-// JWT — only exposed to the session's owner via /users/me/sessions so the
-// "this is my current device" match can be made client-side.
+// Session is the safe administrative shape of a sessions row. Bearer tokens
+// and keyed lookup digests never leave the authentication/storage boundary.
 type Session struct {
 	ID        string `json:"id"`
 	UserID    string `json:"user_id"`
-	Token     string `json:"token"`
 	DeviceID  string `json:"device_id"`
 	ExpiresAt int64  `json:"expires_at"`
 	CreateAt  int64  `json:"create_at"`
@@ -520,10 +598,13 @@ type Session struct {
 
 // ListSessions returns every active session row for a user, newest first.
 func (s *Service) ListSessions(ctx context.Context, userID string) ([]Session, error) {
+	now := time.Now().UnixMilli()
 	rows, err := s.db.Pool.Query(ctx, `
-		SELECT id, user_id, token, COALESCE(device_id,''), expires_at, create_at
-		FROM sessions WHERE user_id=$1 ORDER BY create_at DESC
-	`, userID)
+			SELECT id, user_id, COALESCE(device_id,''), expires_at, create_at
+			FROM sessions
+			WHERE user_id=$1 AND expires_at>$2
+			ORDER BY create_at DESC
+		`, userID, now)
 	if err != nil {
 		return nil, err
 	}
@@ -531,7 +612,7 @@ func (s *Service) ListSessions(ctx context.Context, userID string) ([]Session, e
 	out := []Session{}
 	for rows.Next() {
 		var ss Session
-		if err := rows.Scan(&ss.ID, &ss.UserID, &ss.Token, &ss.DeviceID, &ss.ExpiresAt, &ss.CreateAt); err != nil {
+		if err := rows.Scan(&ss.ID, &ss.UserID, &ss.DeviceID, &ss.ExpiresAt, &ss.CreateAt); err != nil {
 			return nil, err
 		}
 		out = append(out, ss)
@@ -553,17 +634,25 @@ func (s *Service) RevokeSession(ctx context.Context, sessionID, userID string) (
 	return cmd.RowsAffected() > 0, nil
 }
 
-// RevokeOthers deletes every session for the user EXCEPT the one matching
-// currentToken. Used by the "sign out everywhere else" flow on the
-// profile menu. Returns the number of sessions removed.
-func (s *Service) RevokeOthers(ctx context.Context, userID, currentToken string) (int64, error) {
-	cmd, err := s.db.Pool.Exec(ctx, `
-		DELETE FROM sessions WHERE user_id=$1 AND token<>$2
-	`, userID, currentToken)
+// RevokeOthers deletes every session for the user EXCEPT currentSessionID.
+// An empty currentSessionID (for example PAT authentication) preserves the
+// historical behaviour of revoking every JWT session. Used by the profile
+// menu. Expired rows are cleaned at the same time but do not inflate the
+// returned count of live sessions invalidated.
+func (s *Service) RevokeOthers(ctx context.Context, userID, currentSessionID string) (int64, error) {
+	var revoked int64
+	err := s.db.Pool.QueryRow(ctx, `
+		WITH removed AS (
+			DELETE FROM sessions
+			WHERE user_id=$1 AND ($2='' OR id<>$2)
+			RETURNING expires_at
+		)
+		SELECT COUNT(*) FILTER (WHERE expires_at>$3)::BIGINT FROM removed
+	`, userID, currentSessionID, time.Now().UnixMilli()).Scan(&revoked)
 	if err != nil {
 		return 0, err
 	}
-	return cmd.RowsAffected(), nil
+	return revoked, nil
 }
 
 // RevokeAllForUser deletes every session for the given user — the official
@@ -892,11 +981,13 @@ func stringsJoinSpace(parts []string) string {
 	return out
 }
 
-// SetSessionDeviceID stamps the device_id (e.g. APNS/FCM token) on the row
-// matching the given JWT. Used by the official mobile clients on launch so
-// future server-side push fanout can target the right device.
-func (s *Service) SetSessionDeviceID(ctx context.Context, token, deviceID string) (bool, error) {
-	tag, err := s.db.Pool.Exec(ctx, `UPDATE sessions SET device_id=$2 WHERE token=$1`, token, deviceID)
+// SetSessionDeviceID stamps the device_id (e.g. APNS/FCM token) on the current
+// authenticated session without passing the raw bearer token into storage SQL.
+func (s *Service) SetSessionDeviceID(ctx context.Context, sessionID, userID, deviceID string) (bool, error) {
+	if sessionID == "" {
+		return false, nil
+	}
+	tag, err := s.db.Pool.Exec(ctx, `UPDATE sessions SET device_id=$3 WHERE id=$1 AND user_id=$2`, sessionID, userID, deviceID)
 	if err != nil {
 		return false, err
 	}

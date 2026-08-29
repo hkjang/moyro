@@ -155,6 +155,12 @@ func (h *handlers) nativeSystemInfo(w http.ResponseWriter, r *http.Request) {
 		"name": "moyro", "version": info.Version, "build_hash": info.Commit,
 		"build_date": info.BuildDate, "oidc_enabled": false, "approval_enabled": false,
 		"local_signup_enabled": false,
+		"capabilities": map[string]any{
+			"email_digest": map[string]bool{
+				"configured": h.emailDigestEnabled(),
+				"enabled":    h.emailDigestEnabled(),
+			},
+		},
 	}
 	if h.native != nil {
 		view["local_signup_enabled"] = h.native.currentSiteSettings().LocalSignupEnabled

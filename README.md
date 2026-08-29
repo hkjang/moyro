@@ -26,11 +26,14 @@ Product site: <https://hkjang.github.io/moyro/>
 - File upload/download, thumbnails, custom emoji, image lightbox
 - WebSocket events with reconnect reconciliation and unread counters
 - Search, saved posts, public channel discovery, and a link-preview foundation
-  (outbound previews are disabled by the offline-safe v0.1.0 runtime)
+  (outbound previews are disabled by the offline-safe v0.1.1 runtime)
 - Incoming/outgoing webhooks, slash commands, bots, personal access tokens
 - OAuth compatibility hooks, limited-use invite links, audit logs, and metrics
-- Scheduled messages and post reminders
-- Server plugin host with Mattermost-style RPC hook surface; v0.1.0 loads fully
+- Scheduled messages with PostgreSQL leases and duplicate-post prevention, plus post reminders
+- Versioned, checksummed PostgreSQL migrations with upgrade/restart validation
+- Hashed session lookup identifiers, SMTP capability reporting, and durable
+  outgoing-webhook delivery with retry/dead-letter state
+- Server plugin host with Mattermost-style RPC hook surface; v0.1.1 loads fully
   trusted, operator-provisioned native plugins at startup and does not claim
   sandboxing, secret isolation, or runtime lifecycle updates
 - Web plugin registry/runtime skeleton
@@ -86,10 +89,13 @@ variables. See the [Offline Deployment Guide](docs/offline-deployment.md) for
 the complete load, run, backup, and upgrade procedure. A redacted four-key
 template is available at [`deploy/docker/moyro.env.example`](deploy/docker/moyro.env.example).
 
-The supported v0.1.0 topology is one moyro application container connected to
-external PostgreSQL, with uploads on the local `/var/lib/moyro` volume. SMTP,
-S3, Redis fan-out, outbound link previews, multi-replica operation, and runtime
-plugin installation or enable/disable are not supported in this release.
+The supported v0.1.1 topology is one moyro application container connected to
+external PostgreSQL, with uploads on the local `/var/lib/moyro` volume. The
+four-variable production contract does not expose SMTP configuration, so email
+is reported unavailable and no digest worker records false delivery success.
+SMTP administration, S3, Redis fan-out, outbound link previews, multi-replica
+operation, and runtime plugin installation or enable/disable are not supported
+in this release.
 Native plugin executables placed in the image or data volume are fully trusted
 operator code, not sandboxed extensions. Keycloak OIDC additionally requires
 the canonical public Site URL to be saved before the provider is enabled.

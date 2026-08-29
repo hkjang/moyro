@@ -341,7 +341,7 @@ func (h *handlers) writeSessionsForUser(w http.ResponseWriter, r *http.Request, 
 		writeError(w, http.StatusInternalServerError, "api.session.list.app_error", err.Error())
 		return
 	}
-	current := extractBearer(r)
+	current := sessionIDFromContext(r.Context())
 	out := make([]sessionView, 0, len(sessions))
 	for _, s := range sessions {
 		out = append(out, sessionView{
@@ -350,7 +350,7 @@ func (h *handlers) writeSessionsForUser(w http.ResponseWriter, r *http.Request, 
 			DeviceID:  s.DeviceID,
 			ExpiresAt: s.ExpiresAt,
 			CreateAt:  s.CreateAt,
-			IsCurrent: s.UserID == userID(r) && s.Token == current,
+			IsCurrent: s.UserID == userID(r) && s.ID == current,
 		})
 	}
 	writeJSON(w, http.StatusOK, out)

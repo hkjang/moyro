@@ -1,13 +1,16 @@
 openapi: 3.1.0
 info:
   title: moyro MM Compatibility API
-  version: 0.1.0
+  version: 0.1.1
   description: |
-    Mattermost v4 호환 API. 필드명과 경로는 Mattermost REST API v4와 최대한 일치시켜
-    기존 클라이언트·봇·플러그인의 이식성을 높인다.
+    moyro v0.1.1의 Mattermost v4 호환 API 계약. 필드명과 경로는 Mattermost REST
+    API v4와 최대한 일치시켜 기존 클라이언트·봇·플러그인의 이식성을 높인다.
+    이 문서는 구현된 핵심 workflow를 명세하며 전체 route-shape 목록은
+    mattermost-api-compatibility.md에서 별도로 관리한다. Moyro-native 관리·AI·MCP
+    surface는 `/api/moyro/v1` 경계에 있고 이 호환 명세에 포함하지 않는다.
 servers:
-  - url: http://localhost:8065/api/v4
-    description: local dev
+  - url: /api/v4
+    description: 현재 Moyro 배포 origin의 Mattermost v4 호환 API
 security:
   - bearerAuth: []
 components:
@@ -162,6 +165,62 @@ components:
         is_or_search: { type: boolean }
         per_page: { type: integer, default: 60 }
         page: { type: integer, default: 0 }
+    Session:
+      type: object
+      description: 안전한 세션 관리 표현. JWT 원문과 jti 해시는 응답하지 않는다.
+      required: [id, user_id, device_id, expires_at, create_at, is_current]
+      properties:
+        id: { type: string, format: uuid }
+        user_id: { type: string, format: uuid }
+        device_id: { type: string }
+        expires_at: { type: integer, format: int64 }
+        create_at: { type: integer, format: int64 }
+        is_current: { type: boolean }
+    CreateScheduledPost:
+      type: object
+      required: [channel_id, send_at]
+      anyOf:
+        - required: [message]
+        - required: [file_ids]
+      properties:
+        channel_id: { type: string }
+        root_id: { type: string }
+        message: { type: string }
+        file_ids:
+          type: array
+          items: { type: string }
+        props: { type: object, additionalProperties: true }
+        send_at:
+          type: integer
+          format: int64
+          description: 예약 발송 시각(ms Unix epoch)
+    ScheduledPost:
+      type: object
+      required: [id, user_id, channel_id, message, file_ids, props, send_at, create_at, status, attempt_count]
+      properties:
+        id: { type: string, format: uuid }
+        user_id: { type: string, format: uuid }
+        channel_id: { type: string, format: uuid }
+        root_id: { type: string }
+        message: { type: string }
+        file_ids:
+          type: array
+          items: { type: string }
+        props: { type: object, additionalProperties: true }
+        send_at: { type: integer, format: int64 }
+        create_at: { type: integer, format: int64 }
+        sent_at: { type: integer, format: int64 }
+        error_text: { type: string }
+        status:
+          type: string
+          enum: [pending, processing, succeeded, retry, dead, cancelled]
+        claimed_at: { type: integer, format: int64 }
+        lease_until: { type: integer, format: int64 }
+        attempt_count: { type: integer, minimum: 0 }
+        next_attempt_at: { type: integer, format: int64 }
+        last_error_code: { type: string }
+        last_error_text: { type: string }
+        result_post_id: { type: string }
     Plugin:
       type: object
       properties:
@@ -173,6 +232,7 @@ components:
 paths:
   /system/ping:
     get:
+      operationId: pingSystem
       security: []
       summary: Server liveness
       responses:
@@ -187,6 +247,7 @@ paths:
 
   /users:
     post:
+      operationId: createUser
       security: []
       summary: Create (register) a user
       requestBody:
@@ -209,6 +270,7 @@ paths:
 
   /users/login:
     post:
+      operationId: loginUser
       security: []
       summary: Authenticate and receive a session token
       requestBody:
@@ -217,8 +279,8 @@ paths:
           application/json:
             schema: { $ref: "#/components/schemas/LoginRequest" }
       responses:
-        "200":
-          description: OK
+        "201":
+          description: Authenticated
           headers:
             Token: { schema: { type: string } }
           content:
@@ -227,6 +289,7 @@ paths:
 
   /users/me:
     get:
+      operationId: getCurrentUser
       summary: Get the authenticated user
       responses:
         "200":
@@ -235,8 +298,55 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/User" }
 
+  /users/me/sessions:
+    get:
+      operationId: listCurrentUserSessions
+      summary: List the caller's active sessions without bearer token material
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Session" }
+    delete:
+      operationId: revokeOtherCurrentUserSessions
+      summary: Revoke every session except the authenticated session
+      responses:
+        "200":
+          description: Revocation count
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string }
+                  revoked: { type: integer, format: int64 }
+
+  /users/me/sessions/{sessionID}:
+    parameters:
+      - name: sessionID
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    delete:
+      operationId: revokeCurrentUserSession
+      summary: Revoke one session owned by the caller
+      responses:
+        "200":
+          description: Idempotent result
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string }
+                  changed: { type: boolean }
+
   /teams:
     post:
+      operationId: createTeam
       summary: Create a team
       requestBody:
         required: true
@@ -252,6 +362,7 @@ paths:
 
   /users/me/teams:
     get:
+      operationId: listCurrentUserTeams
       summary: Teams for the authenticated user
       responses:
         "200":
@@ -264,6 +375,7 @@ paths:
 
   /channels:
     post:
+      operationId: createChannel
       summary: Create a channel
       requestBody:
         required: true
@@ -284,6 +396,7 @@ paths:
         required: true
         schema: { type: string }
     get:
+      operationId: listCurrentUserTeamChannels
       summary: List channels for the user in a team
       responses:
         "200":
@@ -296,6 +409,7 @@ paths:
 
   /posts:
     post:
+      operationId: createPost
       summary: Create a post
       requestBody:
         required: true
@@ -308,6 +422,73 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Post" }
+
+  /scheduled_posts:
+    post:
+      operationId: createScheduledPost
+      summary: Schedule a post for leased background delivery
+      description: |
+        The caller must still belong to the channel when creating the schedule.
+        Workers claim rows with a lease and persist a unique scheduled-post result
+        so retries cannot create a second post row. Post-commit notifications and
+        integrations remain best-effort rather than a transactionally replayed lifecycle.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateScheduledPost" }
+      responses:
+        "201":
+          description: Scheduled
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ScheduledPost" }
+        "400":
+          description: Invalid body or time
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "403":
+          description: Not a channel member
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /users/me/scheduled_posts:
+    get:
+      operationId: listCurrentUserScheduledPosts
+      summary: List mutable pending or retrying scheduled posts
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/ScheduledPost" }
+
+  /scheduled_posts/{scheduledID}:
+    parameters:
+      - name: scheduledID
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    delete:
+      operationId: deleteScheduledPost
+      summary: Cancel a pending or retrying scheduled post owned by the caller
+      responses:
+        "200":
+          description: Cancelled
+          content:
+            application/json:
+              schema:
+                type: object
+                properties: { status: { type: string } }
+        "404":
+          description: Missing, already claimed, or already delivered
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
 
   /channels/{channelID}/posts:
     parameters:
@@ -322,6 +503,7 @@ paths:
         in: query
         schema: { type: integer, default: 60, maximum: 200 }
     get:
+      operationId: listChannelPosts
       summary: List posts in a channel
       responses:
         "200":
@@ -337,6 +519,7 @@ paths:
         required: true
         schema: { type: string }
     put:
+      operationId: updatePost
       summary: Update (edit) a post
       requestBody:
         required: true
@@ -350,6 +533,7 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Post" }
     delete:
+      operationId: deletePost
       summary: Soft-delete a post
       responses:
         "200":
@@ -367,6 +551,7 @@ paths:
         required: true
         schema: { type: string }
     post:
+      operationId: searchTeamPosts
       summary: Full-text search posts visible to the caller in a team
       requestBody:
         required: true
@@ -382,6 +567,7 @@ paths:
 
   /reactions:
     post:
+      operationId: createReaction
       summary: Add a reaction to a post
       requestBody:
         required: true
@@ -407,6 +593,7 @@ paths:
         required: true
         schema: { type: string }
     get:
+      operationId: listPostReactions
       summary: List reactions on a post
       responses:
         "200":
@@ -432,6 +619,7 @@ paths:
         required: true
         schema: { type: string }
     delete:
+      operationId: deleteReaction
       summary: Remove a reaction (caller's only)
       responses:
         "200":
@@ -444,6 +632,7 @@ paths:
 
   /files:
     post:
+      operationId: uploadFiles
       summary: Upload one or more files for later post attachment
       parameters:
         - name: channel_id
@@ -484,6 +673,7 @@ paths:
         required: true
         schema: { type: string }
     get:
+      operationId: downloadFile
       summary: Download a file
       responses:
         "200":
@@ -499,6 +689,7 @@ paths:
         required: true
         schema: { type: string }
     get:
+      operationId: getFileInfo
       summary: File metadata
       responses:
         "200":
@@ -514,6 +705,7 @@ paths:
         required: true
         schema: { type: string }
     get:
+      operationId: listChannelMembers
       summary: List channel members
       responses:
         "200":
@@ -524,6 +716,7 @@ paths:
                 type: array
                 items: { $ref: "#/components/schemas/ChannelMember" }
     post:
+      operationId: addChannelMember
       summary: Invite (add) a user to a channel
       requestBody:
         required: true
@@ -552,6 +745,7 @@ paths:
         required: true
         schema: { type: string }
     delete:
+      operationId: deleteChannelMember
       summary: Remove a channel member (self-leave or admin kick)
       responses:
         "200":
@@ -564,6 +758,7 @@ paths:
 
   /users/logout:
     post:
+      operationId: logoutUser
       summary: Revoke the caller's current session
       responses:
         "200":
@@ -576,6 +771,7 @@ paths:
 
   /plugins:
     get:
+      operationId: listPlugins
       summary: List installed plugins
       responses:
         "200":
@@ -588,9 +784,12 @@ paths:
 
   /websocket:
     get:
+      operationId: connectWebSocket
       summary: WebSocket upgrade endpoint
+      security: []
       description: |
-        Upgrades to WebSocket. Events follow the Mattermost envelope:
+        Upgrades without an HTTP bearer token, then authenticates with the
+        first `authentication_challenge` frame. Events follow the Mattermost envelope:
         `{ event, data, broadcast, seq }`. Core events:
 
         - `posted` — new post in channel. `data.post` is a stringified Post JSON.

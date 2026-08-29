@@ -15,10 +15,10 @@ export function LegacyAdminRoute() {
                 레거시 Mattermost 운영 경계의 지원 상태를 안내합니다.
               </Typography>
             </Box>
-            <Chip label="v0.1.0 제한" color="warning" variant="outlined" />
+            <Chip label="v0.1.1 제한" color="warning" variant="outlined" />
           </Stack>
           <Alert severity="warning">
-            로그·클러스터·Busy 상태·백그라운드 작업과 런타임 플러그인 제어는 moyro v0.1.0에서
+            로그·클러스터·Busy 상태·백그라운드 작업과 런타임 플러그인 제어는 moyro v0.1.1에서
             실제 운영 기능으로 제공하지 않습니다. 관련 호환 API는 거짓 성공 대신 501 Not Implemented를 반환합니다.
           </Alert>
           <Typography>

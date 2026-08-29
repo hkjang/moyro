@@ -8,7 +8,7 @@ set.
 
 - [Project Site](index.html) introduces moyro and links the public guides. The
   published URL is <https://hkjang.github.io/moyro/>.
-- [Product Screens](screens.html) shows all v0.1.0 browser-E2E captures.
+- [Product Screens](screens.html) shows all v0.1.1 browser-E2E captures.
 - [User Guide](guides/user-guide.html) covers everyday collaboration flows.
 - [Administrator Guide](guides/admin-guide.html) covers service-wide policy,
   authentication, AI, keys, and operations.
@@ -38,17 +38,20 @@ set.
 
 ## Current Product Shape
 
-moyro v0.1.0 provides password and optional Keycloak login, teams and
+moyro v0.1.1 provides password and optional Keycloak login, teams and
 channels, posts and threads, files, reactions, search, saved and scheduled
 posts, scoped personal API/MCP keys, OpenAI-compatible streaming AI settings,
 an MCP Streamable HTTP endpoint, and an optional MCP post approval workflow.
 The administrator UI covers site/outbound policy, Keycloak, AI, keys and
 roles, MCP, and approval policy; other compatibility surfaces may be partial.
-The supported v0.1.0 deployment is one application container with external
-PostgreSQL and local file storage. SMTP, S3, Redis fan-out, outbound link
+The supported v0.1.1 deployment is one application container with external
+PostgreSQL and local file storage. Unconfigured SMTP is exposed as a disabled
+capability and does not start a digest worker. S3, Redis fan-out, outbound link
 previews, multi-replica operation, and runtime plugin lifecycle changes are
 not supported. Native plugin executables are fully trusted operator code.
 
-The next level of maturity is about deeper compatibility contracts, complete
-approval/session regression coverage, and a future HA settings-propagation
-design without weakening the current single-replica operational boundary.
+The release also introduces checksummed migrations, scheduled-post leases,
+hash-first session lookup, a durable outgoing-webhook delivery queue, and
+route-level web code splitting. The next level of maturity is about completing
+the session-token contract phase and a future HA settings-propagation design
+without weakening the current single-replica operational boundary.

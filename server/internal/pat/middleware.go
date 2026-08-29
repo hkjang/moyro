@@ -19,18 +19,22 @@ import (
 
 // ctx key type is unexported to prevent collisions; we re-use httpapi's
 // userIDKey via a public setter passed in by the caller (see With).
-type userCtxSetter func(context.Context, string) context.Context
+type credentialCtxSetter func(context.Context, string, string) context.Context
+
+type tokenResolver interface {
+	ResolveTokenCredential(context.Context, string) (bots.ResolvedToken, error)
+}
 
 // With returns a middleware that intercepts Authorization headers starting
 // with "Bearer mdp_". On a valid PAT, it injects the owning user id into
-// the request context via `setUserID` and hands off to `next`, bypassing
+// the request context via `setCredential` and hands off to `next`, bypassing
 // the JWT middleware entirely. On anything else (empty header, JWT, or a
 // malformed PAT), it simply calls through to the next handler so the
 // downstream JWT middleware can run.
 //
 // This function is stateless beyond the Service + setter closure, so a
 // single instance can safely serve every request.
-func With(svc *bots.Service, setUserID userCtxSetter) func(http.Handler) http.Handler {
+func With(svc tokenResolver, setCredential credentialCtxSetter) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			tok := extract(r)
@@ -38,15 +42,15 @@ func With(svc *bots.Service, setUserID userCtxSetter) func(http.Handler) http.Ha
 				next.ServeHTTP(w, r)
 				return
 			}
-			uid, err := svc.ResolveToken(r.Context(), tok)
-			if err != nil || uid == "" {
+			credential, err := svc.ResolveTokenCredential(r.Context(), tok)
+			if err != nil || credential.UserID == "" || credential.ID == "" {
 				// Don't 401 here — fall through so the downstream
 				// JWT middleware can produce a coherent error
 				// message that matches existing clients' expectations.
 				next.ServeHTTP(w, r)
 				return
 			}
-			next.ServeHTTP(w, r.WithContext(setUserID(r.Context(), uid)))
+			next.ServeHTTP(w, r.WithContext(setCredential(r.Context(), credential.UserID, credential.ID)))
 		})
 	}
 }

@@ -1,32 +1,134 @@
+import { Component, Suspense, lazy, type ComponentType, type ErrorInfo, type ReactNode } from "react";
+import { Alert, Box, Button, CircularProgress, Stack, Typography } from "@mui/material";
 import { Navigate, Outlet, Route, Routes, useLocation } from "react-router-dom";
 import { useSelector } from "react-redux";
-import { ChatView } from "@/components/ChatView";
-import { LoginView } from "@/components/LoginView";
-import { AdminLayout } from "@/layouts/AdminLayout";
-import { PersonalSettingsLayout } from "@/layouts/PersonalSettingsLayout";
-import { AdminOverviewPage } from "@/features/admin/AdminOverviewPage";
-import { AIProviderSettingsPage } from "@/features/admin/AIProviderSettingsPage";
-import { ApprovalWorkflowPage } from "@/features/admin/ApprovalWorkflowPage";
-import { KeycloakSettingsPage } from "@/features/admin/KeycloakSettingsPage";
-import { KeyPolicyPage } from "@/features/admin/KeyPolicyPage";
-import { LegacyAdminRoute } from "@/features/admin/LegacyAdminRoute";
-import { MCPSettingsPage } from "@/features/admin/MCPSettingsPage";
-import { SiteSettingsPage } from "@/features/admin/SiteSettingsPage";
-import {
-  AppearanceSettingsPage,
-  NotificationSettingsPage,
-  PersonalProfilePage,
-  SessionSettingsPage,
-} from "@/features/settings/PersonalBasicsPages";
-import { PersonalAIPage } from "@/features/settings/PersonalAIPage";
-import { PersonalKeysPage } from "@/features/settings/PersonalKeysPage";
-import {
-  MyApprovalRequestsPage,
-  ReviewApprovalRequestsPage,
-} from "@/features/settings/ApprovalRequestsPages";
 import { useSystemInfo } from "@/features/system/SystemInfoContext";
 import { useAdminAccess } from "@/features/admin/AdminAccessContext";
 import type { RootState } from "@/store";
+
+const ChatView = lazy(() =>
+  import("@/components/ChatView").then((module) => ({ default: module.ChatView })),
+);
+const LoginView = lazy(() =>
+  import("@/components/LoginView").then((module) => ({ default: module.LoginView })),
+);
+const AdminLayout = lazy(() =>
+  import("@/layouts/AdminLayout").then((module) => ({ default: module.AdminLayout })),
+);
+const PersonalSettingsLayout = lazy(() =>
+  import("@/layouts/PersonalSettingsLayout").then((module) => ({ default: module.PersonalSettingsLayout })),
+);
+const AdminOverviewPage = lazy(() =>
+  import("@/features/admin/AdminOverviewPage").then((module) => ({ default: module.AdminOverviewPage })),
+);
+const AIProviderSettingsPage = lazy(() =>
+  import("@/features/admin/AIProviderSettingsPage").then((module) => ({ default: module.AIProviderSettingsPage })),
+);
+const ApprovalWorkflowPage = lazy(() =>
+  import("@/features/admin/ApprovalWorkflowPage").then((module) => ({ default: module.ApprovalWorkflowPage })),
+);
+const KeycloakSettingsPage = lazy(() =>
+  import("@/features/admin/KeycloakSettingsPage").then((module) => ({ default: module.KeycloakSettingsPage })),
+);
+const KeyPolicyPage = lazy(() =>
+  import("@/features/admin/KeyPolicyPage").then((module) => ({ default: module.KeyPolicyPage })),
+);
+const LegacyAdminRoute = lazy(() =>
+  import("@/features/admin/LegacyAdminRoute").then((module) => ({ default: module.LegacyAdminRoute })),
+);
+const MCPSettingsPage = lazy(() =>
+  import("@/features/admin/MCPSettingsPage").then((module) => ({ default: module.MCPSettingsPage })),
+);
+const SiteSettingsPage = lazy(() =>
+  import("@/features/admin/SiteSettingsPage").then((module) => ({ default: module.SiteSettingsPage })),
+);
+
+const loadPersonalBasicsPages = () => import("@/features/settings/PersonalBasicsPages");
+const AppearanceSettingsPage = lazy(() =>
+  loadPersonalBasicsPages().then((module) => ({ default: module.AppearanceSettingsPage })),
+);
+const NotificationSettingsPage = lazy(() =>
+  loadPersonalBasicsPages().then((module) => ({ default: module.NotificationSettingsPage })),
+);
+const PersonalProfilePage = lazy(() =>
+  loadPersonalBasicsPages().then((module) => ({ default: module.PersonalProfilePage })),
+);
+const SessionSettingsPage = lazy(() =>
+  loadPersonalBasicsPages().then((module) => ({ default: module.SessionSettingsPage })),
+);
+const PersonalAIPage = lazy(() =>
+  import("@/features/settings/PersonalAIPage").then((module) => ({ default: module.PersonalAIPage })),
+);
+const PersonalKeysPage = lazy(() =>
+  import("@/features/settings/PersonalKeysPage").then((module) => ({ default: module.PersonalKeysPage })),
+);
+
+const loadApprovalRequestsPages = () => import("@/features/settings/ApprovalRequestsPages");
+const MyApprovalRequestsPage = lazy(() =>
+  loadApprovalRequestsPages().then((module) => ({ default: module.MyApprovalRequestsPage })),
+);
+const ReviewApprovalRequestsPage = lazy(() =>
+  loadApprovalRequestsPages().then((module) => ({ default: module.ReviewApprovalRequestsPage })),
+);
+
+function RouteLoadingFallback() {
+  return (
+    <Box
+      role="status"
+      aria-live="polite"
+      sx={{ minHeight: "100%", display: "grid", placeItems: "center", p: 4 }}
+    >
+      <Stack spacing={1.5} sx={{ alignItems: "center" }}>
+        <CircularProgress size={28} />
+        <Typography variant="body2" color="text.secondary">
+          화면을 불러오는 중…
+        </Typography>
+      </Stack>
+    </Box>
+  );
+}
+
+type RouteBoundaryState = { error: Error | null };
+
+class RouteBoundary extends Component<{ children: ReactNode }, RouteBoundaryState> {
+  state: RouteBoundaryState = { error: null };
+
+  static getDerivedStateFromError(error: Error): RouteBoundaryState {
+    return { error };
+  }
+
+  componentDidCatch(error: Error, info: ErrorInfo) {
+    console.error("route module failed to load", error, info);
+  }
+
+  render() {
+    if (this.state.error) {
+      return (
+        <Box sx={{ minHeight: "100%", display: "grid", placeItems: "center", p: 4 }}>
+          <Alert
+            severity="error"
+            action={(
+              <Button color="inherit" size="small" onClick={() => window.location.reload()}>
+                다시 시도
+              </Button>
+            )}
+          >
+            화면을 불러오지 못했습니다.
+          </Alert>
+        </Box>
+      );
+    }
+    return <Suspense fallback={<RouteLoadingFallback />}>{this.props.children}</Suspense>;
+  }
+}
+
+function routeElement(Page: ComponentType) {
+  return (
+    <RouteBoundary>
+      <Page />
+    </RouteBoundary>
+  );
+}
 
 function RequireAdminAccess() {
   const access = useAdminAccess();
@@ -63,7 +165,7 @@ export function AppRouter() {
   if (!token) {
     return (
       <Routes>
-        <Route path="*" element={<LoginView />} />
+        <Route path="*" element={routeElement(LoginView)} />
       </Routes>
     );
   }
@@ -72,55 +174,55 @@ export function AppRouter() {
     <Routes>
       <Route path="/" element={<Navigate to="/workspace" replace />} />
       <Route path="/login" element={<Navigate to="/workspace" replace />} />
-      <Route path="/workspace" element={<ChatView />} />
-      <Route path="/workspace/:teamId" element={<ChatView />} />
-      <Route path="/workspace/:teamId/channel/:channelId" element={<ChatView />} />
-      <Route path="/workspace/:teamId/:view" element={<ChatView />} />
+      <Route path="/workspace" element={routeElement(ChatView)} />
+      <Route path="/workspace/:teamId" element={routeElement(ChatView)} />
+      <Route path="/workspace/:teamId/channel/:channelId" element={routeElement(ChatView)} />
+      <Route path="/workspace/:teamId/:view" element={routeElement(ChatView)} />
 
-      <Route path="/settings" element={<PersonalSettingsLayout />}>
+      <Route path="/settings" element={routeElement(PersonalSettingsLayout)}>
         <Route index element={<Navigate to="profile" replace />} />
-        <Route path="profile" element={<PersonalProfilePage />} />
-        <Route path="appearance" element={<AppearanceSettingsPage />} />
-        <Route path="notifications" element={<NotificationSettingsPage />} />
-        <Route path="security/sessions" element={<SessionSettingsPage />} />
-		<Route element={<RequirePermission anyOf={["manage_own_api_keys"]} fallback="/settings/profile" />}>
-		  <Route path="developer/keys" element={<PersonalKeysPage />} />
-		</Route>
-		<Route element={<RequirePermission anyOf={["use_ai"]} fallback="/settings/profile" />}>
-		  <Route path="ai" element={<PersonalAIPage />} />
-		</Route>
+        <Route path="profile" element={routeElement(PersonalProfilePage)} />
+        <Route path="appearance" element={routeElement(AppearanceSettingsPage)} />
+        <Route path="notifications" element={routeElement(NotificationSettingsPage)} />
+        <Route path="security/sessions" element={routeElement(SessionSettingsPage)} />
+        <Route element={<RequirePermission anyOf={["manage_own_api_keys"]} fallback="/settings/profile" />}>
+          <Route path="developer/keys" element={routeElement(PersonalKeysPage)} />
+        </Route>
+        <Route element={<RequirePermission anyOf={["use_ai"]} fallback="/settings/profile" />}>
+          <Route path="ai" element={routeElement(PersonalAIPage)} />
+        </Route>
         <Route element={<RequireApprovalEnabled />}>
-		  <Route element={<RequirePermission anyOf={["request_approval"]} fallback="/settings/profile" />}>
-		    <Route path="approvals/mine" element={<MyApprovalRequestsPage />} />
-		  </Route>
-		  <Route element={<RequirePermission anyOf={["review_approval"]} fallback="/settings/profile" />}>
-		    <Route path="approvals/review" element={<ReviewApprovalRequestsPage />} />
-		  </Route>
+          <Route element={<RequirePermission anyOf={["request_approval"]} fallback="/settings/profile" />}>
+            <Route path="approvals/mine" element={routeElement(MyApprovalRequestsPage)} />
+          </Route>
+          <Route element={<RequirePermission anyOf={["review_approval"]} fallback="/settings/profile" />}>
+            <Route path="approvals/review" element={routeElement(ReviewApprovalRequestsPage)} />
+          </Route>
         </Route>
       </Route>
 
       <Route element={<RequireAdminAccess />}>
         <Route element={<RequirePermission anyOf={["manage_system"]} />}>
-          <Route path="/admin/operations" element={<LegacyAdminRoute />} />
+          <Route path="/admin/operations" element={routeElement(LegacyAdminRoute)} />
         </Route>
-        <Route path="/admin" element={<AdminLayout />}>
+        <Route path="/admin" element={routeElement(AdminLayout)}>
           <Route index element={<Navigate to="overview" replace />} />
-          <Route path="overview" element={<AdminOverviewPage />} />
+          <Route path="overview" element={routeElement(AdminOverviewPage)} />
           <Route element={<RequirePermission anyOf={["manage_settings"]} />}>
-            <Route path="site" element={<SiteSettingsPage />} />
-            <Route path="integrations/mcp" element={<MCPSettingsPage />} />
+            <Route path="site" element={routeElement(SiteSettingsPage)} />
+            <Route path="integrations/mcp" element={routeElement(MCPSettingsPage)} />
           </Route>
           <Route element={<RequirePermission anyOf={["manage_oidc"]} />}>
-            <Route path="auth/keycloak" element={<KeycloakSettingsPage />} />
+            <Route path="auth/keycloak" element={routeElement(KeycloakSettingsPage)} />
           </Route>
           <Route element={<RequirePermission anyOf={["manage_ai"]} />}>
-            <Route path="ai/providers" element={<AIProviderSettingsPage />} />
+            <Route path="ai/providers" element={routeElement(AIProviderSettingsPage)} />
           </Route>
           <Route element={<RequirePermission anyOf={["manage_key_permissions", "manage_roles", "manage_api_keys"]} />}>
-            <Route path="security/keys" element={<KeyPolicyPage />} />
+            <Route path="security/keys" element={routeElement(KeyPolicyPage)} />
           </Route>
           <Route element={<RequirePermission anyOf={["manage_approval_policies"]} />}>
-            <Route path="workflows/review" element={<ApprovalWorkflowPage />} />
+            <Route path="workflows/review" element={routeElement(ApprovalWorkflowPage)} />
           </Route>
         </Route>
       </Route>

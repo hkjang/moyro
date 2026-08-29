@@ -1,14 +1,28 @@
 package auth
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/golang-jwt/jwt/v5"
+	"github.com/hkjang/moyro/server/internal/secrets"
 	"github.com/jackc/pgx/v5/pgconn"
 )
+
+var testJWTSecret = []byte("test-session-signing-key-32-byte!")
+
+func newTokenTestService(t *testing.T) (*Service, *secrets.Manager) {
+	t.Helper()
+	manager, err := secrets.New(bytes.Repeat([]byte{0x41}, secrets.MasterKeySize))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return New(nil, testJWTSecret, time.Hour, manager), manager
+}
 
 type recordingPasswordExecutor struct {
 	calls      []string
@@ -31,7 +45,7 @@ func (e *recordingPasswordExecutor) Exec(_ context.Context, sql string, _ ...any
 }
 
 func TestIssueTokenGeneratesUniqueJWTs(t *testing.T) {
-	svc := New(nil, []byte("test-secret"), time.Hour)
+	svc, manager := newTokenTestService(t)
 
 	first, err := svc.issueToken("user-1")
 	if err != nil {
@@ -42,11 +56,11 @@ func TestIssueTokenGeneratesUniqueJWTs(t *testing.T) {
 		t.Fatalf("second issueToken() error = %v", err)
 	}
 
-	if first == second {
+	if first.Token == second.Token {
 		t.Fatal("issueToken() returned duplicate tokens for repeated logins")
 	}
 
-	claims, err := svc.Parse(first)
+	claims, err := svc.Parse(first.Token)
 	if err != nil {
 		t.Fatalf("Parse(first) error = %v", err)
 	}
@@ -55,6 +69,55 @@ func TestIssueTokenGeneratesUniqueJWTs(t *testing.T) {
 	}
 	if claims.UserID != "user-1" {
 		t.Fatalf("claims.UserID = %q, want user-1", claims.UserID)
+	}
+	wantDigest, err := manager.Digest(sessionJTIDigestPurpose, []byte(claims.ID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(first.JTIHash, wantDigest) || len(first.JTIHash) != sessionJTIDigestSize {
+		t.Fatal("issued session did not carry the expected domain-separated JTI digest")
+	}
+}
+
+func TestParseRequiresStrictSessionClaims(t *testing.T) {
+	svc, _ := newTokenTestService(t)
+	now := time.Now()
+	valid := func() *Claims {
+		return &Claims{
+			UserID: "user-1",
+			RegisteredClaims: jwt.RegisteredClaims{
+				Issuer: sessionIssuer, ID: "jti-1",
+				ExpiresAt: jwt.NewNumericDate(now.Add(time.Hour)),
+				IssuedAt:  jwt.NewNumericDate(now),
+			},
+		}
+	}
+	tests := []struct {
+		name   string
+		method jwt.SigningMethod
+		mutate func(*Claims)
+	}{
+		{name: "non HS256", method: jwt.SigningMethodHS384},
+		{name: "wrong issuer", method: jwt.SigningMethodHS256, mutate: func(c *Claims) { c.Issuer = "other" }},
+		{name: "missing subject", method: jwt.SigningMethodHS256, mutate: func(c *Claims) { c.UserID = "" }},
+		{name: "missing jti", method: jwt.SigningMethodHS256, mutate: func(c *Claims) { c.ID = "" }},
+		{name: "missing expiry", method: jwt.SigningMethodHS256, mutate: func(c *Claims) { c.ExpiresAt = nil }},
+		{name: "expired", method: jwt.SigningMethodHS256, mutate: func(c *Claims) { c.ExpiresAt = jwt.NewNumericDate(now.Add(-time.Minute)) }},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			claims := valid()
+			if tt.mutate != nil {
+				tt.mutate(claims)
+			}
+			token, err := jwt.NewWithClaims(tt.method, claims).SignedString(testJWTSecret)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := svc.Parse(token); err == nil {
+				t.Fatal("Parse accepted an invalid session token")
+			}
+		})
 	}
 }
 

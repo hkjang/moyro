@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -106,24 +107,16 @@ func main() {
 		logger.Warn("plugin load", "err", err)
 	}
 
-	// Phase 17: email digest. SMTP host empty ⇒ NoopSender so the worker
-	// still scans + marks users (keeping last_digest_at fresh) but no
-	// mail actually leaves the process. This lets ops toggle SMTP on
-	// without a rebuild.
-	var mailSender email.Sender
-	if cfg.SMTPHost != "" {
-		mailSender = &email.SMTPSender{
-			Host: cfg.SMTPHost, Port: cfg.SMTPPort,
-			Username: cfg.SMTPUsername, Password: cfg.SMTPPassword,
-			From: cfg.SMTPFrom, UseTLS: cfg.SMTPTLS,
-			Logger: logger,
-		}
-		logger.Info("smtp sender active", "host", cfg.SMTPHost)
+	// Email digests are meaningful only when a real SMTP transport exists.
+	// Skipping the worker entirely prevents a disabled deployment from
+	// recording last_digest_at for messages that were never delivered.
+	if mailSender := configuredDigestSender(cfg, logger); mailSender != nil {
+		digestWorker := digest.NewWorker(db, mailSender, logger, cfg.PublicBaseURL)
+		go digestWorker.Run(ctx)
+		logger.Info("email digest worker active", "smtp_host", cfg.SMTPHost)
 	} else {
-		mailSender = &email.NoopSender{Logger: logger}
+		logger.Info("email digest worker disabled", "reason", "smtp_not_configured")
 	}
-	digestWorker := digest.NewWorker(db, mailSender, logger, cfg.PublicBaseURL)
-	go digestWorker.Run(ctx)
 
 	// Phase 19: build the router plus the scheduled-posts + reminders
 	// background workers in one shot. Workers need services the router
@@ -154,6 +147,21 @@ func main() {
 	defer cancelShutdown()
 	_ = srv.Shutdown(shutdownCtx)
 	host.Shutdown()
+}
+
+// configuredDigestSender returns nil when SMTP is unavailable. Production
+// composition must treat nil as "do not start the digest worker"; substituting
+// a successful no-op sender would make undelivered digests look delivered.
+func configuredDigestSender(cfg *config.Config, logger *slog.Logger) email.Sender {
+	if cfg == nil || strings.TrimSpace(cfg.SMTPHost) == "" {
+		return nil
+	}
+	return &email.SMTPSender{
+		Host: strings.TrimSpace(cfg.SMTPHost), Port: cfg.SMTPPort,
+		Username: cfg.SMTPUsername, Password: cfg.SMTPPassword,
+		From: cfg.SMTPFrom, UseTLS: cfg.SMTPTLS,
+		Logger: logger,
+	}
 }
 
 func bootstrapDefaults(ctx context.Context, db *store.DB) error {

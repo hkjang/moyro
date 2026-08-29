@@ -3,13 +3,14 @@ import { api, publicMoyroApi, type SystemInfo } from "@/api/client";
 
 const FALLBACK_INFO: SystemInfo = {
   name: "moyro",
-  version: "0.1.0",
+  version: "0.1.1",
   build_hash: "",
   build_date: "",
   oidc_enabled: false,
   oidc_provider_name: "Keycloak",
   approval_enabled: false,
   local_signup_enabled: false,
+  capabilities: { email_digest: { configured: false, enabled: false } },
 };
 
 type SystemInfoContextValue = SystemInfo & { loaded: boolean; refresh: () => Promise<void> };
@@ -33,6 +34,8 @@ export function SystemInfoProvider({ children }: { children: React.ReactNode }) 
     const config = configResult.status === "fulfilled" ? configResult.value : {};
     const ping = pingResult.status === "fulfilled" ? pingResult.value : undefined;
     const providers = ping?.oauth_providers ?? [];
+    const emailDigestEnabled = native?.capabilities?.email_digest?.enabled ?? config.SendEmailNotifications === "true";
+    const emailDigestConfigured = native?.capabilities?.email_digest?.configured ?? emailDigestEnabled;
     setInfo({
       name: "moyro",
       version: native?.version || config.Version || ping?.version || FALLBACK_INFO.version,
@@ -42,6 +45,12 @@ export function SystemInfoProvider({ children }: { children: React.ReactNode }) 
       oidc_provider_name: native?.oidc_provider_name || (providers.includes("keycloak") ? "Keycloak" : "OIDC"),
       approval_enabled: native?.approval_enabled ?? false,
       local_signup_enabled: native?.local_signup_enabled ?? false,
+      capabilities: {
+        email_digest: {
+          configured: emailDigestConfigured,
+          enabled: emailDigestEnabled,
+        },
+      },
       loaded: true,
     });
   }, []);

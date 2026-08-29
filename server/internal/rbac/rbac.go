@@ -26,6 +26,7 @@ const (
 	PermissionReviewApproval         = "review_approval"
 	PermissionMCPRead                = "mcp_read"
 	PermissionMCPWrite               = "mcp_write"
+	PermissionCreatePost             = "create_post"
 )
 
 var (

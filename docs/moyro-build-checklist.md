@@ -1,8 +1,8 @@
 # moyro 구현·검증 체크리스트
 
-이 문서는 [제품·기술 사양](moyro-product-spec.md)을 구현하기 위해 작성한 **계획 당시 체크리스트**이자 현재 진행 상태표다. 2026-08-29 릴리스 후보를 다시 감사해, 소스 구현과 **현재 최종 source에 대해** 해당 로컬 자동 검증이 확인된 항목만 체크한다. 이전 source의 Docker 이미지 기반 브라우저·격리망 결과는 회귀 이력일 뿐 현재 이미지의 통과 증거로 재사용하지 않는다. GitHub push·tag·Release·Pages 공개처럼 아직 remote 대상에서 확인하지 않은 항목도 workflow나 스크립트가 존재해도 미완료로 유지한다.
+이 문서는 [제품·기술 사양](moyro-product-spec.md)을 구현하기 위해 작성한 **계획 당시 체크리스트**이자 현재 진행 상태표다. 2026-08-29 `v0.1.1` 릴리스 후보를 다시 감사해, 소스 구현과 **현재 최종 source에 대해** 해당 로컬 자동 검증이 확인된 항목만 체크한다. 이전 source의 Docker 이미지 기반 브라우저·격리망 결과는 회귀 이력일 뿐 현재 이미지의 통과 증거로 재사용하지 않는다. GitHub push·tag·Release·Pages 공개처럼 아직 remote 대상에서 확인하지 않은 항목도 workflow나 스크립트가 존재해도 미완료로 유지한다.
 
-현재 최종 source에서 Go race·vet·reachable vulnerability 검사, web typecheck·production build, 5개 HTML·25개 실제 제품 캡처·7개 브랜드 PNG의 Pages 검사, Docker rebuild와 27개 제품 E2E가 통과했다. `moyro-v0.1.0.tar.gz`도 다시 load해 내부 전용 network에서 기동·UI/version·bootstrap login·restart와 runtime env 경계를 검증했다. 원격 GitHub Release·Pages처럼 실제 remote 결과가 필요한 항목만 배포 확인 전까지 미완료로 둔다.
+`v0.1.1` 후보의 Go 전체 race·vet·reachable vulnerability 검사, Go Plugin SDK, web 의존성 감사·typecheck·production build, PostgreSQL 15·16 실 E2E가 통과했다. 후보 Docker 이미지에서도 보안 경계와 핵심 계약을 포함한 Chromium 27개 E2E가 통과했고 25개 제품 화면을 다시 캡처했다. 최종 tag commit 기반 오프라인 archive와 원격 GitHub 결과는 아래 Phase 9에서 각각 실제 확인한 뒤 기록한다. `v0.1.0` 원격 검증 결과는 문서 끝에 별도 배포 이력으로 보존한다.
 
 ## Phase 0 — 기준선과 이름
 
@@ -83,12 +83,29 @@
 - [x] tag workflow가 GitHub Release에 해당 asset 하나만 첨부한다.
 - [x] backup/restore, upgrade/rollback, ENCRYPTION_KEY 보관 절차를 문서화한다.
 
+## Phase 9 — v0.1.1 구조 안정화 릴리스
+
+- [x] 전체 `schema.sql` 재실행을 checksum·적용 이력이 있는 번호형 migration으로 전환한다.
+- [x] REST·MCP·예약·Incoming Webhook·Slash Command 메시지 쓰기를 공통 Post Command로 통합한다.
+- [x] 예약 메시지에 lease·claim token·재시도 상태와 `scheduled_post_id` 기반 중복 방지를 추가한다.
+- [x] session 조회를 JWT 원문 대신 HMAC 처리한 `jti` hash 우선 방식으로 전환하고 rolling upgrade 호환 경로를 둔다.
+- [x] SMTP 미설정 시 digest worker를 시작하지 않고 capability로 실제 지원 상태를 노출한다.
+- [x] Outgoing Webhook 작업을 PostgreSQL delivery outbox·재시도·dead 상태로 내구화한다.
+- [x] 대형 HTTP handler를 분리하고 source size budget을 CI에서 검사한다.
+- [x] 관리자·개인 설정 route를 지연 로딩하고 초기 web bundle을 분리한다.
+- [x] 제품·API·가이드·홍보 페이지 표시 버전을 `v0.1.1`로 맞추고 OpenAPI 계약을 갱신한다.
+- [x] 현재 최종 source로 25개 전체 화면 캡처를 다시 생성하고 27개 Chromium 제품 E2E를 통과한다.
+- [x] PostgreSQL 15·16에서 migration·session·예약 lease·Webhook delivery 통합 테스트를 통과한다.
+- [ ] 최종 tag commit metadata로 `linux/amd64` non-root image와 단일 gzip archive를 만들고 내부 전용 network에서 재검증한다.
+- [ ] `main`과 `v0.1.1` tag를 push하고 GitHub CI·Release·Pages 배포 성공을 확인한다.
+- [ ] GitHub Release가 `moyro-v0.1.1.tar.gz` 자산 하나만 제공하는지 재다운로드해 검증한다.
+
 ## 최종 완료 조건
 
-- [x] 현재 저장소가 제공하는 모든 자동 검증이 최종 local release-candidate run에서 통과한다.
-- [x] 최종 image의 제품 E2E 대상 화면에 console error와 허용하지 않은 failed network request가 없다.
+- [ ] 현재 저장소가 제공하는 모든 자동 검증이 최종 local release-candidate run에서 통과한다.
+- [ ] 최종 image의 제품 E2E 대상 화면에 console error와 허용하지 않은 failed network request가 없다.
 - [x] SMTP·S3·Redis·link preview·runtime plugin 등 문서화한 미지원 관리 mutation은 501 AppError를 반환하고 거짓 저장 성공을 내지 않는다.
-- [x] 최종 local release candidate archive의 image label, tag, version API와 화면 version 일치를 검증한다.
+- [ ] 최종 local release candidate archive의 image label, tag, version API와 화면 version 일치를 검증한다.
 - [x] GitHub remote, release 권한, 첫 release tag를 확인한 뒤에만 실제 배포한다.
 
 ## v0.1.0 배포 기록

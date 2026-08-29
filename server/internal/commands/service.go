@@ -89,7 +89,7 @@ type CreateInput struct {
 }
 
 // Create inserts a new custom command. The trigger word is normalised to
-// lower-case (matching the partial unique index in schema.sql) and validated
+// lower-case (matching the partial unique index in the baseline migration) and validated
 // before the INSERT so we don't burn an INSERT on a bad slug.
 func (s *Service) Create(ctx context.Context, in CreateInput) (*Command, error) {
 	trigger := strings.TrimPrefix(strings.TrimSpace(in.Trigger), "/")

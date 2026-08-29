@@ -1594,7 +1594,7 @@ export function IntegrationsPanel({
                 style={{ width: "auto", padding: "0 12px", height: 34 }}
                 onClick={onReloadConfig}
                 disabled
-                title="레거시 런타임 설정 리로드는 v0.1.0에서 지원하지 않습니다. moyro 관리 설정은 저장 즉시 적용됩니다."
+                title="레거시 런타임 설정 리로드는 v0.1.1에서 지원하지 않습니다. moyro 관리 설정은 저장 즉시 적용됩니다."
               >레거시 리로드 미지원</button>
               <button
                 type="button"
@@ -1696,7 +1696,7 @@ export function IntegrationsPanel({
                       style={{ width: "auto", padding: "0 10px", height: 30 }}
                       onClick={() => onTogglePlugin(pluginId, enabled)}
                       disabled={!pluginRuntimeManagementEnabled}
-                      title={pluginRuntimeManagementEnabled ? undefined : "플러그인 런타임 활성화/비활성화는 v0.1.0에서 지원하지 않습니다."}
+                      title={pluginRuntimeManagementEnabled ? undefined : "플러그인 런타임 활성화/비활성화는 v0.1.1에서 지원하지 않습니다."}
                     >{pluginRuntimeManagementEnabled ? (enabled ? "비활성화" : "활성화") : "재시작 필요"}</button>
                   </li>
                 );

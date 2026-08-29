@@ -7,10 +7,10 @@ inside the target network.
 
 ## Release artifact contract
 
-For the initial release tag `v0.1.0`:
+For the `v0.1.1` release tag:
 
-- Docker image: `moyro:v0.1.0`
-- Downloaded file: `moyro-v0.1.0.tar.gz`
+- Docker image: `moyro:v0.1.1`
+- Downloaded file: `moyro-v0.1.1.tar.gz`
 - Supported platform for the initial release: `linux/amd64`
 
 Transfer the archive through the organization's approved media and integrity
@@ -18,14 +18,14 @@ process. The release notes publish the archive's SHA-256; compare it before
 loading the image:
 
 ```bash
-sha256sum moyro-v0.1.0.tar.gz
+sha256sum moyro-v0.1.1.tar.gz
 ```
 
 Load it without contacting a registry:
 
 ```bash
-docker load --input moyro-v0.1.0.tar.gz
-docker image inspect moyro:v0.1.0
+docker load --input moyro-v0.1.1.tar.gz
+docker image inspect moyro:v0.1.1
 ```
 
 ## PostgreSQL preparation
@@ -35,7 +35,9 @@ remain inside the protected network. Back up the database before every moyro
 upgrade; uploaded files require a separate volume backup.
 
 The account needs permission to create and alter moyro's tables during schema
-migration. After migration policy is finalized, production deployments should
+migration. Startup applies immutable, checksummed migrations under a PostgreSQL
+advisory lock and records them in `schema_migrations`; checksum drift or an
+unknown future version stops startup. Production deployments should eventually
 use a separate migration role and a narrower runtime role.
 
 ## Required environment file
@@ -87,7 +89,7 @@ docker run -d \
   --env-file /etc/moyro/moyro.env \
   --mount type=volume,src=moyro-data,dst=/var/lib/moyro \
   --publish 8065:8065 \
-  moyro:v0.1.0
+  moyro:v0.1.1
 ```
 
 Check startup and open `http://<server>:8065/`:
@@ -102,7 +104,7 @@ login, configure the canonical site URL, Keycloak OIDC, AI provider, approval,
 key, and MCP policy in the service administrator page. Those values are stored
 in PostgreSQL; provider secrets are encrypted before storage.
 
-v0.1.0 deliberately does not trust `X-Forwarded-For`, `X-Real-IP`, or
+v0.1.1 deliberately does not trust `X-Forwarded-For`, `X-Real-IP`, or
 `True-Client-IP`. Rate limiting and audit addresses use the direct TCP peer, so
 users behind one reverse proxy share that proxy's login/OIDC rate bucket and
 audit address. Configure the proxy to remove client-supplied forwarded headers,
@@ -116,14 +118,14 @@ port, or path in the allow-list entry.
 The Mattermost-compatible `GET /api/v4/config` endpoint is an operational
 snapshot, not a second configuration store. Its legacy `PUT /config`,
 `PUT /config/patch`, and `POST /config/reload` mutations return a 501
-Mattermost AppError in v0.1.0. SMTP, S3, Redis, link-preview toggles, and
+Mattermost AppError in v0.1.1. SMTP, S3, Redis, link-preview toggles, and
 runtime plugin installation or enable/disable therefore cannot appear to save
 successfully. Use the native administrator pages for the PostgreSQL-backed
 site, Keycloak, AI, approval, key, and MCP settings that this release supports.
 The application uses local file storage, no Redis fan-out, no SMTP delivery,
 and no outbound link-preview fetching by default.
 
-Run exactly one moyro application container in v0.1.0. PostgreSQL may be
+Run exactly one moyro application container in v0.1.1. PostgreSQL may be
 managed separately, but multi-replica application deployment and cross-node
 live-setting propagation are not supported until the HA/Redis work is
 completed.
@@ -169,7 +171,7 @@ file volume can retain message metadata while losing attachments.
 5. Verify `/healthz`, the login page version, administrator login, file access,
    WebSocket delivery, and Keycloak login.
 
-Do not mix an earlier pre-moyro development build with a v0.1.0 node. Upgrade
+Do not mix an earlier pre-moyro development build with a v0.1.1 node. Upgrade
 the service as one coordinated operation and verify the matching database
 backup before discarding the prior container.
 
@@ -183,7 +185,7 @@ On a connected staging host, preload `postgres:16-alpine` and run the same
 offline check used by the release workflow:
 
 ```bash
-bash scripts/verify-release.sh moyro:v0.1.0 moyro-v0.1.0.tar.gz
+bash scripts/verify-release.sh moyro:v0.1.1 moyro-v0.1.1.tar.gz
 ```
 
 The script loads the archive, creates an internal-only Docker network, starts
@@ -202,7 +204,7 @@ logs in again. Temporary containers, network, and volume are removed on exit.
 - Keycloak and AI remain inactive until an administrator configures them;
   outgoing webhook callbacks are denied while the host allow-list is empty.
 - SMTP delivery, S3 storage, Redis fan-out, outbound link previews, and runtime
-  plugin lifecycle changes remain explicitly unsupported in v0.1.0 rather
+  plugin lifecycle changes remain explicitly unsupported in v0.1.1 rather
   than reporting a false successful save.
 - Network controls independently restrict container egress to approved internal
   endpoints; do not infer a blanket no-egress guarantee from feature defaults.

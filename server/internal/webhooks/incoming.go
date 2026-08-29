@@ -17,9 +17,10 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
+	"github.com/hkjang/moyro/server/internal/application/postcommand"
 	"github.com/hkjang/moyro/server/internal/posts"
 	"github.com/hkjang/moyro/server/internal/store"
+	"github.com/jackc/pgx/v5"
 )
 
 var (
@@ -29,26 +30,30 @@ var (
 
 // IncomingService owns CRUD for incoming webhooks and the fire path.
 type IncomingService struct {
-	db    *store.DB
-	posts *posts.Service
+	db           *store.DB
+	postCommands IncomingPostExecutor
 }
 
-func NewIncoming(db *store.DB, postSvc *posts.Service) *IncomingService {
-	return &IncomingService{db: db, posts: postSvc}
+type IncomingPostExecutor interface {
+	Execute(ctx context.Context, command postcommand.Command) (*posts.Post, error)
+}
+
+func NewIncoming(db *store.DB, postCommands IncomingPostExecutor) *IncomingService {
+	return &IncomingService{db: db, postCommands: postCommands}
 }
 
 type IncomingHook struct {
-	ID             string `json:"id"`
-	CreatorID      string `json:"creator_id"`
-	ChannelID      string `json:"channel_id"`
-	TeamID         string `json:"team_id"`
-	DisplayName    string `json:"display_name"`
-	Username       string `json:"username"`
-	IconURL        string `json:"icon_url"`
-	ChannelLocked  bool   `json:"channel_locked"`
-	CreateAt       int64  `json:"create_at"`
-	UpdateAt       int64  `json:"update_at"`
-	DeleteAt       int64  `json:"delete_at"`
+	ID            string `json:"id"`
+	CreatorID     string `json:"creator_id"`
+	ChannelID     string `json:"channel_id"`
+	TeamID        string `json:"team_id"`
+	DisplayName   string `json:"display_name"`
+	Username      string `json:"username"`
+	IconURL       string `json:"icon_url"`
+	ChannelLocked bool   `json:"channel_locked"`
+	CreateAt      int64  `json:"create_at"`
+	UpdateAt      int64  `json:"update_at"`
+	DeleteAt      int64  `json:"delete_at"`
 }
 
 // Create persists a new hook. `id` is randomly generated and doubles as
@@ -161,10 +166,11 @@ func (s *IncomingService) Delete(ctx context.Context, id string) error {
 
 // IncomingPayload mirrors the Mattermost-compatible body shape.
 type IncomingPayload struct {
-	Text        string `json:"text"`
-	Username    string `json:"username"`
-	IconURL     string `json:"icon_url"`
-	ChannelName string `json:"channel"` // ignored unless channel_locked=false
+	Text         string `json:"text"`
+	Username     string `json:"username"`
+	IconURL      string `json:"icon_url"`
+	ChannelName  string `json:"channel"` // ignored unless channel_locked=false
+	WebhookDepth int    `json:"moyro_webhook_depth,omitempty"`
 }
 
 // Fire creates a post from an incoming hook. The post is authored by the
@@ -175,24 +181,32 @@ func (s *IncomingService) Fire(ctx context.Context, hook *IncomingHook, payload 
 	if strings.TrimSpace(payload.Text) == "" {
 		return nil, errors.New("empty text")
 	}
-	props := map[string]any{
-		"from_webhook": "true",
+	username := payload.Username
+	if username == "" {
+		username = hook.Username
 	}
-	if payload.Username != "" {
-		props["override_username"] = payload.Username
-	} else if hook.Username != "" {
-		props["override_username"] = hook.Username
+	iconURL := payload.IconURL
+	if iconURL == "" {
+		iconURL = hook.IconURL
 	}
-	if payload.IconURL != "" {
-		props["override_icon_url"] = payload.IconURL
-	} else if hook.IconURL != "" {
-		props["override_icon_url"] = hook.IconURL
+	webhookDepth := payload.WebhookDepth
+	if webhookDepth < 0 {
+		webhookDepth = 0
 	}
-	p, err := s.posts.Create(ctx, hook.ChannelID, hook.CreatorID, "", payload.Text, props, nil)
-	if err != nil {
-		return nil, err
+	if webhookDepth > maximumWebhookDepth {
+		webhookDepth = maximumWebhookDepth
 	}
-	return p, nil
+	return s.postCommands.Execute(ctx, postcommand.Command{
+		Source:           postcommand.SourceIncomingWebhook,
+		ActorID:          hook.CreatorID,
+		ChannelID:        hook.ChannelID,
+		Message:          payload.Text,
+		CredentialID:     hook.ID,
+		OverrideUsername: username,
+		OverrideIconURL:  iconURL,
+		SenderName:       hook.Username,
+		WebhookDepth:     webhookDepth,
+	})
 }
 
 // ListByChannel returns every active incoming webhook for a channel.
@@ -220,4 +234,3 @@ func (s *IncomingService) ListByChannel(ctx context.Context, channelID string) (
 	}
 	return out, rows.Err()
 }
-

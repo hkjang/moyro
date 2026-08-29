@@ -112,6 +112,20 @@ func scanPost(row scannable) (*Post, error) {
 }
 
 func (s *Service) Create(ctx context.Context, channelID, userID, rootID, message string, props map[string]any, fileIDs []string) (*Post, error) {
+	return s.create(ctx, channelID, userID, rootID, message, props, fileIDs, "")
+}
+
+// CreateScheduled records the server-owned scheduled post id in a dedicated
+// unique column. If a worker loses its response after commit, the next lease
+// can resolve the original post instead of creating a duplicate.
+func (s *Service) CreateScheduled(ctx context.Context, scheduledPostID, channelID, userID, rootID, message string, props map[string]any, fileIDs []string) (*Post, error) {
+	if strings.TrimSpace(scheduledPostID) == "" {
+		return nil, errors.New("scheduled post id is required")
+	}
+	return s.create(ctx, channelID, userID, rootID, message, props, fileIDs, scheduledPostID)
+}
+
+func (s *Service) create(ctx context.Context, channelID, userID, rootID, message string, props map[string]any, fileIDs []string, scheduledPostID string) (*Post, error) {
 	now := time.Now().UnixMilli()
 	if props == nil {
 		props = map[string]any{}
@@ -159,10 +173,16 @@ func (s *Service) Create(ctx context.Context, channelID, userID, rootID, message
 		}
 	}
 
+	var scheduledID any
+	if scheduledPostID != "" {
+		scheduledID = scheduledPostID
+	}
 	_, err = tx.Exec(ctx, `
-		INSERT INTO posts (id, channel_id, user_id, root_id, message, props, file_ids, is_pinned, create_at, update_at)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,FALSE,$8,$8)
-	`, p.ID, p.ChannelID, p.UserID, p.RootID, p.Message, rawProps, rawFileIDs, now)
+		INSERT INTO posts
+			(id, channel_id, user_id, root_id, message, props, file_ids,
+			 is_pinned, create_at, update_at, scheduled_post_id)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,FALSE,$8,$8,$9)
+	`, p.ID, p.ChannelID, p.UserID, p.RootID, p.Message, rawProps, rawFileIDs, now, scheduledID)
 	if err != nil {
 		return nil, err
 	}
@@ -170,6 +190,16 @@ func (s *Service) Create(ctx context.Context, channelID, userID, rootID, message
 		return nil, err
 	}
 	return p, nil
+}
+
+// GetByScheduledPost returns the post created for one scheduled delivery. It
+// intentionally includes soft-deleted posts: deletion after creation must not
+// make a worker replay the original side effect.
+func (s *Service) GetByScheduledPost(ctx context.Context, scheduledPostID string) (*Post, error) {
+	return scanPost(s.db.Pool.QueryRow(ctx, `
+		SELECT `+allPostColumns+` FROM posts
+		WHERE scheduled_post_id=$1
+	`, scheduledPostID))
 }
 
 // GetByApprovalRequest returns the unique post produced by one approved

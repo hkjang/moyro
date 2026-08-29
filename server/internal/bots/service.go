@@ -353,36 +353,55 @@ func (s *Service) SearchTokens(ctx context.Context, term string, limit int) ([]T
 	return out, rows.Err()
 }
 
-// ResolveToken validates a presented plaintext PAT and returns the owning
-// user id. It also bumps last_used_at as a side effect for visibility.
-// Returns ErrTokenInvalid if the token is missing, revoked, or not found.
-func (s *Service) ResolveToken(ctx context.Context, plain string) (string, error) {
+// ResolvedToken is the non-secret identity carried forward after a PAT has
+// been authenticated. ID is the credential row identifier used for audit
+// provenance; the plaintext token and its digest never leave this package.
+type ResolvedToken struct {
+	ID     string
+	UserID string
+}
+
+// ResolveTokenCredential validates a presented plaintext PAT and returns its
+// non-secret credential and owner identifiers. It also bumps last_used_at as
+// a best-effort visibility signal. Returns ErrTokenInvalid if the token is
+// missing, revoked, owned by an inactive user, or not found.
+func (s *Service) ResolveTokenCredential(ctx context.Context, plain string) (ResolvedToken, error) {
 	if plain == "" {
-		return "", ErrTokenInvalid
+		return ResolvedToken{}, ErrTokenInvalid
 	}
 	hash := hashToken(plain)
-	var userID string
+	var resolved ResolvedToken
 	var revoked int64
-	err := s.db.Pool.QueryRow(ctx, resolveTokenSQL, hash).Scan(&userID, &revoked)
+	err := s.db.Pool.QueryRow(ctx, resolveTokenSQL, hash).Scan(&resolved.ID, &resolved.UserID, &revoked)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return "", ErrTokenInvalid
+		return ResolvedToken{}, ErrTokenInvalid
 	}
+	if err != nil {
+		return ResolvedToken{}, err
+	}
+	if revoked != 0 {
+		return ResolvedToken{}, ErrTokenInvalid
+	}
+	// Best-effort last-used bump; don't fail the whole call if it errors.
+	_, _ = s.db.Pool.Exec(ctx, `UPDATE personal_access_tokens SET last_used_at = $2 WHERE id = $1`, resolved.ID, time.Now().UnixMilli())
+	return resolved, nil
+}
+
+// ResolveToken retains the original user-id-only API for callers that do not
+// need credential provenance.
+func (s *Service) ResolveToken(ctx context.Context, plain string) (string, error) {
+	resolved, err := s.ResolveTokenCredential(ctx, plain)
 	if err != nil {
 		return "", err
 	}
-	if revoked != 0 {
-		return "", ErrTokenInvalid
-	}
-	// Best-effort last-used bump; don't fail the whole call if it errors.
-	_, _ = s.db.Pool.Exec(ctx, `UPDATE personal_access_tokens SET last_used_at = $2 WHERE token_hash = $1`, hash, time.Now().UnixMilli())
-	return userID, nil
+	return resolved.UserID, nil
 }
 
 // Keep the account-activity predicate in the token lookup itself. Resolving a
 // PAT first and checking the user in a later statement would leave a race in
 // which a deactivated account could authenticate between the two queries.
 const resolveTokenSQL = `
-		SELECT pat.user_id, pat.revoked_at
+		SELECT pat.id, pat.user_id, pat.revoked_at
 		FROM personal_access_tokens AS pat
 		JOIN users AS u ON u.id = pat.user_id AND u.delete_at = 0
 		WHERE pat.token_hash = $1
