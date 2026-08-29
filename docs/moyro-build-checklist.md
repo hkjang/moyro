@@ -80,7 +80,7 @@
 - [x] 격리 network에서 외부 접근 없이 bootstrap/login/UI/restart를 최종 image로 검증한다.
 - [x] 최종 source image를 `moyro:v<version>`으로 build한다.
 - [x] `moyro-v<version>.tar.gz`로 save/gzip하고 다시 load해 검사한다.
-- [ ] tag workflow가 GitHub Release에 해당 asset 하나만 첨부한다.
+- [x] tag workflow가 GitHub Release에 해당 asset 하나만 첨부한다.
 - [x] backup/restore, upgrade/rollback, ENCRYPTION_KEY 보관 절차를 문서화한다.
 
 ## 최종 완료 조건
@@ -89,4 +89,14 @@
 - [x] 최종 image의 제품 E2E 대상 화면에 console error와 허용하지 않은 failed network request가 없다.
 - [x] SMTP·S3·Redis·link preview·runtime plugin 등 문서화한 미지원 관리 mutation은 501 AppError를 반환하고 거짓 저장 성공을 내지 않는다.
 - [x] 최종 local release candidate archive의 image label, tag, version API와 화면 version 일치를 검증한다.
-- [ ] GitHub remote, release 권한, 첫 release tag를 확인한 뒤에만 실제 배포한다.
+- [x] GitHub remote, release 권한, 첫 release tag를 확인한 뒤에만 실제 배포한다.
+
+## v0.1.0 배포 기록
+
+- 소스: [hkjang/moyro](https://github.com/hkjang/moyro), `main` 커밋 `4fdd5a1fa038c1d070934b648146a41705abb461`
+- 홍보·가이드: [GitHub Pages](https://hkjang.github.io/moyro/)
+- 릴리스: [moyro v0.1.0](https://github.com/hkjang/moyro/releases/tag/v0.1.0)
+- 사용자 지정 릴리스 자산: `moyro-v0.1.0.tar.gz` 1개
+- Docker 이미지 태그: `moyro:v0.1.0`
+- SHA-256: `270208156bc12213cf37ca73d343b1c56cb70c34184044ec86dba0ec159d90d4`
+- 원격 자산 재다운로드 후 격리 네트워크에서 기동, UI, 버전, bootstrap 로그인, 재시작을 검증했다.
