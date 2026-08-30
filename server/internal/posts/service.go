@@ -19,6 +19,7 @@ type Post struct {
 	UserID    string         `json:"user_id"`
 	RootID    string         `json:"root_id"`
 	Message   string         `json:"message"`
+	Type      string         `json:"type,omitempty"`
 	Props     map[string]any `json:"props"`
 	FileIDs   []string       `json:"file_ids"`
 	IsPinned  bool           `json:"is_pinned"`
@@ -95,6 +96,9 @@ func scanPost(row scannable) (*Post, error) {
 	}
 	if len(propsRaw) > 0 {
 		_ = json.Unmarshal(propsRaw, &p.Props)
+		if postType, ok := p.Props["_moyro_post_type"].(string); ok {
+			p.Type = postType
+		}
 	}
 	if len(fileIDsRaw) > 0 {
 		_ = json.Unmarshal(fileIDsRaw, &p.FileIDs)

@@ -1,9 +1,9 @@
 openapi: 3.1.0
 info:
   title: moyro MM Compatibility API
-  version: 0.1.1
+  version: 0.2.0
   description: |
-    moyro v0.1.1의 Mattermost v4 호환 API 계약. 필드명과 경로는 Mattermost REST
+    moyro v0.2.0의 Mattermost v4 호환 API 계약. 필드명과 경로는 Mattermost REST
     API v4와 최대한 일치시켜 기존 클라이언트·봇·플러그인의 이식성을 높인다.
     이 문서는 구현된 핵심 workflow를 명세하며 전체 route-shape 목록은
     mattermost-api-compatibility.md에서 별도로 관리한다. Moyro-native 관리·AI·MCP
@@ -223,11 +223,83 @@ components:
         result_post_id: { type: string }
     Plugin:
       type: object
+      required: [id, version, state, enabled, runtime, error, manifest]
       properties:
         id: { type: string }
         version: { type: string }
-        state: { type: string }
-        manifest: { type: object }
+        state:
+          type: string
+          enum: [installed, running, failed]
+        enabled: { type: boolean }
+        runtime:
+          type: string
+          enum: [moyro_v1, mattermost_v1]
+        error: { type: string }
+        manifest:
+          type: object
+          additionalProperties: true
+    PluginInstallResult:
+      type: object
+      required: [id, version, state, enabled, runtime, sha256, replaced]
+      properties:
+        id: { type: string }
+        version: { type: string }
+        state:
+          type: string
+          enum: [installed, running, failed]
+        enabled: { type: boolean }
+        runtime:
+          type: string
+          enum: [mattermost_v1]
+        sha256:
+          type: string
+          pattern: "^[0-9a-f]{64}$"
+        replaced: { type: boolean }
+    PluginManagementCapabilities:
+      type: object
+      required: [management_enabled, uploads_enabled]
+      properties:
+        management_enabled: { type: boolean }
+        uploads_enabled: { type: boolean }
+    PluginStatus:
+      type: object
+      required: [plugin_id, state]
+      properties:
+        plugin_id: { type: string }
+        state:
+          type: string
+          enum: [installed, running, failed]
+    PluginConfiguration:
+      type: object
+      required: [configuration, schema]
+      properties:
+        configuration:
+          type: object
+          additionalProperties: true
+        schema:
+          type: object
+          additionalProperties: true
+    PluginConfigurationUpdate:
+      type: object
+      required: [configuration]
+      properties:
+        configuration:
+          type: object
+          additionalProperties: true
+    PluginWebappBundle:
+      type: object
+      required: [id, version, url]
+      properties:
+        id: { type: string }
+        version: { type: string }
+        url:
+          type: string
+          pattern: "^/plugins/[A-Za-z0-9_.-]+/webapp\\.js$"
+    StatusOK:
+      type: object
+      required: [status]
+      properties:
+        status: { type: string, const: OK }
 
 paths:
   /system/ping:
@@ -772,7 +844,7 @@ paths:
   /plugins:
     get:
       operationId: listPlugins
-      summary: List installed plugins
+      summary: List installed plugins (`manage_plugins`)
       responses:
         "200":
           description: OK
@@ -781,6 +853,463 @@ paths:
               schema:
                 type: array
                 items: { $ref: "#/components/schemas/Plugin" }
+        "401":
+          description: Missing or invalid session
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "403":
+          description: "`manage_plugins` permission required"
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+    post:
+      operationId: installPlugin
+      summary: Upload, validate, install, and activate a Mattermost plugin archive
+      description: |
+        Requires `manage_plugins`. Accepts either multipart field `plugin` or a
+        raw gzip-compressed tar body. A runtime upload is installed as
+        `mattermost_v1`. Existing installations require `force=true`; the
+        implementation also accepts `replace=true` as a compatibility alias.
+        Install and replacement use a durable PostgreSQL rollback marker; a
+        candidate is not exposed until activation, old-generation call drain,
+        and metadata commit finish. Archive structure is validated, but plugin
+        code signatures and publisher identity are not; installed bundles are
+        fully trusted native code.
+      parameters:
+        - name: force
+          in: query
+          required: false
+          schema: { type: boolean, default: false }
+        - name: replace
+          in: query
+          required: false
+          deprecated: true
+          description: Compatibility alias for `force`.
+          schema: { type: boolean, default: false }
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [plugin]
+              properties:
+                plugin:
+                  type: string
+                  format: binary
+          application/gzip:
+            schema:
+              type: string
+              format: binary
+          application/octet-stream:
+            schema:
+              type: string
+              format: binary
+      responses:
+        "201":
+          description: Plugin installed and activated
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PluginInstallResult" }
+        "400":
+          description: Malformed, unsafe, oversized, or incompatible archive
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "401":
+          description: Missing or invalid session
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "403":
+          description: "`manage_plugins` permission required"
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "409":
+          description: Plugin already exists without force, or the current generation could not drain
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "503":
+          description: Managed plugin runtime is unavailable
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /plugins/capabilities:
+    get:
+      operationId: getPluginManagementCapabilities
+      summary: Get delegated plugin-management runtime capabilities
+      description: Requires `manage_plugins` and does not expose the system-wide configuration snapshot.
+      responses:
+        "200":
+          description: Current plugin-management availability
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PluginManagementCapabilities" }
+        "401":
+          description: Missing or invalid session
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "403":
+          description: "`manage_plugins` permission required"
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /plugins/statuses:
+    get:
+      operationId: listPluginStatuses
+      summary: List plugin runtime states for authenticated clients
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/PluginStatus" }
+        "401":
+          description: Missing or invalid session
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /plugins/webapp:
+    get:
+      operationId: discoverPluginWebapps
+      summary: Discover enabled and running web plugin bundles
+      description: |
+        Returns same-origin bundle URLs for the authenticated webapp. Disabled,
+        failed, stopped, and server-only plugins are omitted.
+      responses:
+        "200":
+          description: Enabled web bundles
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/PluginWebappBundle" }
+        "401":
+          description: Missing or invalid session
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /plugins/{pluginID}:
+    delete:
+      operationId: deletePlugin
+      summary: Disable and remove an installed plugin (`manage_plugins`)
+      parameters:
+        - name: pluginID
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Deleted
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/StatusOK" }
+        "401":
+          description: Missing or invalid session
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "403":
+          description: "`manage_plugins` permission required"
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "404":
+          description: Plugin is not installed
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "409":
+          description: The current plugin generation could not drain
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "500":
+          description: Plugin removal or persistent-state cleanup failed
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "503":
+          description: Managed plugin runtime is unavailable
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /plugins/{pluginID}/enable:
+    post:
+      operationId: enablePlugin
+      summary: Enable and activate an installed plugin (`manage_plugins`)
+      parameters:
+        - name: pluginID
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Enabled
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/StatusOK" }
+        "401":
+          description: Missing or invalid session
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "403":
+          description: "`manage_plugins` permission required"
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "404":
+          description: Plugin is not installed
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "409":
+          description: The current plugin generation could not drain
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "500":
+          description: Plugin activation failed
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "503":
+          description: Managed plugin runtime is unavailable
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /plugins/{pluginID}/disable:
+    post:
+      operationId: disablePlugin
+      summary: Deactivate and disable an installed plugin (`manage_plugins`)
+      parameters:
+        - name: pluginID
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Disabled
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/StatusOK" }
+        "401":
+          description: Missing or invalid session
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "403":
+          description: "`manage_plugins` permission required"
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "404":
+          description: Plugin is not installed
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "409":
+          description: The current plugin generation could not drain
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "500":
+          description: Plugin deactivation or persistence failed
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "503":
+          description: Managed plugin runtime is unavailable
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /plugins/{pluginID}/configuration:
+    parameters:
+      - name: pluginID
+        in: path
+        required: true
+        schema: { type: string }
+    get:
+      operationId: getPluginConfiguration
+      summary: Get effective plugin configuration and manifest schema (`manage_plugins`)
+      responses:
+        "200":
+          description: Effective configuration and schema
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PluginConfiguration" }
+        "401":
+          description: Missing or invalid session
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "403":
+          description: "`manage_plugins` permission required"
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "404":
+          description: Plugin is not installed
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "409":
+          description: Plugin install or replacement is in progress
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "500":
+          description: Configuration could not be decrypted or read
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "503":
+          description: Managed plugin runtime is unavailable
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+    put:
+      operationId: updatePluginConfiguration
+      summary: Encrypt, persist, and apply plugin configuration (`manage_plugins`)
+      description: |
+        The previous encrypted configuration is restored when the live plugin
+        hook rejects the new value. If rollback or live reapply is uncertain,
+        the managed runtime fails closed until the Moyro process is restarted.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PluginConfigurationUpdate" }
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/StatusOK" }
+        "400":
+          description: Invalid JSON configuration
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "401":
+          description: Missing or invalid session
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "403":
+          description: "`manage_plugins` permission required"
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "404":
+          description: Plugin is not installed
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "409":
+          description: Plugin install or replacement is in progress
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "500":
+          description: Encryption, persistence, or live configuration hook failed
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "503":
+          description: Managed plugin runtime is unavailable
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /plugins/{pluginID}/webapp.js:
+    servers:
+      - url: /
+        description: Deployment origin; this route is outside `/api/v4`.
+    get:
+      operationId: getPluginWebappBundle
+      summary: Fetch one authenticated web plugin JavaScript bundle
+      parameters:
+        - name: pluginID
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: JavaScript bundle
+          headers:
+            X-Content-Type-Options:
+              schema: { type: string, const: nosniff }
+            Cache-Control:
+              schema: { type: string, const: "private, max-age=300" }
+          content:
+            text/javascript:
+              schema:
+                type: string
+        "401":
+          description: Missing or invalid session
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "404":
+          description: Bundle is absent or plugin is not enabled and running
+
+  /plugins/{pluginID}/{pluginPath}:
+    servers:
+      - url: /
+        description: Deployment origin; this route is outside `/api/v4`.
+    description: |
+      Catch-all plugin HTTP boundary. `pluginPath` represents the complete
+      remainder after `/plugins/{pluginID}/` and may contain `/`. The runtime
+      also dispatches the root `/plugins/{pluginID}/`. It accepts every HTTP
+      method even though OpenAPI has no standard catch-all method operation.
+      Authentication is optional so a plugin can implement
+      its own token; a supplied Moyro bearer/PAT must validate. Moyro strips
+      `Authorization` and client-supplied `Mattermost-User-ID`, then injects a
+      verified `Mattermost-User-ID` when authenticated. The plugin owns
+      endpoint-level authorization. Request bodies are limited to 8 MiB.
+    x-moyro-catch-all-methods: [GET, HEAD, POST, PUT, PATCH, DELETE, OPTIONS]
+    parameters:
+      - name: pluginID
+        in: path
+        required: true
+        schema: { type: string }
+      - name: pluginPath
+        in: path
+        required: true
+        schema: { type: string }
+    get:
+      operationId: callPluginHTTP
+      summary: Dispatch a request to a running plugin HTTP handler
+      security:
+        - bearerAuth: []
+        - {}
+      responses:
+        "200":
+          description: Plugin-defined response; status, headers, and body vary
+        "401":
+          description: A supplied Moyro credential was invalid
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "404":
+          description: Plugin is absent, disabled, not running, or has no HTTP hook
+        "502":
+          description: Moyro native RPC plugin HTTP call failed
 
   /websocket:
     get:

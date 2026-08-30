@@ -1,0 +1,261 @@
+.workspace-message-composer {
+  display: flex;
+  min-width: 0;
+}
+
+.workspace-message-composer .composer-layout {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.composer-context-bar {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  color: var(--flow-text-muted, #667085);
+  font-size: 12px;
+}
+
+.composer-destination {
+  overflow: hidden;
+  color: var(--flow-text, #182033);
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.composer-ai-status {
+  flex: 0 0 auto;
+}
+
+.composer-ai-status.is-available {
+  color: var(--flow-ai, #6d55c5);
+  font-weight: 700;
+}
+
+.composer-ai-tools {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 6px;
+  overflow-x: auto;
+  color: var(--flow-text-muted, #667085);
+  font-size: 12px;
+}
+
+.composer-ai-tools > span {
+  flex: 0 0 auto;
+  font-weight: 700;
+}
+
+.composer-ai-tools > button {
+  min-width: 58px;
+  min-height: 36px;
+  flex: 0 0 auto;
+  padding: 0 10px;
+  border: 1px solid var(--flow-border, #dfe3ea);
+  border-radius: var(--flow-radius-input, 8px);
+  background: var(--flow-surface, #fff);
+  color: var(--flow-text, #182033);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.composer-ai-tools > button:hover,
+.composer-ai-tools > button.is-active {
+  border-color: color-mix(in srgb, var(--flow-ai, #6d55c5) 42%, var(--flow-border, #dfe3ea));
+  background: color-mix(in srgb, var(--flow-ai, #6d55c5) 7%, var(--flow-surface, #fff));
+  color: var(--flow-ai, #6d55c5);
+}
+
+.composer-ai-tools > button:disabled {
+  cursor: not-allowed;
+  opacity: 0.52;
+}
+
+.composer-ai-preview {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid color-mix(in srgb, var(--flow-ai, #6d55c5) 28%, var(--flow-border, #dfe3ea));
+  border-radius: var(--flow-radius-card, 10px);
+  background: color-mix(in srgb, var(--flow-ai, #6d55c5) 5%, var(--flow-surface, #fff));
+}
+
+.composer-ai-comparison {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.composer-ai-comparison > div {
+  min-width: 0;
+}
+
+.composer-ai-comparison strong {
+  color: var(--flow-text-muted, #667085);
+  font-size: 12px;
+}
+
+.composer-ai-comparison p {
+  max-height: 170px;
+  margin: 5px 0 0;
+  overflow: auto;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+  color: var(--flow-text, #182033);
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.composer-ai-error,
+.composer-send-error {
+  padding: 9px 10px;
+  border-radius: var(--flow-radius-input, 8px);
+  background: color-mix(in srgb, var(--flow-danger, #c2414b) 8%, transparent);
+  color: var(--flow-danger, #c2414b);
+  font-size: 12px;
+}
+
+.composer-ai-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.composer-ai-actions > button {
+  display: inline-flex;
+  min-width: 64px;
+  min-height: 36px;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  padding: 0 12px;
+}
+
+.composer-pending-files {
+  margin: 0;
+}
+
+.composer-pending-files .file-chip {
+  min-height: 36px;
+}
+
+.composer-remove-file {
+  display: inline-grid;
+  width: 36px;
+  min-width: 36px;
+  height: 36px;
+  min-height: 36px;
+  margin-left: auto;
+  place-items: center;
+  padding: 0;
+  font-size: 18px;
+}
+
+.composer-input-row {
+  display: flex;
+  min-width: 0;
+  align-items: flex-end;
+  gap: 8px;
+}
+
+.composer-tool-button {
+  display: inline-grid;
+  width: 40px;
+  min-width: 40px;
+  height: 40px;
+  min-height: 40px;
+  flex: 0 0 auto;
+  place-items: center;
+  padding: 0;
+  font-size: 20px;
+}
+
+.composer-file-input {
+  display: none;
+}
+
+.composer-textarea-host {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+}
+
+.composer-send-button {
+  display: inline-flex;
+  width: auto;
+  min-width: 84px;
+  height: 40px;
+  min-height: 40px;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  padding: 0 14px;
+  font-size: 14px;
+}
+
+.composer-send-button svg {
+  font-size: 18px;
+}
+
+@media (max-width: 960px) {
+  .composer-ai-tools > button,
+  .composer-ai-actions > button,
+  .composer-pending-files .file-chip,
+  .composer-remove-file,
+  .composer-tool-button,
+  .composer-send-button,
+  .workspace-message-composer .draft-clear {
+    min-height: 44px;
+  }
+
+  .composer-remove-file,
+  .composer-tool-button {
+    width: 44px;
+    min-width: 44px;
+    height: 44px;
+  }
+
+  .composer-send-button {
+    height: 44px;
+  }
+}
+
+@media (max-width: 640px) {
+  .composer-ai-comparison {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .composer-context-bar {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 2px;
+  }
+
+  .composer-send-button {
+    min-width: 48px;
+    padding: 0 12px;
+  }
+
+  .composer-send-button > span {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .workspace-message-composer * {
+    scroll-behavior: auto;
+  }
+}

@@ -1,0 +1,277 @@
+/* Layout-owned overrides keep settings screens bounded by ProductShell.
+ * The legacy declarations in index.css remain compatible for standalone use. */
+.moyro-settings-shell {
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  max-width: 100%;
+  max-height: 100%;
+  overflow-x: hidden;
+}
+
+.moyro-settings-main {
+  height: 100%;
+  overflow: hidden;
+}
+
+.moyro-settings-content {
+  overscroll-behavior: contain;
+}
+
+.admin-settings-sidebar {
+  width: 280px;
+}
+
+.admin-settings-brand {
+  align-items: center;
+  gap: 10px;
+  padding: 16px;
+}
+
+.admin-settings-account {
+  padding: 16px;
+}
+
+.personal-settings-sidebar {
+  width: 280px;
+}
+
+.personal-settings-brand {
+  align-items: center;
+  gap: 10px;
+  padding: 16px;
+}
+
+.personal-settings-version {
+  padding: 16px;
+}
+
+.personal-navigation-list {
+  padding: 8px;
+}
+
+.personal-navigation-item {
+  min-height: 42px;
+  margin-block: 2px;
+  border-radius: var(--flow-radius-input, 8px);
+}
+
+.personal-navigation-item .MuiListItemIcon-root {
+  min-width: 38px;
+  color: var(--flow-color-text-secondary, #667085);
+}
+
+.personal-navigation-item.Mui-selected .MuiListItemIcon-root {
+  color: var(--flow-color-brand, #3157d5);
+}
+
+.admin-navigation-groups {
+  padding: 10px 8px 16px;
+}
+
+.admin-navigation-group + .admin-navigation-group {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--flow-color-border, #dfe3ea);
+}
+
+.admin-navigation-group-heading {
+  display: grid;
+  gap: 1px;
+  padding: 4px 8px 6px;
+}
+
+.admin-navigation-group-heading h2 {
+  margin: 0;
+  color: var(--flow-color-text, #182033);
+  font-weight: 750;
+  letter-spacing: 0.01em;
+}
+
+.admin-navigation-group-heading > :last-child {
+  line-height: 1.35;
+}
+
+.admin-navigation-item {
+  min-height: 42px;
+  margin-block: 2px;
+  border-radius: var(--flow-radius-input, 8px);
+}
+
+.admin-navigation-item .MuiListItemIcon-root {
+  min-width: 38px;
+  color: var(--flow-color-text-secondary, #667085);
+}
+
+.admin-navigation-item.Mui-selected {
+  background: color-mix(in srgb, var(--flow-color-brand, #3157d5) 11%, transparent);
+  color: var(--flow-color-brand-dark, #203e9f);
+}
+
+.admin-navigation-item.Mui-selected .MuiListItemIcon-root {
+  color: var(--flow-color-brand, #3157d5);
+}
+
+.admin-navigation-item.Mui-selected:hover {
+  background: color-mix(in srgb, var(--flow-color-brand, #3157d5) 16%, transparent);
+}
+
+.admin-mobile-menu-button {
+  display: none;
+}
+
+.personal-mobile-menu-button {
+  display: none;
+}
+
+.admin-settings-current {
+  display: grid;
+}
+
+.personal-settings-current {
+  display: grid;
+}
+
+.admin-mobile-drawer {
+  width: min(88vw, 368px);
+  max-width: 100%;
+  background: var(--flow-color-surface, #fff);
+}
+
+.admin-mobile-drawer-content {
+  display: flex;
+  height: 100%;
+  min-height: 0;
+  flex-direction: column;
+}
+
+.admin-mobile-drawer-header {
+  display: flex;
+  min-height: 72px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 12px 12px 20px;
+}
+
+.admin-mobile-drawer-navigation {
+  min-height: 0;
+  flex: 1;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.admin-mobile-drawer-version {
+  padding: 14px 20px 18px;
+}
+
+.personal-mobile-drawer {
+  width: min(88vw, 368px);
+  max-width: 100%;
+  overflow-x: hidden;
+  background: var(--flow-color-surface, #fff);
+}
+
+.personal-mobile-drawer-content {
+  display: flex;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  flex-direction: column;
+}
+
+.personal-mobile-drawer-header {
+  display: flex;
+  min-height: 72px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 12px 12px 20px;
+}
+
+.personal-mobile-drawer-navigation {
+  min-width: 0;
+  min-height: 0;
+  flex: 1;
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+
+.personal-mobile-drawer-version {
+  padding: 14px 20px 18px;
+}
+
+@media (max-width: 800px) {
+  .admin-settings-shell {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr);
+  }
+
+  .admin-settings-sidebar {
+    display: none;
+  }
+
+  .admin-mobile-menu-button {
+    display: inline-flex;
+  }
+
+  .admin-settings-header {
+    gap: 6px;
+  }
+
+  .admin-settings-current {
+    min-width: 0;
+  }
+
+  .admin-settings-current > :last-child {
+    display: none;
+  }
+
+  .admin-settings-role {
+    max-width: 112px;
+  }
+
+  .admin-settings-role .MuiChip-label {
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .personal-settings-shell {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr);
+  }
+
+  .personal-settings-sidebar {
+    display: none;
+  }
+
+  .personal-mobile-menu-button {
+    display: inline-flex;
+  }
+
+  .personal-settings-header {
+    gap: 6px;
+  }
+
+  .personal-settings-current {
+    min-width: 0;
+  }
+
+  .personal-settings-current > :last-child {
+    display: none;
+  }
+}
+
+@media (max-width: 460px) {
+  .admin-settings-role {
+    display: none;
+  }
+}
+
+@media (forced-colors: active) {
+  .admin-navigation-item.Mui-selected {
+    border: 1px solid Highlight;
+  }
+}

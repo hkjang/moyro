@@ -1,0 +1,35 @@
+html {
+  color-scheme: light;
+  background: var(--flow-color-page);
+  color: var(--flow-color-text);
+  font-family: var(--flow-font-sans);
+}
+
+html[data-theme="dark"] {
+  color-scheme: dark;
+}
+
+body,
+button,
+input,
+select,
+textarea {
+  font-family: var(--flow-font-sans);
+}
+
+body {
+  background: var(--flow-color-page);
+  color: var(--flow-color-text);
+}
+
+code,
+kbd,
+pre,
+samp {
+  font-family: var(--flow-font-mono);
+  font-variant-ligatures: none;
+}
+
+::selection {
+  background: color-mix(in srgb, var(--flow-color-brand) 22%, transparent);
+}

@@ -19,6 +19,7 @@ import (
 	"github.com/hkjang/moyro/server/internal/httpapi"
 	"github.com/hkjang/moyro/server/internal/metrics"
 	"github.com/hkjang/moyro/server/internal/pluginhost"
+	"github.com/hkjang/moyro/server/internal/secrets"
 	"github.com/hkjang/moyro/server/internal/store"
 	"github.com/hkjang/moyro/server/internal/teams"
 	"github.com/hkjang/moyro/server/internal/ws"
@@ -102,9 +103,25 @@ func main() {
 		}
 	}
 
-	host := pluginhost.New(cfg.PluginDir, logger)
+	pluginSecrets, err := secrets.New(cfg.EncryptionKey)
+	if err != nil {
+		logger.Error("plugin secret manager", "err", err)
+		os.Exit(1)
+	}
+	host, err := pluginhost.NewWithRuntime(cfg.PluginDir, db, pluginSecrets, logger)
+	if err != nil {
+		logger.Error("plugin runtime", "err", err)
+		os.Exit(1)
+	}
+	// Build the application services before activating persisted plugins.
+	// Official Mattermost plugins routinely create bots, register commands, or
+	// schedule work from OnActivate; their API must already be bound to the
+	// shared post/file/event/audit pipeline at that point.
+	backend := httpapi.New(cfg, db, hub, host, logger)
 	if err := host.LoadAll(ctx); err != nil {
-		logger.Warn("plugin load", "err", err)
+		host.Shutdown()
+		logger.Error("plugin recovery", "err", err)
+		os.Exit(1)
 	}
 
 	// Email digests are meaningful only when a real SMTP transport exists.
@@ -122,7 +139,6 @@ func main() {
 	// background workers in one shot. Workers need services the router
 	// already owns (posts, files) — keeping construction in one place
 	// avoids duplicating the fs-vs-s3 switch.
-	backend := httpapi.New(cfg, db, hub, host, logger)
 	go backend.Scheduled.Run(ctx)
 	go backend.Reminders.Run(ctx)
 	go backend.Approvals.Run(ctx)

@@ -35,6 +35,7 @@ import {
 import { AuthenticatedImage } from "@/components/AuthenticatedMedia";
 import { invalidateEmojiCache } from "@/components/EmojiPicker";
 import { useEscClose, useConfirm } from "@/components/shared";
+import { PluginAdminPanel } from "@/plugins/PluginAdminPanel";
 
 type Tab =
   | "org"
@@ -441,12 +442,14 @@ export function IntegrationsPanel({
         setServerBusyState(Boolean(busy.busy));
         setLogRows(logs);
       } else if (tab === "plugins") {
-        const [plugins, statuses] = await Promise.all([
+        const [plugins, statuses, config] = await Promise.all([
           adminApi.listPlugins(token),
           adminApi.listPluginStatuses(token),
+          adminApi.getConfig(token),
         ]);
         setPluginRows(plugins);
         setPluginStatuses(statuses);
+        setAdminConfig(config);
       } else if (tab === "roles") {
         setRoles(await adminApi.listRoles(token));
       } else if (tab === "jobs") {
@@ -834,17 +837,6 @@ export function IntegrationsPanel({
       setServerBusyState(next);
     } catch (e) {
       setError(e instanceof Error ? e.message : "서버 busy 상태 변경 실패");
-    }
-  }
-
-  async function onTogglePlugin(pluginId: string, enabled: boolean) {
-    if (!token || !pluginId) return;
-    try {
-      if (enabled) await adminApi.disablePlugin(token, pluginId);
-      else await adminApi.enablePlugin(token, pluginId);
-      refresh();
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "플러그인 상태 변경 실패");
     }
   }
 
@@ -1594,7 +1586,7 @@ export function IntegrationsPanel({
                 style={{ width: "auto", padding: "0 12px", height: 34 }}
                 onClick={onReloadConfig}
                 disabled
-                title="레거시 런타임 설정 리로드는 v0.1.1에서 지원하지 않습니다. moyro 관리 설정은 저장 즉시 적용됩니다."
+                title="레거시 전체 설정 리로드는 v0.2.0에서 지원하지 않습니다. moyro 관리 설정과 플러그인 설정은 저장 즉시 적용됩니다."
               >레거시 리로드 미지원</button>
               <button
                 type="button"
@@ -1659,50 +1651,15 @@ export function IntegrationsPanel({
           </div>
         )}
 
-        {tab === "plugins" && (
-          <div className="integrations-body">
-            <div className="integrations-create admin-toolbar">
-              <button
-                type="button"
-                className="btn-ghost"
-                style={{ width: "auto", padding: "0 12px", height: 34 }}
-                onClick={refresh}
-              >상태 새로고침</button>
-            </div>
-            <ul className="integrations-list">
-              {pluginRows.length === 0 && (
-                <li className="chat-empty" style={{ padding: 12 }}>로드된 플러그인이 없습니다.</li>
-              )}
-              {pluginRows.map((plugin, idx) => {
-                const pluginId = String(plugin.id ?? plugin.plugin_id ?? `plugin-${idx}`);
-                const state = pluginStateByID[pluginId] ?? String(plugin.state ?? "unknown");
-                const enabled = state === "running" || state === "enabled";
-                return (
-                  <li key={pluginId} className="integrations-row">
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ display: "flex", alignItems: "center", gap: 8, fontWeight: 600 }}>
-                        {String(plugin.name ?? pluginId)}
-                        <span className={enabled ? "admin-pill ok" : "admin-pill"}>
-                          {state}
-                        </span>
-                      </div>
-                      <div style={{ color: "var(--muted)", fontSize: 13, marginTop: 2 }}>
-                        {pluginId} · v{String(plugin.version ?? "dev")}
-                      </div>
-                    </div>
-                    <button
-                      type="button"
-                      className="btn-ghost"
-                      style={{ width: "auto", padding: "0 10px", height: 30 }}
-                      onClick={() => onTogglePlugin(pluginId, enabled)}
-                      disabled={!pluginRuntimeManagementEnabled}
-                      title={pluginRuntimeManagementEnabled ? undefined : "플러그인 런타임 활성화/비활성화는 v0.1.1에서 지원하지 않습니다."}
-                    >{pluginRuntimeManagementEnabled ? (enabled ? "비활성화" : "활성화") : "재시작 필요"}</button>
-                  </li>
-                );
-              })}
-            </ul>
-          </div>
+        {tab === "plugins" && token && (
+          <PluginAdminPanel
+            token={token}
+            plugins={filteredPlugins}
+            statuses={pluginStatuses}
+            runtimeManagementEnabled={pluginRuntimeManagementEnabled}
+            onRefresh={refresh}
+            onError={setError}
+          />
         )}
 
         {tab === "roles" && (

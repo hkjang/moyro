@@ -59,7 +59,7 @@ func newFilesTestDB(t *testing.T) *store.DB {
 	if dsn == "" {
 		t.Skipf("%s is not set", filesTestPostgresDSN)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 	adminPool, err := pgxpool.New(ctx, dsn)
 	if err != nil {

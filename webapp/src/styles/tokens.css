@@ -1,0 +1,79 @@
+:root {
+  --flow-color-brand: var(--moyro-palette-primary-main, #3157d5);
+  --flow-color-brand-dark: var(--moyro-palette-primary-dark, #203e9f);
+  --flow-color-navigation: var(--moyro-palette-navigation-main, #15213d);
+  --flow-color-ai: var(--moyro-palette-ai-main, #6d55c5);
+  --flow-color-automation: var(--moyro-palette-automation-main, #0f766e);
+  --flow-color-approval: var(--moyro-palette-approval-main, #a46000);
+  --flow-color-approval-accent: var(--moyro-flow-colors-approvalAccent, #b76e00);
+  --flow-color-success: var(--moyro-palette-success-main, #218358);
+  --flow-color-danger: var(--moyro-palette-error-main, #c2414b);
+  --flow-color-page: var(--moyro-palette-background-default, #f6f7f9);
+  --flow-color-surface: var(--moyro-palette-background-paper, #ffffff);
+  --flow-color-border: var(--moyro-palette-divider, #dfe3ea);
+  --flow-color-text: var(--moyro-palette-text-primary, #182033);
+  --flow-color-text-secondary: var(--moyro-palette-text-secondary, #667085);
+
+  /* Concise semantic aliases are consumed by feature CSS. Keep them mapped
+   * here so every surface follows the active MUI color scheme. */
+  --flow-brand: var(--flow-color-brand);
+  --flow-brand-strong: var(--flow-color-brand-dark);
+  --flow-navigation: var(--flow-color-navigation);
+  --flow-nav: var(--flow-color-navigation);
+  --flow-ai: var(--flow-color-ai);
+  --flow-automation: var(--flow-color-automation);
+  --flow-approval: var(--flow-color-approval);
+  --flow-warning: var(--flow-color-approval);
+  --flow-success: var(--flow-color-success);
+  --flow-danger: var(--flow-color-danger);
+  --flow-page: var(--flow-color-page);
+  --flow-page-bg: var(--flow-color-page);
+  --flow-surface: var(--flow-color-surface);
+  --flow-surface-subtle: color-mix(in srgb, var(--flow-color-surface) 84%, var(--flow-color-page));
+  --flow-border: var(--flow-color-border);
+  --flow-text: var(--flow-color-text);
+  --flow-text-muted: var(--flow-color-text-secondary);
+  --flow-muted: var(--flow-color-text-secondary);
+
+  --flow-font-sans: "Noto Sans KR Variable", "Noto Sans KR", "Pretendard", "Segoe UI",
+    "Apple SD Gothic Neo", system-ui, sans-serif;
+  --flow-font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+
+  --flow-radius-input: var(--moyro-flow-radii-input, 8px);
+  --flow-radius-card: var(--moyro-flow-radii-card, 10px);
+  --flow-radius-popover: var(--moyro-flow-radii-popover, 12px);
+  --flow-radius-pill: var(--moyro-flow-radii-pill, 999px);
+
+  --flow-focus-color: var(--flow-color-brand);
+  --flow-focus-width: var(--moyro-flow-focus-width, 2px);
+  --flow-focus-offset: var(--moyro-flow-focus-offset, 2px);
+  --flow-focus-ring-width: var(--moyro-flow-focus-ringWidth, 3px);
+  --flow-focus-ring: 0 0 0 var(--flow-focus-ring-width) color-mix(in srgb, var(--flow-focus-color) 20%, transparent);
+
+  --flow-motion-fast: var(--moyro-flow-motion-fast, 120ms);
+  --flow-motion-standard: var(--moyro-flow-motion-standard, 160ms);
+  --flow-motion-slow: var(--moyro-flow-motion-slow, 180ms);
+}
+
+/* Keep the existing native-CSS surfaces on the same semantic palette as MUI.
+ * ChatView may continue to set data-theme directly while it is being split. */
+:root,
+html[data-theme="light"],
+html[data-theme="dark"] {
+  --bg: var(--flow-color-page);
+  --card: var(--flow-color-surface);
+  --card-border: var(--flow-color-border);
+  --fg: var(--flow-color-text);
+  --muted: var(--flow-color-text-secondary);
+  --accent: var(--flow-color-brand);
+  --accent-hover: var(--flow-color-brand-dark);
+  --accent-ring: color-mix(in srgb, var(--flow-color-brand) 18%, transparent);
+  --danger: var(--flow-color-danger);
+  --input-bg: var(--flow-color-surface);
+  --input-border: var(--flow-color-border);
+  --input-focus: var(--flow-color-brand);
+  --surface: var(--flow-color-surface);
+  --surface-2: var(--flow-color-page);
+  --border: var(--flow-color-border);
+  --text: var(--flow-color-text);
+}

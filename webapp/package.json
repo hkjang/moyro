@@ -1,6 +1,6 @@
 {
   "name": "moyro-web",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
   "scripts": {
@@ -8,6 +8,7 @@
     "build": "tsc -b && vite build",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
+    "test": "vitest run src",
     "e2e": "playwright test",
     "capture:screenshots": "playwright test e2e/product-pages.spec.ts --project=chromium"
   },
@@ -19,6 +20,7 @@
     "@mui/material": "9.4.0",
     "@mui/x-data-grid": "9.12.0",
     "@reduxjs/toolkit": "^2.2.7",
+    "prop-types": "15.8.1",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "react-is": "18.3.1",
@@ -30,11 +32,14 @@
   },
   "devDependencies": {
     "@playwright/test": "1.62.1",
+    "@types/prop-types": "15.7.15",
     "@types/react": "^18.3.3",
     "@types/react-dom": "^18.3.0",
     "@vitejs/plugin-react": "6.1.1",
+    "jsdom": "30.0.1",
     "typescript": "^5.5.4",
-    "vite": "8.2.2"
+    "vite": "8.2.2",
+    "vitest": "4.1.11"
   },
   "overrides": {
     "react-is": "$react-is"

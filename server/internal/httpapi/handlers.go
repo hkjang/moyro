@@ -2664,11 +2664,82 @@ func (h *handlers) listPluginStatuses(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *handlers) listPluginWebapp(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, 200, []any{})
+	writeJSON(w, 200, h.host.WebappBundles())
 }
 
 func (h *handlers) listPluginMarketplace(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]any{"plugins": []any{}})
+}
+
+// authenticatePluginRequest is deliberately optional: Mattermost plugins may
+// expose token-authenticated endpoints of their own. If Moyro credentials are
+// supplied they must be valid, and only then is the trusted identity header
+// injected. A client-provided Mattermost-User-ID is always discarded.
+func (h *handlers) authenticatePluginRequest(w http.ResponseWriter, r *http.Request) (*http.Request, bool) {
+	r.Header.Del("Mattermost-User-ID")
+	uid := userID(r)
+	if uid == "" {
+		token := extractBearer(r)
+		if token != "" {
+			claims, err := h.auth.Authenticate(r.Context(), token)
+			if err != nil {
+				writeError(w, http.StatusUnauthorized, "api.context.session_expired.app_error", "invalid token")
+				return nil, false
+			}
+			uid = claims.UserID
+			r = r.WithContext(SetUserIDOnContext(r.Context(), uid))
+		}
+	}
+	// Never expose a reusable Moyro credential to the native process. Plugins
+	// receive only the verified user id, matching Mattermost's server contract.
+	r.Header.Del("Authorization")
+	if uid != "" {
+		r.Header.Set("Mattermost-User-ID", uid)
+	}
+	return r, true
+}
+
+func (h *handlers) servePluginWebapp(w http.ResponseWriter, r *http.Request) {
+	r, ok := h.authenticatePluginRequest(w, r)
+	if !ok {
+		return
+	}
+	if userID(r) == "" {
+		writeError(w, http.StatusUnauthorized, "api.context.session_expired.app_error", "missing token")
+		return
+	}
+	pluginID := chi.URLParam(r, "pluginID")
+	file, info, release, found := h.host.OpenWebappBundle(pluginID)
+	if !found {
+		http.NotFound(w, r)
+		return
+	}
+	defer release()
+	defer file.Close()
+	w.Header().Set("Content-Type", "text/javascript; charset=utf-8")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().Set("Cache-Control", "private, max-age=300")
+	http.ServeContent(w, r, info.Name(), info.ModTime(), file)
+}
+
+func (h *handlers) servePluginHTTP(w http.ResponseWriter, r *http.Request) {
+	r, ok := h.authenticatePluginRequest(w, r)
+	if !ok {
+		return
+	}
+	pluginID := chi.URLParam(r, "pluginID")
+	remainder := chi.URLParam(r, "*")
+	if remainder == "" {
+		remainder = "/"
+	} else if !strings.HasPrefix(remainder, "/") {
+		remainder = "/" + remainder
+	}
+	clone := r.Clone(r.Context())
+	clone.URL.Path = remainder
+	clone.URL.RawPath = ""
+	clone.RequestURI = clone.URL.RequestURI()
+	clone.Body = http.MaxBytesReader(w, clone.Body, 8<<20)
+	h.host.ServePluginHTTP(w, clone, pluginID)
 }
 
 // ---- Audit ----

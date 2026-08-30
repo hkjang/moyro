@@ -5,10 +5,12 @@ set -euo pipefail
 
 BASE="${BASE:-http://localhost:8065}"
 API="$BASE/api/v4"
-SUFFIX="$(date +%s)"
+SUFFIX="$(date +%s)-$$"
 USER="tester_$SUFFIX"
 EMAIL="tester_$SUFFIX@example.com"
-PASS="P@ssw0rd123"
+PASS="P@ssw0rd1234"
+ADMIN_LOGIN="${ADMIN_LOGIN:-admin@moyro.local}"
+ADMIN_PASSWORD="${ADMIN_PASSWORD:-MoyroRelease!2026}"
 
 say() { printf "\033[36m• %s\033[0m\n" "$*"; }
 fail() { printf "\033[31m✗ %s\033[0m\n" "$*"; exit 1; }
@@ -18,12 +20,32 @@ say "ping"
 curl -fsS "$API/system/ping" | grep -q '"status":"OK"' || fail "ping"
 ok "ping"
 
-say "register"
+say "bootstrap admin login"
+ADMIN_SESSION=$(curl -fsS -X POST "$API/users/login" \
+  -H "Content-Type: application/json" \
+  -d "{\"login_id\":\"$ADMIN_LOGIN\",\"password\":\"$ADMIN_PASSWORD\"}")
+ADMIN_TOKEN=$(printf '%s' "$ADMIN_SESSION" | sed -n 's/.*"token":"\([^"]*\)".*/\1/p')
+[ -n "$ADMIN_TOKEN" ] || fail "bootstrap admin login — no token"
+admin_hdr="Authorization: Bearer $ADMIN_TOKEN"
+ok "bootstrap admin login"
+
+say "create single-use invite"
+BOOTSTRAP_TEAMS=$(curl -fsS "$API/users/me/teams" -H "$admin_hdr")
+BOOTSTRAP_TEAM_ID=$(printf '%s' "$BOOTSTRAP_TEAMS" | sed -n 's/.*"id":"\([^"]*\)".*/\1/p')
+[ -n "$BOOTSTRAP_TEAM_ID" ] || fail "bootstrap team lookup"
+INVITE=$(curl -fsS -X POST "$API/teams/$BOOTSTRAP_TEAM_ID/invites" \
+  -H "$admin_hdr" -H "Content-Type: application/json" \
+  -d '{"max_uses":1,"ttl_seconds":3600}')
+INVITE_ID=$(printf '%s' "$INVITE" | sed -n 's/.*"id":"\([^"]*\)".*/\1/p')
+[ -n "$INVITE_ID" ] || fail "invite create"
+ok "single-use invite"
+
+say "register with invite"
 REG=$(curl -fsS -X POST "$API/users" \
   -H "Content-Type: application/json" \
-  -d "{\"username\":\"$USER\",\"email\":\"$EMAIL\",\"password\":\"$PASS\"}")
+  -d "{\"username\":\"$USER\",\"email\":\"$EMAIL\",\"password\":\"$PASS\",\"invite_id\":\"$INVITE_ID\"}")
 echo "$REG" | grep -q '"id"' || fail "register"
-ok "register"
+ok "register with invite"
 
 say "login"
 LOGIN=$(curl -fsS -X POST "$API/users/login" \

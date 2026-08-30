@@ -16,8 +16,8 @@ import (
 const DefaultRoot = "/opt/moyro/web"
 
 // Handler serves immutable built assets and falls back to index.html for
-// extensionless browser routes. Missing assets deliberately stay 404 so a
-// failed JavaScript request is never answered with HTML.
+// browser routes. Missing assets deliberately stay 404 so a failed JavaScript
+// request is never answered with HTML.
 type Handler struct {
 	files      fs.FS
 	fileServer http.Handler
@@ -84,11 +84,23 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Mattermost plugin IDs conventionally contain dots. The final segment in
+	// this route is an SPA parameter, not a filename extension.
+	if pluginSettingsRoute(clean) {
+		h.serveIndex(w, r)
+		return
+	}
 	if clean == "/assets" || strings.HasPrefix(clean, "/assets/") || path.Ext(clean) != "" {
 		http.NotFound(w, r)
 		return
 	}
 	h.serveIndex(w, r)
+}
+
+func pluginSettingsRoute(clean string) bool {
+	const prefix = "/settings/plugins/"
+	pluginID, ok := strings.CutPrefix(clean, prefix)
+	return ok && pluginID != "" && !strings.Contains(pluginID, "/")
 }
 
 func reservedRoute(clean string) bool {

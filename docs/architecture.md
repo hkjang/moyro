@@ -57,16 +57,25 @@ Important packages:
 
 Entry point: `webapp/src/main.tsx`.
 
-The React app initializes the plugin runtime, mounts Redux, and switches between
-login and chat views. Login, workspace, personal settings, and each
-administrator page are route-level lazy modules. `ChatView.tsx` remains the
-large workspace shell and is held behind a source-size ratchet while its
-sidebar, messages, composer, thread, and personal-workflow features are split
-incrementally.
+The React app initializes the plugin runtime, mounts Redux, and lazy-loads
+login, Moyro Flow, workspace, personal settings, and administrator routes.
+`ProductShell` owns global desktop/mobile navigation. The workspace keeps
+`ChatView.tsx` as its orchestration boundary while rendering the sidebar,
+header, message timeline, composer, and context panel through feature modules;
+CI now holds that boundary below a 150 KB source-size ratchet.
 
 Important modules:
 
 - `api/client.ts` is the typed API boundary for HTTP and WebSocket URLs.
+- `features/theme/ThemePreferenceProvider.tsx` is the single owner of MUI,
+  first-paint, local-cache, and server-backed theme state.
+- `features/shell/ProductShell.tsx` owns the global rail and mobile bottom
+  navigation shared by Flow, workspace, settings, and admin routes.
+- `features/flow` owns Today, unified inbox, My Work, approvals, AI assistant,
+  and team-scoped search. Unsupported task, decision, RAG, and durable
+  per-event inbox contracts are shown as prepared capabilities, not fake data.
+- `features/workspace` owns the context sidebar, channel header, flat message
+  timeline, scoped-draft composer, and thread/summary/file/info context panel.
 - `hooks/useWebsocket.ts` owns reconnect and stale-socket guards.
 - `components/MessageBody.tsx` renders sanitized Markdown and link previews.
 - `components/IntegrationsPanel.tsx` exposes admin integration management.

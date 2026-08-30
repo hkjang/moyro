@@ -1,64 +1,86 @@
-# User Design Rules
+# Moyro Flow Design Rules
 
-Status date: 2026-04-29
+Status date: 2026-08-30
 
-The user-facing chat workspace follows a Mattermost-aligned product direction:
-dark channel navigation, white message surfaces, compact headers, predictable
-RHS behavior, and low-decoration density for long chat sessions.
+Moyro keeps familiar channel, message, thread, and keyboard behavior at its
+Mattermost-compatible boundary. Its product interface is independently
+designed as an enterprise workflow hub for reading conversations, making
+decisions, and executing approved work.
 
-## Visual Principles
+## Product Principles
 
-- Mattermost-like shell: dark channel sidebar, white chat/RHS surfaces, and
-  clear one-pixel panel borders scoped to `.chat-shell`.
-- Reading first: messages use soft depth, compact metadata, and generous line
-  height.
-- Calm navigation: sidebar rows are quiet by default and clear when active.
-- Daily panels first: left navigation and RHS thread panels should prioritize
-  scan speed, stable widths, sticky account controls, and readable badges.
-- Focused composition: the composer is visually stable and easy to return to.
-- Restrained accents: Mattermost-style blue for primary action, red only for
-  mentions, destructive states, or urgent attention.
-- Scoped implementation: user chat styling must not leak into Admin or Login.
+- **Calm:** use low-saturation surfaces, light borders, and restrained motion
+  so long work sessions remain readable.
+- **Context:** keep a conversation's thread, AI summary, files, links, tasks,
+  decisions, and channel information near the source instead of creating
+  disconnected feature islands.
+- **Flow:** move from message to reminder, approval, or external action without
+  hiding the originating actor and channel.
+- **Trust:** show whether data is live, unavailable, permission-limited, or only
+  prepared. AI output identifies its scope and links only to source messages
+  actually supplied to the model.
+- **Focus:** Today, Inbox, and My Work separate items requiring attention from
+  ordinary channel browsing.
+- **Familiarity:** channel selection, flat message rows, threads, reactions,
+  composer shortcuts, and Mattermost-shaped API behavior remain predictable.
 
-## Current Tokens
+## Design-token ownership
 
-User-specific CSS variables live under `.chat-shell`:
+`webapp/src/theme/flowTokens.ts` is the TypeScript source for MUI palettes and
+semantic roles. `webapp/src/styles/tokens.css` exposes the corresponding CSS
+custom properties for legacy and extracted workspace styles. Components must
+use semantic roles rather than inventing screen-local brand colors.
 
-- `--chat-bg`, `--chat-bg-soft`
-- `--chat-surface`, `--chat-surface-solid`, `--chat-surface-soft`
-- `--chat-ink`, `--chat-muted`, `--chat-line`
-- `--chat-accent`, `--chat-accent-2`, `--chat-coral`
-- `--chat-sidebar`, `--chat-sidebar-2`, `--chat-sidebar-text`
-- `--chat-warning`, `--chat-danger`
+Core roles are:
 
-The chat workspace remaps existing shared variables such as `--bg`, `--fg`,
-`--muted`, `--accent`, and input colors inside `.chat-shell`, so existing
-components inherit the cleaner visual language without JSX churn.
+- brand `#3157D5`, brand hover `#203E9F`
+- navigation `#15213D`
+- AI `#6D55C5`
+- automation/MCP `#0F766E`
+- approval attention `#B76E00`
+- success `#218358`, danger `#C2414B`
+- page `#F6F7F9`, surface `#FFFFFF`, border `#DFE3EA`
+- text `#182033`, secondary text `#667085`
 
-## Panel Rules
+`ThemePreferenceProvider` is the only runtime owner of light, dark, or system
+mode. It synchronizes MUI color schemes, the first-paint storage key, and the
+Mattermost-shaped `display_settings/theme` preference. Feature components must
+not write `html[data-theme]` directly.
 
-- Left sidebar uses a stable desktop width and grouped section dividers so
-  teams, saved/scheduled shortcuts, favorites, channels, and DMs scan quickly.
-- Active sidebar rows must be stronger than hover rows and include both color
-  and shape cues for accessibility.
-- Sidebar account/status controls stay visually anchored at the bottom on
-  desktop, but become static on tablet/mobile to avoid trapping scroll space.
-- Unread, mention, scheduled, and favorite affordances must remain compact and
-  legible without resizing rows.
-- RHS thread panels use full-width message rows, a clear root/replies divider,
-  a compact sticky-feeling header, and a stable composer area.
-- Mobile and tablet layouts keep the sidebar as a top navigation pane and turn
-  RHS into a focused overlay rather than shrinking message content too far.
+## Layout rules
 
-## Mattermost Alignment Rules
+- Desktop uses a 60–68 px global rail, a 264–288 px workspace sidebar, a
+  flexible message region, and an optional 380–440 px context panel.
+- The global rail changes product scope; the context sidebar changes team,
+  channel, or direct conversation inside the workspace.
+- Messages remain flat rows rather than speech bubbles. Hover and focus expose
+  compact communication actions; workflow actions live in the more menu.
+- The right side is one context panel with thread, summary, files, and channel
+  information—not several competing drawers.
+- My Work owns saved messages, scheduled posts, and reminders. They must not be
+  styled or routed as pseudo-channels.
+- Approval is a global work surface, not a personal-setting subsection.
+- Admin entry pages lead with actual operating state and unknown/error states,
+  not only navigation cards or optimistic green indicators.
 
-- Avoid decorative gradients, heavy shadows, and large rounded cards in the
-  user chat shell; Mattermost's current web UI reads as product-dense and
-  utility-first.
-- Main message lists should behave like rows, not isolated speech bubbles.
-  Hover may reveal a light row highlight, but default messages stay flat.
-- RHS thread panels should feel like a first-class work panel: compact header,
-  visible root message, simple reply divider, and stable composer.
-- Sidebar affordances should match Mattermost's channel workflow: favorites,
-  unread counts, direct messages, saved/scheduled shortcuts, and quick switcher
-  must remain scannable without visual noise.
+## Responsive and accessibility rules
+
+- Mobile shows Today, Workspace, Inbox, Search, and More in a fixed bottom
+  navigation. Only one primary pane is visible at a time.
+- Mobile workspace navigation and context surfaces behave as modal, full-screen
+  tasks with Escape handling, focus containment, and focus return.
+- Desktop targets are at least 36 px; mobile touch targets are at least 44 px.
+- Every state combines text or icon shape with color and meets WCAG AA contrast.
+- Channel selection, search, message composition, context tabs, and approval
+  actions must be operable by keyboard. Ordinary message rows are not all Tab
+  stops; exact-source navigation may focus a row programmatically.
+- Reduced-motion and forced-colors preferences are honored. At 200% zoom, core
+  work remains available without horizontal page scrolling.
+
+## Compatibility boundary
+
+Visual similarity to Mattermost is not a requirement. Compatibility is tested
+at REST/JSON route shape, WebSocket events, integrations, and familiar client
+workflow behavior. Decorative gradients, generic AI sparkle treatments, false
+capabilities, and copied cloud-only screens are outside the Moyro Flow design
+language.

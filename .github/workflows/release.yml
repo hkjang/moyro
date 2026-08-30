@@ -22,6 +22,20 @@ jobs:
   release:
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    services:
+      postgres:
+        image: postgres:16-alpine@sha256:cf78e76683b9ca8c5733cbbdce6c9262b45b6767934dd0a95e671f9a0fc20685
+        env:
+          POSTGRES_USER: moyro_release_test
+          POSTGRES_PASSWORD: moyro_release_test_password
+          POSTGRES_DB: moyro_release_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U moyro_release_test -d moyro_release_test"
+          --health-interval 2s
+          --health-timeout 5s
+          --health-retries 15
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -47,6 +61,11 @@ jobs:
           fi
           git rev-parse --verify "refs/tags/${version}" >/dev/null
           commit="$(git rev-list -n 1 "refs/tags/${version}")"
+          main_commit="$(git rev-parse origin/main)"
+          if ! git merge-base --is-ancestor "${commit}" "${main_commit}"; then
+            echo "release tag must point to a commit on origin/main" >&2
+            exit 1
+          fi
           echo "version=${version}" >> "${GITHUB_OUTPUT}"
           echo "archive=moyro-${version}.tar.gz" >> "${GITHUB_OUTPUT}"
           echo "commit=${commit}" >> "${GITHUB_OUTPUT}"
@@ -67,9 +86,25 @@ jobs:
           cache: npm
           cache-dependency-path: webapp/package-lock.json
 
-      - name: Test Go modules
+      - name: Fetch checksum-pinned Mattermost plugin fixtures
+        id: plugin-fixtures
         run: |
-          (cd server && go test -race ./... && go vet ./...)
+          fixture_dir="${RUNNER_TEMP}/mattermost-plugin-fixtures"
+          bash scripts/fetch-plugin-test-fixtures.sh "${fixture_dir}"
+          echo "botman=${fixture_dir}/com.mattermost.botman-0.1.2.tar.gz" >> "${GITHUB_OUTPUT}"
+          echo "chatdump=${fixture_dir}/com.hkjang.mattermost-chatdump-plugin-0.5.1.tar.gz" >> "${GITHUB_OUTPUT}"
+          echo "echosummary=${fixture_dir}/com.mattermost.echosummary-0.6.4.tar.gz" >> "${GITHUB_OUTPUT}"
+          echo "langflow=${fixture_dir}/com.mattermost.langflow-0.1.20.tar.gz" >> "${GITHUB_OUTPUT}"
+
+      - name: Test Go modules
+        env:
+          MOYRO_TEST_POSTGRES_DSN: postgres://moyro_release_test:moyro_release_test_password@127.0.0.1:5432/moyro_release_test?sslmode=disable
+          MOYRO_TEST_BOTMAN_PLUGIN_ARCHIVE: ${{ steps.plugin-fixtures.outputs.botman }}
+          MOYRO_TEST_CHATDUMP_PLUGIN_ARCHIVE: ${{ steps.plugin-fixtures.outputs.chatdump }}
+          MOYRO_TEST_ECHOSUMMARY_PLUGIN_ARCHIVE: ${{ steps.plugin-fixtures.outputs.echosummary }}
+          MOYRO_TEST_LANGFLOW_PLUGIN_ARCHIVE: ${{ steps.plugin-fixtures.outputs.langflow }}
+        run: |
+          (cd server && go test -race -p 1 ./... && go vet ./...)
           (cd plugin-sdk/go && go test -race ./... && go vet ./...)
 
       - name: Scan reachable Go vulnerabilities
@@ -82,7 +117,9 @@ jobs:
           npm ci
           npm audit --omit=dev --audit-level=high
           npm audit --audit-level=high
+          npm test
           npm run typecheck
+          npm run build
 
       - name: Build release image
         id: image
@@ -117,6 +154,7 @@ jobs:
         env:
           VERSION: ${{ steps.version.outputs.version }}
           MOYRO_E2E_PORT: "18065"
+          MOYRO_PLUGIN_FIXTURE_DIR: ${{ runner.temp }}/mattermost-plugin-fixtures
         run: |
           (cd webapp && npx playwright install --with-deps chromium)
           docker pull postgres:16-alpine@sha256:cf78e76683b9ca8c5733cbbdce6c9262b45b6767934dd0a95e671f9a0fc20685

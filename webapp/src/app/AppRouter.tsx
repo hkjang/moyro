@@ -2,9 +2,30 @@ import { Component, Suspense, lazy, type ComponentType, type ErrorInfo, type Rea
 import { Alert, Box, Button, CircularProgress, Stack, Typography } from "@mui/material";
 import { Navigate, Outlet, Route, Routes, useLocation } from "react-router-dom";
 import { useSelector } from "react-redux";
-import { useSystemInfo } from "@/features/system/SystemInfoContext";
 import { useAdminAccess } from "@/features/admin/AdminAccessContext";
 import type { RootState } from "@/store";
+
+const ProductShell = lazy(() =>
+  import("@/features/shell/ProductShell").then((module) => ({ default: module.ProductShell })),
+);
+const TodayPage = lazy(() =>
+  import("@/features/flow/TodayPage").then((module) => ({ default: module.TodayPage })),
+);
+const UnifiedInboxPage = lazy(() =>
+  import("@/features/flow/UnifiedInboxPage").then((module) => ({ default: module.UnifiedInboxPage })),
+);
+const MyWorkPage = lazy(() =>
+  import("@/features/flow/MyWorkPage").then((module) => ({ default: module.MyWorkPage })),
+);
+const ApprovalCenterPage = lazy(() =>
+  import("@/features/flow/ApprovalCenterPage").then((module) => ({ default: module.ApprovalCenterPage })),
+);
+const AIAssistantPage = lazy(() =>
+  import("@/features/flow/AIAssistantPage").then((module) => ({ default: module.AIAssistantPage })),
+);
+const GlobalSearchPage = lazy(() =>
+  import("@/features/flow/GlobalSearchPage").then((module) => ({ default: module.GlobalSearchPage })),
+);
 
 const ChatView = lazy(() =>
   import("@/components/ChatView").then((module) => ({ default: module.ChatView })),
@@ -39,6 +60,9 @@ const LegacyAdminRoute = lazy(() =>
 const MCPSettingsPage = lazy(() =>
   import("@/features/admin/MCPSettingsPage").then((module) => ({ default: module.MCPSettingsPage })),
 );
+const PluginManagementPage = lazy(() =>
+  import("@/features/admin/PluginManagementPage").then((module) => ({ default: module.PluginManagementPage })),
+);
 const SiteSettingsPage = lazy(() =>
   import("@/features/admin/SiteSettingsPage").then((module) => ({ default: module.SiteSettingsPage })),
 );
@@ -62,13 +86,8 @@ const PersonalAIPage = lazy(() =>
 const PersonalKeysPage = lazy(() =>
   import("@/features/settings/PersonalKeysPage").then((module) => ({ default: module.PersonalKeysPage })),
 );
-
-const loadApprovalRequestsPages = () => import("@/features/settings/ApprovalRequestsPages");
-const MyApprovalRequestsPage = lazy(() =>
-  loadApprovalRequestsPages().then((module) => ({ default: module.MyApprovalRequestsPage })),
-);
-const ReviewApprovalRequestsPage = lazy(() =>
-  loadApprovalRequestsPages().then((module) => ({ default: module.ReviewApprovalRequestsPage })),
+const PluginUserSettingsPage = lazy(() =>
+  import("@/plugins/PluginUserSettingsPage").then((module) => ({ default: module.PluginUserSettingsPage })),
 );
 
 function RouteLoadingFallback() {
@@ -135,7 +154,7 @@ function RequireAdminAccess() {
   if (!access.loaded) {
     return <div className="chat-empty" role="status">관리 권한을 확인하는 중…</div>;
   }
-  return access.hasAdminAccess ? <Outlet /> : <Navigate to="/workspace" replace />;
+  return access.hasAdminAccess ? <Outlet /> : <Navigate to="/today" replace />;
 }
 
 function RequirePermission({ anyOf, fallback = "/admin/overview" }: { anyOf: readonly string[]; fallback?: string }) {
@@ -146,17 +165,9 @@ function RequirePermission({ anyOf, fallback = "/admin/overview" }: { anyOf: rea
   return access.canAny(anyOf) ? <Outlet /> : <Navigate to={fallback} replace />;
 }
 
-function RequireApprovalEnabled() {
-  const info = useSystemInfo();
-  if (!info.loaded) {
-    return <div className="chat-empty" role="status">서비스 설정을 확인하는 중…</div>;
-  }
-  return info.approval_enabled ? <Outlet /> : <Navigate to="/settings/profile" replace />;
-}
-
-function WorkspaceFallback() {
+function AuthenticatedFallback() {
   const location = useLocation();
-  return <Navigate to="/workspace" replace state={{ invalidPath: location.pathname }} />;
+  return <Navigate to="/today" replace state={{ invalidPath: location.pathname }} />;
 }
 
 export function AppRouter() {
@@ -172,62 +183,75 @@ export function AppRouter() {
 
   return (
     <Routes>
-      <Route path="/" element={<Navigate to="/workspace" replace />} />
-      <Route path="/login" element={<Navigate to="/workspace" replace />} />
-      <Route path="/workspace" element={routeElement(ChatView)} />
-      <Route path="/workspace/:teamId" element={routeElement(ChatView)} />
-      <Route path="/workspace/:teamId/channel/:channelId" element={routeElement(ChatView)} />
-      <Route path="/workspace/:teamId/:view" element={routeElement(ChatView)} />
+      <Route element={routeElement(ProductShell)}>
+        <Route path="/" element={<Navigate to="/today" replace />} />
+        <Route path="/login" element={<Navigate to="/today" replace />} />
+        <Route path="/today" element={routeElement(TodayPage)} />
+        <Route path="/inbox" element={routeElement(UnifiedInboxPage)} />
+        <Route path="/inbox/:tab" element={routeElement(UnifiedInboxPage)} />
+        <Route path="/my-work" element={<Navigate to="/my-work/saved" replace />} />
+        <Route path="/my-work/:tab" element={routeElement(MyWorkPage)} />
+        <Route path="/approvals" element={<Navigate to="/approvals/mine" replace />} />
+        <Route path="/approvals/:tab" element={routeElement(ApprovalCenterPage)} />
+        <Route element={<RequirePermission anyOf={["use_ai"]} fallback="/today" />}>
+          <Route path="/assistant" element={routeElement(AIAssistantPage)} />
+        </Route>
+        <Route path="/search" element={routeElement(GlobalSearchPage)} />
 
-      <Route path="/settings" element={routeElement(PersonalSettingsLayout)}>
-        <Route index element={<Navigate to="profile" replace />} />
-        <Route path="profile" element={routeElement(PersonalProfilePage)} />
-        <Route path="appearance" element={routeElement(AppearanceSettingsPage)} />
-        <Route path="notifications" element={routeElement(NotificationSettingsPage)} />
-        <Route path="security/sessions" element={routeElement(SessionSettingsPage)} />
-        <Route element={<RequirePermission anyOf={["manage_own_api_keys"]} fallback="/settings/profile" />}>
-          <Route path="developer/keys" element={routeElement(PersonalKeysPage)} />
-        </Route>
-        <Route element={<RequirePermission anyOf={["use_ai"]} fallback="/settings/profile" />}>
-          <Route path="ai" element={routeElement(PersonalAIPage)} />
-        </Route>
-        <Route element={<RequireApprovalEnabled />}>
-          <Route element={<RequirePermission anyOf={["request_approval"]} fallback="/settings/profile" />}>
-            <Route path="approvals/mine" element={routeElement(MyApprovalRequestsPage)} />
+        <Route path="/workspace" element={routeElement(ChatView)} />
+        <Route path="/workspace/:teamId" element={routeElement(ChatView)} />
+        <Route path="/workspace/:teamId/channel/:channelId" element={routeElement(ChatView)} />
+        <Route path="/workspace/:teamId/saved" element={<Navigate to="/my-work/saved" replace />} />
+        <Route path="/workspace/:teamId/scheduled" element={<Navigate to="/my-work/scheduled" replace />} />
+
+        <Route path="/settings/approvals/mine" element={<Navigate to="/approvals/mine" replace />} />
+        <Route path="/settings/approvals/review" element={<Navigate to="/approvals/review" replace />} />
+        <Route path="/settings" element={routeElement(PersonalSettingsLayout)}>
+          <Route index element={<Navigate to="profile" replace />} />
+          <Route path="profile" element={routeElement(PersonalProfilePage)} />
+          <Route path="appearance" element={routeElement(AppearanceSettingsPage)} />
+          <Route path="notifications" element={routeElement(NotificationSettingsPage)} />
+          <Route path="security/sessions" element={routeElement(SessionSettingsPage)} />
+          <Route element={<RequirePermission anyOf={["manage_own_api_keys"]} fallback="/settings/profile" />}>
+            <Route path="developer/keys" element={routeElement(PersonalKeysPage)} />
           </Route>
-          <Route element={<RequirePermission anyOf={["review_approval"]} fallback="/settings/profile" />}>
-            <Route path="approvals/review" element={routeElement(ReviewApprovalRequestsPage)} />
+          <Route element={<RequirePermission anyOf={["use_ai"]} fallback="/settings/profile" />}>
+            <Route path="ai" element={routeElement(PersonalAIPage)} />
+          </Route>
+          <Route path="plugins/:pluginId" element={routeElement(PluginUserSettingsPage)} />
+        </Route>
+
+        <Route element={<RequireAdminAccess />}>
+          <Route element={<RequirePermission anyOf={["manage_system"]} />}>
+            <Route path="/admin/operations" element={routeElement(LegacyAdminRoute)} />
+          </Route>
+          <Route path="/admin" element={routeElement(AdminLayout)}>
+            <Route index element={<Navigate to="overview" replace />} />
+            <Route path="overview" element={routeElement(AdminOverviewPage)} />
+            <Route element={<RequirePermission anyOf={["manage_settings"]} />}>
+              <Route path="site" element={routeElement(SiteSettingsPage)} />
+              <Route path="integrations/mcp" element={routeElement(MCPSettingsPage)} />
+            </Route>
+            <Route element={<RequirePermission anyOf={["manage_plugins"]} />}>
+              <Route path="integrations/plugins" element={routeElement(PluginManagementPage)} />
+            </Route>
+            <Route element={<RequirePermission anyOf={["manage_oidc"]} />}>
+              <Route path="auth/keycloak" element={routeElement(KeycloakSettingsPage)} />
+            </Route>
+            <Route element={<RequirePermission anyOf={["manage_ai"]} />}>
+              <Route path="ai/providers" element={routeElement(AIProviderSettingsPage)} />
+            </Route>
+            <Route element={<RequirePermission anyOf={["manage_key_permissions", "manage_roles", "manage_api_keys"]} />}>
+              <Route path="security/keys" element={routeElement(KeyPolicyPage)} />
+            </Route>
+            <Route element={<RequirePermission anyOf={["manage_approval_policies"]} />}>
+              <Route path="workflows/review" element={routeElement(ApprovalWorkflowPage)} />
+            </Route>
           </Route>
         </Route>
+
+        <Route path="*" element={<AuthenticatedFallback />} />
       </Route>
-
-      <Route element={<RequireAdminAccess />}>
-        <Route element={<RequirePermission anyOf={["manage_system"]} />}>
-          <Route path="/admin/operations" element={routeElement(LegacyAdminRoute)} />
-        </Route>
-        <Route path="/admin" element={routeElement(AdminLayout)}>
-          <Route index element={<Navigate to="overview" replace />} />
-          <Route path="overview" element={routeElement(AdminOverviewPage)} />
-          <Route element={<RequirePermission anyOf={["manage_settings"]} />}>
-            <Route path="site" element={routeElement(SiteSettingsPage)} />
-            <Route path="integrations/mcp" element={routeElement(MCPSettingsPage)} />
-          </Route>
-          <Route element={<RequirePermission anyOf={["manage_oidc"]} />}>
-            <Route path="auth/keycloak" element={routeElement(KeycloakSettingsPage)} />
-          </Route>
-          <Route element={<RequirePermission anyOf={["manage_ai"]} />}>
-            <Route path="ai/providers" element={routeElement(AIProviderSettingsPage)} />
-          </Route>
-          <Route element={<RequirePermission anyOf={["manage_key_permissions", "manage_roles", "manage_api_keys"]} />}>
-            <Route path="security/keys" element={routeElement(KeyPolicyPage)} />
-          </Route>
-          <Route element={<RequirePermission anyOf={["manage_approval_policies"]} />}>
-            <Route path="workflows/review" element={routeElement(ApprovalWorkflowPage)} />
-          </Route>
-        </Route>
-      </Route>
-
-      <Route path="*" element={<WorkspaceFallback />} />
     </Routes>
   );
 }

@@ -14,10 +14,11 @@ import {
 } from "@mui/material";
 import { useEffect, useState } from "react";
 import { useDispatch, useSelector } from "react-redux";
-import { api, prefsApi, type SessionRow } from "@/api/client";
+import { api, type SessionRow } from "@/api/client";
 import { AuthenticatedImage, isExternalImageURL } from "@/components/AuthenticatedMedia";
 import { SettingsCard, SettingsPage } from "@/components/settings/SettingsPrimitives";
 import { useSystemInfo } from "@/features/system/SystemInfoContext";
+import { useThemePreference } from "@/features/theme/ThemePreferenceProvider";
 import type { RootState } from "@/store";
 import { setAuth } from "@/store/authSlice";
 
@@ -95,38 +96,23 @@ export function PersonalProfilePage() {
   );
 }
 
-type ThemeChoice = "light" | "dark" | "system";
-
 export function AppearanceSettingsPage() {
-  const token = useSelector((state: RootState) => state.auth.token);
-  const user = useSelector((state: RootState) => state.auth.user);
-  const [theme, setTheme] = useState<ThemeChoice>(() => {
-    const value = window.localStorage.getItem("moyro:theme");
-    return value === "light" || value === "dark" ? value : "system";
-  });
+  const { theme, setTheme } = useThemePreference();
   const [saved, setSaved] = useState("");
 
-  async function apply(next: ThemeChoice) {
-    setTheme(next);
-    window.localStorage.setItem("moyro:theme", next);
-    const resolved = next === "system"
-      ? window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light"
-      : next;
-    document.documentElement.setAttribute("data-theme", resolved);
-    if (token && user) {
-      try {
-        await prefsApi.upsert(token, [{ user_id: user.id, category: "display_settings", name: "theme", value: next }], user.id);
-        setSaved("모든 기기에 적용할 화면 설정을 저장했습니다.");
-      } catch (err) {
-        setSaved(err instanceof Error ? err.message : "로컬 화면에만 적용했습니다.");
-      }
+  async function apply(next: "light" | "dark" | "system") {
+    try {
+      await setTheme(next);
+      setSaved("모든 기기에 적용할 화면 설정을 저장했습니다.");
+    } catch (err) {
+      setSaved(err instanceof Error ? `${err.message} 로컬 화면에는 적용했습니다.` : "로컬 화면에만 적용했습니다.");
     }
   }
 
   return (
     <SettingsPage title="화면" description="긴 대화에서도 읽기 편한 글꼴과 색상 모드를 선택합니다.">
       <SettingsCard title="테마">
-        <RadioGroup value={theme} onChange={(event) => void apply(event.target.value as ThemeChoice)}>
+        <RadioGroup value={theme} onChange={(event) => void apply(event.target.value as "light" | "dark" | "system")}>
           <FormControlLabel value="system" control={<Radio />} label="시스템 설정 따르기" />
           <FormControlLabel value="light" control={<Radio />} label="밝게" />
           <FormControlLabel value="dark" control={<Radio />} label="어둡게" />

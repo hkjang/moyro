@@ -199,6 +199,11 @@ func New(cfg *config.Config, db *store.DB, hub *ws.Hub, host *pluginhost.Host, l
 		Logger:             logger,
 		IncrementPostCount: metrics.IncPostsCreated,
 	})
+	// Mattermost plugins must traverse the same post command, storage,
+	// websocket, and audit paths as REST callers. Binding here keeps pluginhost
+	// free of HTTP construction concerns while ensuring SourcePlugin posts get
+	// common authorization, hooks, unread updates, and provenance.
+	host.BindApplicationServices(postCommandSvc, fileSvc, hub, auditSvc)
 	slashSvc := slashcmd.New(postCommandSvc, channelSvc, statusSvc, &pluginCommandAdapter{host: host})
 	incomingSvc := webhooks.NewIncoming(db, postCommandSvc)
 
@@ -349,6 +354,17 @@ func New(cfg *config.Config, db *store.DB, hub *ws.Hub, host *pluginhost.Host, l
 		return setPrincipalOnContext(ctx, rbac.Principal{
 			UserID: userID, CredentialID: credentialID,
 		})
+	})
+
+	// Mattermost-compatible plugin surface. Authentication is optional at
+	// this boundary because a plugin may implement its own ingestion token;
+	// supplied Moyro credentials are nevertheless validated and converted to
+	// a trusted Mattermost-User-ID by the handler.
+	r.Route("/plugins/{pluginID}", func(r chi.Router) {
+		r.Use(patMW)
+		r.Get("/webapp.js", h.servePluginWebapp)
+		r.Handle("/", http.HandlerFunc(h.servePluginHTTP))
+		r.Handle("/*", http.HandlerFunc(h.servePluginHTTP))
 	})
 
 	r.Route("/api/v4", func(r chi.Router) {
@@ -1089,6 +1105,7 @@ func New(cfg *config.Config, db *store.DB, hub *ws.Hub, host *pluginhost.Host, l
 			r.Get("/plugins/statuses", h.listPluginStatuses)
 			r.Get("/plugins/webapp", h.listPluginWebapp)
 			r.Get("/plugins/marketplace", h.listPluginMarketplace)
+			h.mountPluginManagementRoutes(r)
 
 			// Personal access tokens — self-issue allowed. The handler
 			// performs the admin/self check itself since chi can't express
@@ -1096,9 +1113,8 @@ func New(cfg *config.Config, db *store.DB, hub *ws.Hub, host *pluginhost.Host, l
 			r.Post("/users/{userID}/tokens", h.createToken)
 			r.Get("/users/{userID}/tokens", h.listTokens)
 
-			// Operator surfaces — restricted to system_admin so a
-			// regular user can't browse audit trails or the plugin
-			// inventory.
+			// Remaining operator surfaces stay restricted to system_admin;
+			// plugin inventory and lifecycle routes use manage_plugins above.
 			r.Group(func(r chi.Router) {
 				r.Use(h.requireRole("system_admin"))
 				r.Get("/config/environment", h.getEnvironmentConfig)
@@ -1106,7 +1122,6 @@ func New(cfg *config.Config, db *store.DB, hub *ws.Hub, host *pluginhost.Host, l
 				r.Put("/config", h.putConfig)
 				r.Put("/config/patch", h.patchConfig)
 				r.Post("/config/reload", h.reloadConfig)
-				r.Get("/plugins", h.listPlugins)
 				r.Get("/audit/logs", h.listAudit)
 				r.Get("/audits", h.listAudit)
 				r.Get("/users/{userID}/audits", h.listUserAudits)
@@ -1129,10 +1144,6 @@ func New(cfg *config.Config, db *store.DB, hub *ws.Hub, host *pluginhost.Host, l
 				r.Post("/jobs/{jobID}/cancel", h.cancelJob)
 				r.Get("/jobs/{jobID}/download", h.downloadJob)
 				r.Get("/jobs/type/{jobType}", h.listJobsByType)
-				r.Post("/plugins", h.uploadPlugin)
-				r.Delete("/plugins/{pluginID}", h.deletePlugin)
-				r.Post("/plugins/{pluginID}/enable", h.enablePlugin)
-				r.Post("/plugins/{pluginID}/disable", h.disablePlugin)
 				r.Post("/plugins/install_from_url", h.installPluginFromURL)
 				r.Post("/plugins/marketplace", h.installPluginFromMarketplace)
 				r.Get("/plugins/marketplace/first_admin_visit", h.getMarketplaceFirstAdminVisit)

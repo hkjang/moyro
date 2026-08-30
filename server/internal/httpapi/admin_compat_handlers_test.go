@@ -46,8 +46,8 @@ func TestAdminCompatConfigSnapshot(t *testing.T) {
 	if got["PluginSettings"]["Enable"] != true {
 		t.Fatalf("PluginSettings.Enable = %#v, want true", got["PluginSettings"]["Enable"])
 	}
-	if got["PluginSettings"]["EnableUploads"] != false {
-		t.Fatalf("PluginSettings.EnableUploads = %#v, want false", got["PluginSettings"]["EnableUploads"])
+	if got["PluginSettings"]["EnableUploads"] != true {
+		t.Fatalf("PluginSettings.EnableUploads = %#v, want true", got["PluginSettings"]["EnableUploads"])
 	}
 }
 
@@ -108,10 +108,6 @@ func TestAdminCompatUnsupportedFeatureMutationsReturnAppErrors(t *testing.T) {
 		path    string
 		wantID  string
 	}{
-		{"plugin upload", h.uploadPlugin, http.MethodPost, "/api/v4/plugins", "api.plugin.upload.not_supported.app_error"},
-		{"plugin delete", h.deletePlugin, http.MethodDelete, "/api/v4/plugins/example", "api.plugin.delete.not_supported.app_error"},
-		{"plugin enable", h.enablePlugin, http.MethodPost, "/api/v4/plugins/example/enable", "api.plugin.enable.not_supported.app_error"},
-		{"plugin disable", h.disablePlugin, http.MethodPost, "/api/v4/plugins/example/disable", "api.plugin.disable.not_supported.app_error"},
 		{"plugin URL install", h.installPluginFromURL, http.MethodPost, "/api/v4/plugins/install_from_url", "api.plugin.install_from_url.not_supported.app_error"},
 		{"plugin marketplace install", h.installPluginFromMarketplace, http.MethodPost, "/api/v4/plugins/marketplace", "api.plugin.install_marketplace.not_supported.app_error"},
 		{"plugin marketplace preference", h.saveMarketplaceFirstAdminVisit, http.MethodPost, "/api/v4/plugins/marketplace/first_admin_visit", "api.plugin.marketplace_preference.not_supported.app_error"},

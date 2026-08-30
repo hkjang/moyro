@@ -1,0 +1,780 @@
+/* Workspace-local structural layer. Existing chat classes remain intact so
+ * message, composer, menu and screenshot contracts continue to work while the
+ * shell is split into independently testable slots. */
+
+.workspace-shell.chat-shell {
+  position: relative;
+  grid-template-columns: minmax(272px, 292px) minmax(0, 1fr) auto;
+  grid-template-rows: minmax(0, 1fr);
+  grid-template-areas: "workspace-sidebar workspace-main workspace-context";
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.workspace-sidebar-slot {
+  grid-area: workspace-sidebar;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.workspace-sidebar-slot > .chat-side {
+  width: 100%;
+  height: 100%;
+}
+
+.workspace-channel-row {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 2px;
+}
+
+.workspace-shell .chat-side .workspace-channel-select.item {
+  width: auto;
+  min-width: 0;
+  flex: 1;
+}
+
+.workspace-channel-label {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workspace-direct-channel-label {
+  margin-left: 2px;
+}
+
+.workspace-shell .chat-side .workspace-channel-favorite.channel-fav {
+  width: 32px;
+  min-width: 32px;
+  height: 32px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  font-size: 18px;
+}
+
+.workspace-channel-row:hover .workspace-channel-favorite,
+.workspace-channel-favorite:focus-visible,
+.workspace-channel-favorite.is-fav {
+  opacity: 1;
+}
+
+.workspace-channel-select:focus-visible,
+.workspace-channel-favorite:focus-visible,
+.workspace-mobile-sidebar-close:focus-visible {
+  outline: 2px solid #fff;
+  outline-offset: -3px;
+}
+
+.workspace-mobile-sidebar-trigger:focus-visible {
+  outline: 2px solid var(--flow-brand, #3157d5);
+  outline-offset: 2px;
+}
+
+.workspace-shell .search-form .search-clear {
+  width: 36px;
+  height: 36px;
+  right: 0;
+  font-size: 18px;
+}
+
+.workspace-main-slot {
+  position: relative;
+  grid-area: workspace-main;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.workspace-main-slot > .chat-main {
+  width: 100%;
+  height: 100%;
+}
+
+.workspace-context-slot {
+  grid-area: workspace-context;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  overflow: hidden;
+}
+
+.workspace-context-slot > .context-panel {
+  height: 100%;
+}
+
+.workspace-shell .context-panel,
+.workspace-shell .context-panel-header,
+.workspace-shell .context-panel .thread-body,
+.workspace-shell .context-panel .composer {
+  border-color: var(--flow-border, #dfe3ea);
+  background: var(--flow-surface, #fff);
+}
+
+.workspace-shell .context-panel .msg:first-child {
+  background: var(--flow-surface-subtle, #f6f7f9);
+}
+
+.workspace-mobile-sidebar-trigger,
+.workspace-mobile-sidebar-close,
+.workspace-sidebar-backdrop {
+  display: none;
+}
+
+.context-panel-content {
+  min-width: 0;
+  min-height: 0;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.context-panel-pane {
+  min-width: 0;
+  min-height: 0;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.context-panel-pane[hidden] {
+  display: none;
+}
+
+.context-panel-tabs {
+  min-width: 0;
+  display: flex;
+  align-items: stretch;
+  overflow-x: auto;
+}
+
+.context-panel-tab {
+  position: relative;
+  min-width: 58px;
+  min-height: 44px;
+  padding: 0 8px;
+  border: 0;
+  background: transparent;
+  color: var(--chat-muted, #667085);
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.context-panel-tab.is-active {
+  color: var(--chat-ink, #182033);
+}
+
+.context-panel-tab.is-active::after {
+  content: "";
+  position: absolute;
+  right: 0;
+  bottom: -6px;
+  left: 0;
+  height: 2px;
+  border-radius: 999px;
+  background: var(--chat-accent, #3157d5);
+}
+
+.context-panel-close.action-btn {
+  flex: 0 0 auto;
+  width: 44px;
+  height: 44px;
+  font-size: 20px;
+}
+
+.channel-context-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.channel-context-action {
+  display: inline-flex;
+  min-width: 36px;
+  min-height: 36px;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  padding: 0 8px;
+  border: 1px solid transparent;
+  border-radius: var(--flow-radius-input, 8px);
+  background: transparent;
+  color: var(--flow-text-muted, #667085);
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.channel-context-action svg {
+  flex: 0 0 auto;
+  font-size: 18px;
+}
+
+.channel-context-action:hover,
+.channel-context-action.is-active {
+  border-color: var(--flow-border, #dfe3ea);
+  background: var(--flow-surface-subtle, #f6f7f9);
+  color: var(--flow-text, #182033);
+}
+
+.channel-context-action.is-active {
+  border-color: color-mix(in srgb, var(--flow-brand, #3157d5) 38%, var(--flow-border, #dfe3ea));
+  color: var(--flow-brand, #3157d5);
+}
+
+.workspace-shell[data-context-open="true"] .channel-context-action > span {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+.workspace-shell[data-context-open="true"] .search-input {
+  min-width: 180px;
+}
+
+/* Mobile context sits above ProductShell navigation. Workspace dialogs still
+ * need to win their own stacking context when opened from a thread action. */
+.workspace-shell[data-context-open="true"] > .modal-backdrop {
+  z-index: 1600;
+}
+
+.workspace-shell[data-context-open="true"] > .reminder-toast-stack {
+  z-index: 1400;
+}
+
+.context-view {
+  min-width: 0;
+  min-height: 0;
+  flex: 1;
+  overflow-y: auto;
+  padding: 18px;
+  color: var(--flow-text, #182033);
+  background: var(--flow-surface, #fff);
+}
+
+.context-view-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.context-view-heading h3,
+.context-sources h4 {
+  margin: 0;
+  color: var(--flow-text, #182033);
+}
+
+.context-view-heading h3 {
+  font-size: 16px;
+}
+
+.context-view-heading p {
+  margin: 5px 0 0;
+  color: var(--flow-text-muted, #667085);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.context-primary-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+
+.context-primary-button,
+.context-secondary-button,
+.context-icon-button {
+  min-height: 44px;
+  border-radius: var(--flow-radius-input, 8px);
+  font-weight: 700;
+}
+
+.context-primary-button,
+.context-secondary-button {
+  padding: 0 14px;
+}
+
+.context-primary-button {
+  border: 1px solid var(--flow-brand-strong, #203e9f);
+  background: var(--flow-brand, #3157d5);
+  color: #fff;
+}
+
+.context-primary-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.context-secondary-button {
+  border: 1px solid var(--flow-border, #dfe3ea);
+  background: var(--flow-surface, #fff);
+  color: var(--flow-text, #182033);
+}
+
+.context-action-note,
+.context-stream-status,
+.context-result-meta,
+.context-file-detail > span {
+  color: var(--flow-text-muted, #667085);
+  font-size: 12px;
+}
+
+.context-action-note {
+  flex: 1 0 100%;
+}
+
+.context-state,
+.context-error,
+.context-warning,
+.context-stream-status {
+  padding: 12px;
+  border: 1px solid var(--flow-border, #dfe3ea);
+  border-radius: var(--flow-radius-card, 10px);
+  background: var(--flow-surface-subtle, #f6f7f9);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.context-state {
+  color: var(--flow-text-muted, #667085);
+}
+
+.context-error {
+  margin-bottom: 12px;
+  border-color: color-mix(in srgb, var(--flow-danger, #c2414b) 38%, var(--flow-border, #dfe3ea));
+  color: var(--flow-danger, #c2414b);
+}
+
+.context-warning {
+  margin-top: 12px;
+  border-color: color-mix(in srgb, var(--flow-warning, #a46000) 42%, var(--flow-border, #dfe3ea));
+  color: var(--flow-warning, #a46000);
+}
+
+.context-stream-status {
+  margin-bottom: 12px;
+  color: var(--flow-brand, #3157d5);
+}
+
+.context-ai-result {
+  padding: 14px;
+  border: 1px solid color-mix(in srgb, var(--flow-ai, #6d55c5) 30%, var(--flow-border, #dfe3ea));
+  border-radius: var(--flow-radius-card, 10px);
+  background: color-mix(in srgb, var(--flow-ai, #6d55c5) 5%, var(--flow-surface, #fff));
+}
+
+.context-result-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.context-result-meta strong {
+  color: var(--flow-ai, #6d55c5);
+  font-size: 13px;
+}
+
+.context-ai-copy {
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+  font-size: 14px;
+  line-height: 1.65;
+}
+
+.context-sources {
+  margin-top: 18px;
+}
+
+.context-sources h4 {
+  font-size: 14px;
+}
+
+.context-sources ol,
+.context-input-sources ol,
+.context-file-list {
+  margin: 10px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.context-sources ol {
+  display: grid;
+  gap: 8px;
+}
+
+.context-input-sources {
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px solid var(--flow-border, #dfe3ea);
+}
+
+.context-input-sources summary {
+  min-height: 44px;
+  color: var(--flow-text-muted, #667085);
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 44px;
+  cursor: pointer;
+}
+
+.context-input-sources > p {
+  margin: 0 0 10px;
+  color: var(--flow-text-muted, #667085);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.context-input-sources ol {
+  display: grid;
+  gap: 8px;
+}
+
+.context-source-link {
+  display: grid;
+  min-height: 44px;
+  gap: 3px;
+  padding: 9px 10px;
+  border: 1px solid var(--flow-border, #dfe3ea);
+  border-radius: var(--flow-radius-input, 8px);
+  color: inherit;
+  text-decoration: none;
+}
+
+.context-source-link:hover {
+  border-color: color-mix(in srgb, var(--flow-brand, #3157d5) 42%, var(--flow-border, #dfe3ea));
+  background: var(--flow-surface-subtle, #f6f7f9);
+}
+
+.context-source-link strong {
+  color: var(--flow-brand, #3157d5);
+  font-size: 12px;
+}
+
+.context-source-link time {
+  color: var(--flow-text-muted, #667085);
+  font-size: 11px;
+}
+
+.context-source-link span {
+  display: -webkit-box;
+  overflow: hidden;
+  color: var(--flow-text, #182033);
+  font-size: 12px;
+  line-height: 1.45;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+}
+
+.context-file-list {
+  display: grid;
+  gap: 8px;
+}
+
+.context-file-item {
+  display: grid;
+  grid-template-columns: 42px minmax(0, 1fr) 44px;
+  align-items: center;
+  gap: 10px;
+  padding: 10px;
+  border: 1px solid var(--flow-border, #dfe3ea);
+  border-radius: var(--flow-radius-card, 10px);
+}
+
+.context-file-icon {
+  display: grid;
+  width: 42px;
+  height: 42px;
+  place-items: center;
+  border-radius: var(--flow-radius-input, 8px);
+  background: var(--flow-surface-subtle, #f6f7f9);
+  color: var(--flow-text-muted, #667085);
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.context-file-detail {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.context-file-detail > strong {
+  overflow: hidden;
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.context-file-detail .context-source-link {
+  display: inline-flex;
+  width: fit-content;
+  min-height: 36px;
+  align-items: center;
+  padding: 0 2px;
+  border: 0;
+  color: var(--flow-brand, #3157d5);
+  font-size: 12px;
+}
+
+.context-icon-button {
+  display: grid;
+  width: 44px;
+  padding: 0;
+  place-items: center;
+  border: 1px solid var(--flow-border, #dfe3ea);
+  background: var(--flow-surface, #fff);
+  color: var(--flow-text, #182033);
+  font-size: 20px;
+}
+
+.context-info-list {
+  display: grid;
+  grid-template-columns: minmax(82px, auto) minmax(0, 1fr);
+  margin: 0;
+  border-top: 1px solid var(--flow-border, #dfe3ea);
+}
+
+.context-info-list dt,
+.context-info-list dd {
+  margin: 0;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--flow-border, #dfe3ea);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.context-info-list dt {
+  padding-right: 12px;
+  color: var(--flow-text-muted, #667085);
+  font-weight: 700;
+}
+
+.context-info-list dd {
+  overflow-wrap: anywhere;
+  color: var(--flow-text, #182033);
+}
+
+.workspace-shell .msg[tabindex="-1"]:focus-visible {
+  outline: 2px solid var(--flow-brand, #3157d5);
+  outline-offset: -2px;
+}
+
+html[data-theme="dark"] .context-panel-tab.is-active {
+  color: #e8eaed;
+}
+
+@media (max-width: 960px) {
+  .workspace-shell.chat-shell {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr);
+    grid-template-areas: "workspace-main";
+  }
+
+  .workspace-sidebar-slot {
+    position: fixed;
+    inset: 0 auto 0 0;
+    z-index: 1400;
+    width: min(336px, calc(100vw - 40px));
+    transform: translateX(-105%);
+    visibility: hidden;
+    transition: transform 160ms ease, visibility 160ms step-end;
+  }
+
+  .workspace-shell[data-mobile-sidebar-open="true"] .workspace-sidebar-slot {
+    transform: translateX(0);
+    visibility: visible;
+    transition: transform 160ms ease, visibility 0ms step-start;
+  }
+
+  .workspace-shell .workspace-sidebar-slot > .chat-side {
+    max-height: none;
+    padding: 0 10px 10px;
+    border-right: 1px solid #14233f;
+    border-bottom: 0;
+    box-shadow: 18px 0 48px rgba(15, 23, 42, 0.28);
+  }
+
+  .workspace-shell .workspace-sidebar-slot .side-brand {
+    position: sticky;
+    margin-right: -10px;
+    margin-left: -10px;
+  }
+
+  .workspace-sidebar-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 1390;
+    display: block;
+    width: 100%;
+    height: 100%;
+    padding: 0;
+    border: 0;
+    background: rgba(15, 23, 42, 0.42);
+    cursor: default;
+    touch-action: none;
+  }
+
+  .workspace-mobile-sidebar-trigger {
+    position: absolute;
+    top: 10px;
+    left: 10px;
+    z-index: 12;
+    display: inline-grid;
+    width: 44px;
+    height: 44px;
+    place-items: center;
+    padding: 0;
+    border: 1px solid var(--chat-line, #dfe3ea);
+    border-radius: 8px;
+    background: var(--chat-surface, #fff);
+    color: var(--chat-ink, #182033);
+    font-size: 18px;
+    line-height: 1;
+  }
+
+  .workspace-shell[data-mobile-sidebar-open="true"] .workspace-mobile-sidebar-trigger {
+    visibility: hidden;
+  }
+
+  .workspace-mobile-sidebar-close {
+    display: inline-grid;
+    width: 44px;
+    min-width: 44px;
+    height: 44px;
+    margin-left: auto;
+    place-items: center;
+    padding: 0;
+    border: 1px solid transparent;
+    border-radius: 6px;
+    background: transparent;
+    color: var(--chat-sidebar-text, #eef4ff);
+    font-size: 22px;
+  }
+
+  .workspace-mobile-sidebar-close:hover {
+    border-color: rgba(255, 255, 255, 0.2);
+    background: rgba(255, 255, 255, 0.1);
+  }
+
+  .workspace-shell .workspace-main-slot .chat-header {
+    padding-left: 66px;
+  }
+
+  .workspace-shell[data-mobile-sidebar-open="true"] .workspace-main-slot,
+  .workspace-shell[data-mobile-sidebar-open="true"] .workspace-context-slot {
+    pointer-events: none;
+    user-select: none;
+  }
+
+  .workspace-shell .workspace-sidebar .item,
+  .workspace-shell .workspace-sidebar .side-hamburger,
+  .workspace-shell .workspace-sidebar .workspace-channel-favorite {
+    min-height: 44px;
+  }
+
+  .workspace-shell .workspace-sidebar .workspace-channel-favorite {
+    width: 44px;
+    min-width: 44px;
+    height: 44px;
+    opacity: 1;
+  }
+
+  .workspace-shell .workspace-sidebar .side-hamburger {
+    width: 44px;
+    min-width: 44px;
+  }
+
+  .workspace-shell .chat-header-right {
+    width: 100%;
+    min-width: 0;
+    flex-wrap: wrap;
+  }
+
+  .workspace-shell .channel-context-action {
+    min-width: 44px;
+    min-height: 44px;
+  }
+
+  .workspace-shell .search-form .search-clear {
+    width: 44px;
+    height: 44px;
+    right: -4px;
+  }
+
+  .workspace-shell .context-file-detail .context-source-link {
+    min-height: 44px;
+  }
+
+  .workspace-shell .chat-header-right .search-form {
+    order: 2;
+    flex: 1 0 100%;
+  }
+
+  .workspace-context-slot {
+    position: fixed;
+    inset: 0;
+    z-index: 1300;
+    width: 100vw;
+    height: 100dvh;
+  }
+
+  .workspace-shell .workspace-context-slot > .thread-panel {
+    position: relative;
+    inset: auto;
+    width: 100%;
+    max-width: none;
+    height: 100%;
+    box-shadow: none;
+  }
+
+  .workspace-shell .context-panel-header {
+    padding-left: 12px;
+  }
+}
+
+@media (max-width: 640px) {
+  .workspace-shell .channel-context-action > span {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+  }
+
+  .workspace-shell .context-view {
+    padding: 16px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .workspace-sidebar-slot {
+    transition: none;
+  }
+}
+
+@media (forced-colors: active) {
+  .workspace-mobile-sidebar-trigger,
+  .workspace-mobile-sidebar-close,
+  .context-panel-tab {
+    forced-color-adjust: auto;
+  }
+}

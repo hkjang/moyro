@@ -8,9 +8,19 @@ const docs = join(root, "docs");
 const screenshots = join(docs, "assets", "screenshots");
 const expectedScreenshots = [
   "login.jpg",
+  "today.jpg",
+  "inbox-conversations.jpg",
+  "inbox-approvals.jpg",
+  "my-work-saved.jpg",
+  "my-work-scheduled.jpg",
+  "my-work-reminders.jpg",
+  "approvals-mine.jpg",
+  "approvals-review.jpg",
+  "ai-assistant.jpg",
+  "global-search.jpg",
   "workspace-channel.jpg",
-  "workspace-saved.jpg",
-  "workspace-scheduled.jpg",
+  "workspace-context-info.jpg",
+  "plugin-langflow-rhs.jpg",
   "workspace-profile-menu.jpg",
   "settings-profile.jpg",
   "settings-appearance.jpg",
@@ -18,18 +28,24 @@ const expectedScreenshots = [
   "settings-sessions.jpg",
   "settings-keys.jpg",
   "settings-ai.jpg",
-  "settings-approvals-mine.jpg",
-  "settings-approvals-review.jpg",
+  "settings-plugin-echosummary.jpg",
   "admin-overview.jpg",
   "admin-site.jpg",
   "admin-keycloak.jpg",
   "admin-ai.jpg",
   "admin-key-policy.jpg",
   "admin-mcp.jpg",
+  "admin-plugins.jpg",
+  "admin-plugins-compatible.jpg",
   "admin-approval.jpg",
   "admin-operations.jpg",
   "mobile-login.jpg",
   "mobile-workspace.jpg",
+  "mobile-workspace-context.jpg",
+  "mobile-today.jpg",
+  "mobile-inbox.jpg",
+  "mobile-my-work.jpg",
+  "mobile-approvals.jpg",
   "mobile-settings-profile.jpg",
   "mobile-admin-site.jpg",
 ];
@@ -37,14 +53,16 @@ const expectedScreenshotDimensions = new Map(expectedScreenshots.map((name) => [
   name,
   name.startsWith("mobile-") ? { width: 430, height: 932 } : { width: 1440, height: 1000 },
 ]));
-const captureSpec = readFileSync(join(root, "webapp", "e2e", "product-pages.spec.ts"), "utf8");
+const productCaptureSpec = readFileSync(join(root, "webapp", "e2e", "product-pages.spec.ts"), "utf8");
+const pluginCaptureSpec = readFileSync(join(root, "webapp", "e2e", "plugin-compatibility.spec.ts"), "utf8");
+const captureSpec = `${productCaptureSpec}\n${pluginCaptureSpec}`;
 const capturedScreenshotNames = new Set(
   [...captureSpec.matchAll(/["'`]([a-z0-9][a-z0-9-]*\.jpg)["'`]/g)].map((match) => match[1]),
 );
-const routedCatalogStart = captureSpec.indexOf("const routedPages");
-const routedCatalogEnd = captureSpec.indexOf("for (const route of routedPages)", routedCatalogStart);
+const routedCatalogStart = productCaptureSpec.indexOf("const routedPages");
+const routedCatalogEnd = productCaptureSpec.indexOf("for (const route of routedPages)", routedCatalogStart);
 const routedCatalog = routedCatalogStart >= 0 && routedCatalogEnd > routedCatalogStart
-  ? captureSpec.slice(routedCatalogStart, routedCatalogEnd)
+  ? productCaptureSpec.slice(routedCatalogStart, routedCatalogEnd)
   : "";
 const capturedNavigationRoutes = new Set(
   [...routedCatalog.matchAll(/path:\s*\(\)\s*=>\s*["'](\/(?:settings|admin)\/[^"']+)["']/g)]
@@ -76,6 +94,12 @@ const expectedBrandPNGs = new Map([
   ["moyro-social-card.png", { width: 1200, height: 630 }],
 ]);
 
+for (const name of readdirSync(screenshots).filter((entry) => entry.endsWith(".jpg"))) {
+  if (!expectedScreenshotDimensions.has(name)) {
+    failures.push(`stale or uncatalogued screenshot: docs/assets/screenshots/${name}`);
+  }
+}
+
 for (const name of expectedScreenshots) {
   const file = join(screenshots, name);
   if (!existsSync(file)) {
@@ -100,12 +124,12 @@ for (const name of expectedScreenshots) {
     failures.push(`cannot read JPEG dimensions for ${name}: ${error.message}`);
   }
   if (!allHTML.includes(`screenshots/${name}`)) failures.push(`screenshot is not used by any page: ${name}`);
-  if (!capturedScreenshotNames.has(name)) failures.push(`screenshot is not produced by product-pages.spec.ts: ${name}`);
+  if (!capturedScreenshotNames.has(name)) failures.push(`screenshot is not produced by the browser capture specs: ${name}`);
 }
 
 for (const name of capturedScreenshotNames) {
   if (!expectedScreenshotDimensions.has(name)) {
-    failures.push(`product-pages.spec.ts writes an uncatalogued screenshot: ${name}`);
+    failures.push(`browser capture specs write an uncatalogued screenshot: ${name}`);
   }
 }
 
@@ -234,13 +258,19 @@ for (const releasePage of [
   join(docs, "guides", "offline-deployment.html"),
 ]) {
   const html = htmlByFile.get(releasePage) ?? "";
-  if (!html.includes("v0.1.1")) failures.push(`v0.1.1 release marker is missing in ${relative(root, releasePage)}`);
-  if (html.includes("v0.1.0")) failures.push(`stale v0.1.0 release marker remains in ${relative(root, releasePage)}`);
+  if (!html.includes("v0.2.0")) failures.push(`v0.2.0 release marker is missing in ${relative(root, releasePage)}`);
+  if (/v0\.1\.[01]/.test(html)) failures.push(`stale v0.1.x release marker remains in ${relative(root, releasePage)}`);
+  if (!html.includes('"dateModified": "2026-08-30"')) {
+    failures.push(`2026-08-30 dateModified is missing in ${relative(root, releasePage)}`);
+  }
 }
 
 const sitemap = readFileSync(join(docs, "sitemap.xml"), "utf8");
 for (const page of ["https://hkjang.github.io/moyro/", "https://hkjang.github.io/moyro/screens.html"]) {
   if (!sitemap.includes(page)) failures.push(`sitemap is missing canonical URL: ${page}`);
+}
+if ([...sitemap.matchAll(/<lastmod>([^<]+)<\/lastmod>/g)].some((match) => match[1] !== "2026-08-30")) {
+  failures.push("sitemap contains a lastmod other than 2026-08-30");
 }
 
 try {

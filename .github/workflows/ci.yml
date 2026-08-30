@@ -47,13 +47,27 @@ jobs:
         with:
           go-version-file: server/go.mod
           cache-dependency-path: server/go.sum
+      - name: Fetch checksum-pinned Mattermost plugin fixtures
+        if: matrix.postgres == '16'
+        id: plugin-fixtures
+        run: |
+          fixture_dir="${RUNNER_TEMP}/mattermost-plugin-fixtures"
+          bash scripts/fetch-plugin-test-fixtures.sh "${fixture_dir}"
+          echo "botman=${fixture_dir}/com.mattermost.botman-0.1.2.tar.gz" >> "${GITHUB_OUTPUT}"
+          echo "chatdump=${fixture_dir}/com.hkjang.mattermost-chatdump-plugin-0.5.1.tar.gz" >> "${GITHUB_OUTPUT}"
+          echo "echosummary=${fixture_dir}/com.mattermost.echosummary-0.6.4.tar.gz" >> "${GITHUB_OUTPUT}"
+          echo "langflow=${fixture_dir}/com.mattermost.langflow-0.1.20.tar.gz" >> "${GITHUB_OUTPUT}"
       - name: Verify migration lifecycle
         working-directory: server
         env:
           MOYRO_TEST_POSTGRES_DSN: postgres://moyro_migration_test:moyro_migration_test_password@127.0.0.1:5432/moyro_migration_test?sslmode=disable
+          MOYRO_TEST_BOTMAN_PLUGIN_ARCHIVE: ${{ steps.plugin-fixtures.outputs.botman }}
+          MOYRO_TEST_CHATDUMP_PLUGIN_ARCHIVE: ${{ steps.plugin-fixtures.outputs.chatdump }}
+          MOYRO_TEST_ECHOSUMMARY_PLUGIN_ARCHIVE: ${{ steps.plugin-fixtures.outputs.echosummary }}
+          MOYRO_TEST_LANGFLOW_PLUGIN_ARCHIVE: ${{ steps.plugin-fixtures.outputs.langflow }}
         run: |
-          go test -race ./internal/store ./internal/auth ./internal/files ./internal/scheduled ./internal/webhooks
-          go vet ./internal/store ./internal/auth ./internal/files ./internal/scheduled ./internal/webhooks
+          go test -race -p 1 ./internal/store ./internal/auth ./internal/files ./internal/scheduled ./internal/webhooks ./internal/pluginhost
+          go vet ./internal/store ./internal/auth ./internal/files ./internal/scheduled ./internal/webhooks ./internal/pluginhost
 
   verify:
     runs-on: ubuntu-latest
@@ -81,9 +95,10 @@ jobs:
         run: |
           npm audit --omit=dev --audit-level=high
           npm audit --audit-level=high
-      - name: Type-check and build webapp
+      - name: Test, type-check, and build webapp
         working-directory: webapp
         run: |
+          npm test
           npm run typecheck
           npm run build
       - name: Test server
@@ -108,9 +123,12 @@ jobs:
       - name: Install Chromium for product-page tests
         working-directory: webapp
         run: npx playwright install --with-deps chromium
+      - name: Fetch browser plugin fixtures
+        run: bash scripts/fetch-plugin-test-fixtures.sh "${RUNNER_TEMP}/mattermost-plugin-fixtures"
       - name: Verify routed pages, refresh, mobile layout, and browser errors
         env:
           MOYRO_E2E_PORT: "18065"
+          MOYRO_PLUGIN_FIXTURE_DIR: ${{ runner.temp }}/mattermost-plugin-fixtures
         run: |
           docker pull postgres:16-alpine@sha256:cf78e76683b9ca8c5733cbbdce6c9262b45b6767934dd0a95e671f9a0fc20685
           bash scripts/verify-product-ui.sh moyro:ci "${RUNNER_TEMP}/moyro-screens"

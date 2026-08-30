@@ -1,4 +1,9 @@
 import { createTheme } from "@mui/material/styles";
+import {
+  moyroFlowColors,
+  moyroFlowDarkColors,
+  moyroFlowThemeTokens,
+} from "@/theme/flowTokens";
 
 export const moyroFontFamily = [
   '"Noto Sans KR Variable"',
@@ -11,17 +16,141 @@ export const moyroFontFamily = [
 ].join(",");
 
 export const moyroTheme = createTheme({
-  cssVariables: { cssVarPrefix: "moyro" },
-  palette: {
-    primary: { main: "#2457C5", dark: "#1B439A", light: "#5D82DC" },
-    secondary: { main: "#227C70" },
-    error: { main: "#C63F4B" },
-    warning: { main: "#A96400" },
-    success: { main: "#1F7A50" },
-    background: { default: "#F4F6F8", paper: "#FFFFFF" },
-    text: { primary: "#172033", secondary: "#596579" },
+  cssVariables: {
+    cssVarPrefix: "moyro",
+    colorSchemeSelector: '[data-theme="%s"]',
   },
+  defaultColorScheme: "light",
+  colorSchemes: {
+    light: {
+      palette: {
+        mode: "light",
+        primary: {
+          main: moyroFlowColors.brand,
+          dark: moyroFlowColors.brandDark,
+          light: "#5F78DF",
+          contrastText: "#FFFFFF",
+        },
+        secondary: {
+          main: moyroFlowColors.automation,
+          dark: "#0B5D57",
+          light: "#4E9F97",
+          contrastText: "#FFFFFF",
+        },
+        navigation: {
+          main: moyroFlowColors.navigation,
+          dark: "#10182D",
+          light: "#31405F",
+          contrastText: "#FFFFFF",
+        },
+        ai: {
+          main: moyroFlowColors.ai,
+          dark: "#513B9E",
+          light: "#8B76D7",
+          contrastText: "#FFFFFF",
+        },
+        automation: {
+          main: moyroFlowColors.automation,
+          dark: "#0B5D57",
+          light: "#4E9F97",
+          contrastText: "#FFFFFF",
+        },
+        approval: {
+          main: moyroFlowColors.approvalAccessible,
+          dark: "#8A4F00",
+          light: moyroFlowColors.approvalAccent,
+          contrastText: "#FFFFFF",
+        },
+        info: { main: moyroFlowColors.brand, contrastText: "#FFFFFF" },
+        warning: {
+          main: moyroFlowColors.approvalAccessible,
+          dark: "#8A4F00",
+          light: moyroFlowColors.approvalAccent,
+          contrastText: "#FFFFFF",
+        },
+        success: { main: moyroFlowColors.success, contrastText: "#FFFFFF" },
+        error: { main: moyroFlowColors.danger, contrastText: "#FFFFFF" },
+        background: {
+          default: moyroFlowColors.pageBackground,
+          paper: moyroFlowColors.surface,
+        },
+        divider: moyroFlowColors.border,
+        text: {
+          primary: moyroFlowColors.text,
+          secondary: moyroFlowColors.textSecondary,
+        },
+      },
+    },
+    dark: {
+      palette: {
+        mode: "dark",
+        primary: {
+          main: moyroFlowDarkColors.brand,
+          dark: moyroFlowDarkColors.brandDark,
+          light: "#B8C7F5",
+          contrastText: "#10182D",
+        },
+        secondary: {
+          main: moyroFlowDarkColors.automation,
+          dark: "#2D8F85",
+          light: "#82D2C9",
+          contrastText: "#101F25",
+        },
+        navigation: {
+          main: moyroFlowDarkColors.navigation,
+          dark: "#0A1020",
+          light: "#31405F",
+          contrastText: "#F2F4F7",
+        },
+        ai: {
+          main: moyroFlowDarkColors.ai,
+          dark: moyroFlowColors.ai,
+          light: "#C3B8F4",
+          contrastText: "#171229",
+        },
+        automation: {
+          main: moyroFlowDarkColors.automation,
+          dark: "#2D8F85",
+          light: "#82D2C9",
+          contrastText: "#101F25",
+        },
+        approval: {
+          main: moyroFlowDarkColors.approval,
+          dark: "#D18C20",
+          light: "#FFD997",
+          contrastText: moyroFlowColors.text,
+        },
+        info: { main: moyroFlowDarkColors.brand, contrastText: "#10182D" },
+        warning: {
+          main: moyroFlowDarkColors.approval,
+          dark: "#D18C20",
+          light: "#FFD997",
+          contrastText: moyroFlowColors.text,
+        },
+        success: { main: moyroFlowDarkColors.success, contrastText: "#10221A" },
+        error: { main: moyroFlowDarkColors.danger, contrastText: "#2A1013" },
+        background: {
+          default: moyroFlowDarkColors.pageBackground,
+          paper: moyroFlowDarkColors.surface,
+        },
+        divider: moyroFlowDarkColors.border,
+        text: {
+          primary: moyroFlowDarkColors.text,
+          secondary: moyroFlowDarkColors.textSecondary,
+        },
+      },
+    },
+  },
+  flow: moyroFlowThemeTokens,
   shape: { borderRadius: 8 },
+  transitions: {
+    duration: {
+      shortest: 120,
+      shorter: 140,
+      short: 160,
+      standard: 180,
+    },
+  },
   typography: {
     fontFamily: moyroFontFamily,
     fontSize: 16,
@@ -53,10 +182,27 @@ export const moyroTheme = createTheme({
     },
     MuiButton: {
       defaultProps: { disableElevation: true },
-      styleOverrides: { root: { minHeight: 40, borderRadius: 7 } },
+      styleOverrides: {
+        root: {
+          minHeight: 40,
+          borderRadius: moyroFlowThemeTokens.radii.input,
+          transitionDuration: moyroFlowThemeTokens.motion.standard,
+        },
+      },
     },
     MuiIconButton: {
-      styleOverrides: { root: { minWidth: 40, minHeight: 40 } },
+      styleOverrides: {
+        root: {
+          minWidth: 40,
+          minHeight: 40,
+          borderRadius: moyroFlowThemeTokens.radii.input,
+        },
+      },
+    },
+    MuiOutlinedInput: {
+      styleOverrides: {
+        root: { borderRadius: moyroFlowThemeTokens.radii.input },
+      },
     },
     MuiInputBase: {
       styleOverrides: { root: { minHeight: 42, fontSize: "0.9375rem" } },
@@ -80,7 +226,22 @@ export const moyroTheme = createTheme({
       styleOverrides: { root: { fontSize: "0.875rem", lineHeight: 1.5 } },
     },
     MuiTooltip: {
-      styleOverrides: { tooltip: { fontSize: "0.8125rem", lineHeight: 1.45 } },
+      styleOverrides: {
+        tooltip: {
+          borderRadius: moyroFlowThemeTokens.radii.input,
+          fontSize: "0.8125rem",
+          lineHeight: 1.45,
+        },
+      },
+    },
+    MuiCard: {
+      styleOverrides: { root: { borderRadius: moyroFlowThemeTokens.radii.card } },
+    },
+    MuiDialog: {
+      styleOverrides: { paper: { borderRadius: moyroFlowThemeTokens.radii.popover } },
+    },
+    MuiPopover: {
+      styleOverrides: { paper: { borderRadius: moyroFlowThemeTokens.radii.popover } },
     },
     MuiPaper: {
       styleOverrides: { root: { backgroundImage: "none" } },

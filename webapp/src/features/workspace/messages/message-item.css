@@ -1,0 +1,89 @@
+.workspace-message-item {
+  position: relative;
+}
+
+.workspace-message-item:focus,
+.workspace-message-item:focus-visible {
+  outline: 2px solid var(--flow-brand, #3157d5);
+  outline-offset: -2px;
+}
+
+.workspace-message-item .msg-actions {
+  display: flex;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.workspace-message-item:focus-within .msg-actions,
+.workspace-message-item:hover .msg-actions,
+.workspace-message-item .message-actions-persistent {
+  display: flex;
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.workspace-message-item .message-action-button {
+  display: inline-grid;
+  width: 36px;
+  min-width: 36px;
+  height: 36px;
+  min-height: 36px;
+  place-items: center;
+  padding: 0;
+  font-size: 18px;
+}
+
+.workspace-message-item .message-action-button svg {
+  font-size: inherit;
+}
+
+.workspace-message-item .message-edit-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+.workspace-message-item .message-edit-actions > button {
+  width: auto;
+  min-width: 64px;
+  min-height: 36px;
+  padding: 0 12px;
+}
+
+.workspace-message-item .message-edit-error {
+  margin-top: 6px;
+  color: var(--flow-danger, #c2414b);
+  font-size: 12px;
+}
+
+.workspace-message-item .msg-pinned {
+  color: var(--flow-text-muted, #667085);
+  font-size: 15px;
+}
+
+.workspace-message-item .file-chip,
+.workspace-message-item .file-image {
+  min-height: 36px;
+}
+
+@media (max-width: 960px) {
+  .workspace-message-item .message-action-button,
+  .workspace-message-item .message-edit-actions > button,
+  .workspace-message-item .file-chip,
+  .workspace-message-item .file-image {
+    min-height: 44px;
+  }
+
+  .workspace-message-item .message-action-button {
+    width: 44px;
+    min-width: 44px;
+    height: 44px;
+  }
+}
+
+@media (forced-colors: active) {
+  .workspace-message-item:focus,
+  .workspace-message-item:focus-visible {
+    outline-color: Highlight;
+  }
+}

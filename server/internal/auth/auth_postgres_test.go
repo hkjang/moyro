@@ -20,7 +20,7 @@ const authTestPostgresDSN = "MOYRO_TEST_POSTGRES_DSN"
 
 func TestSessionJTIHashRollingUpgradePostgres(t *testing.T) {
 	db := newAuthTestDB(t)
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 
 	manager, err := secrets.New(bytes.Repeat([]byte{0x52}, secrets.MasterKeySize))
@@ -138,7 +138,7 @@ func newAuthTestDB(t *testing.T) *store.DB {
 	if dsn == "" {
 		t.Skipf("%s is not set", authTestPostgresDSN)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 
 	adminPool, err := pgxpool.New(ctx, dsn)

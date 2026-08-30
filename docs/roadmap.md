@@ -39,21 +39,29 @@ Next polish:
 - Document known API differences from Mattermost.
 - Add response-shape snapshots for common endpoints.
 
-## 3. Usability
+## 3. Moyro Flow usability
 
-Status: usable but still early.
+Status: product shell and core workflow surfaces present.
 
-- Login/register/OAuth/invite flows
-- Channel sidebar, DMs, threads, search, saved posts
-- Scheduled messages and reminders
-- Admin integrations panel
+- Global rail and mobile navigation with Today as the authenticated start page
+- Unified inbox backed by real unread, mention, approval, and reminder data
+- My Work for saved messages, scheduled posts, and reminders
+- Standalone approval center, AI assistant, and team-scoped global search
+- Workspace sidebar, flat message timeline, scoped-draft composer, and unified
+  thread/AI-summary/file/info context panel
+- Operator-oriented admin overview and grouped personal/admin navigation
+- Route, keyboard, mobile overflow, context focus, and screenshot contracts
 
 Next polish:
 
-- Improve responsive layouts for tablets and narrow screens.
-- Add empty states that help users recover without instructional clutter.
-- Improve loading and failure states for slow networks.
-- Add keyboard-accessible command paths for power users.
+- Add durable per-item inbox, task, and decision APIs before enabling their
+  prepared UI states.
+- Add structured claim/source AI output and server-side retrieval before
+  describing summaries as RAG or citation-complete.
+- Continue extracting orchestration from `ChatView.tsx` below its 150 KB CI
+  ratchet and split the remaining legacy global stylesheet.
+- Expand focus management and roving keyboard navigation across older dialogs
+  and menus.
 
 ## 4. Operations
 
@@ -74,20 +82,28 @@ Next polish:
 
 ## 5. Extension Platform
 
-Status: skeleton plus working server hook path.
+Status: managed Trusted Native lifecycle plus a tested Mattermost-compatible
+subset.
 
 - Server manifest loading
 - RPC bridge
 - Message hooks
 - Slash command delegation
 - Web plugin registry
+- Admin archive upload/replace, enable/disable, configuration, and delete
+- Web plugin bundle serving
+- Automated PostgreSQL real-archive functional coverage for Botman 0.1.2,
+  Chatdump 0.5.1, Langflow 0.1.20, and EchoSummary 0.6.5 in the local release
+  gate (public CI uses the checksum-pinned EchoSummary 0.6.4 asset)
 
 Next polish:
 
-- Admin plugin lifecycle: install, enable, disable, configure, logs.
-- Web plugin bundle serving and runtime error isolation.
-- SDK examples promoted to automated compatibility tests.
-- Permission model for plugin APIs.
+- Plugin logs, health reporting, graceful restart, and runtime error isolation.
+- Promote each additional plugin's required SDK and web registry contracts to
+  automated compatibility tests before claiming support.
+- Expand and document the permission model for plugin APIs.
+- Keep Trusted Native trust boundaries visible in every installation path;
+  native server executables remain unsandboxed.
 
 ## Done Definition
 

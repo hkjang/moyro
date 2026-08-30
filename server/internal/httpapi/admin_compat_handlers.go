@@ -2,15 +2,18 @@ package httpapi
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
 
 	"github.com/hkjang/moyro/server/internal/buildinfo"
+	"github.com/hkjang/moyro/server/internal/pluginhost"
 )
 
 type compatRole struct {
@@ -131,7 +134,7 @@ func (h *handlers) adminConfigSnapshot() map[string]any {
 		},
 		"PluginSettings": map[string]any{
 			"Enable":        true,
-			"EnableUploads": false,
+			"EnableUploads": true,
 			"Directory":     pluginDir,
 		},
 		"FileSettings": map[string]any{
@@ -346,19 +349,219 @@ func (h *handlers) downloadJob(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *handlers) uploadPlugin(w http.ResponseWriter, r *http.Request) {
-	writeAdminCompatNotSupported(w, "api.plugin.upload.not_supported.app_error", "runtime plugin upload")
+	if h.host == nil {
+		writeError(w, http.StatusServiceUnavailable, "api.plugin.upload.unavailable.app_error", "plugin runtime unavailable")
+		return
+	}
+	limit := pluginhost.DefaultBundleLimits().MaxBundleBytes + (1 << 20)
+	r.Body = http.MaxBytesReader(w, r.Body, limit)
+	var reader io.Reader = r.Body
+	if strings.HasPrefix(strings.ToLower(r.Header.Get("Content-Type")), "multipart/form-data") {
+		multipartReader, err := r.MultipartReader()
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "api.plugin.upload.parse.app_error", "invalid plugin upload")
+			return
+		}
+		var pluginPart io.ReadCloser
+		for {
+			part, nextErr := multipartReader.NextPart()
+			if errors.Is(nextErr, io.EOF) {
+				break
+			}
+			if nextErr != nil {
+				writeError(w, http.StatusBadRequest, "api.plugin.upload.parse.app_error", "invalid plugin upload")
+				return
+			}
+			if part.FormName() == "plugin" {
+				pluginPart = part
+				break
+			}
+			_ = part.Close()
+		}
+		if pluginPart == nil {
+			writeError(w, http.StatusBadRequest, "api.plugin.upload.file.app_error", "multipart field 'plugin' is required")
+			return
+		}
+		defer pluginPart.Close()
+		// Stream directly into the plugin staging directory. ParseMultipartForm
+		// would spill large archives into /tmp, conflicting with the hardened
+		// release image's deliberately small tmpfs.
+		reader = pluginPart
+	}
+	force := r.URL.Query().Get("force") == "true" || r.URL.Query().Get("replace") == "true"
+	result, err := h.host.Install(r.Context(), reader, userID(r), force)
+	if err != nil {
+		status := http.StatusBadRequest
+		id := "api.plugin.upload.app_error"
+		if errors.Is(err, pluginhost.ErrPluginExists) {
+			status = http.StatusConflict
+			id = "api.plugin.upload.already_exists.app_error"
+		} else if errors.Is(err, pluginhost.ErrPluginBusy) {
+			status = http.StatusConflict
+			id = "api.plugin.upload.busy.app_error"
+		} else if errors.Is(err, pluginhost.ErrPluginRuntimeStuck) {
+			status = http.StatusServiceUnavailable
+			id = "api.plugin.upload.restart_required.app_error"
+		}
+		writeError(w, status, id, err.Error())
+		return
+	}
+	if h.audit != nil {
+		h.audit.LogAsync(userID(r), "plugin.install", result.ID, map[string]any{
+			"version": result.Version, "runtime": result.Runtime,
+			"sha256": result.SHA256, "replaced": result.Replaced,
+		})
+	}
+	writeJSON(w, http.StatusCreated, result)
 }
 
 func (h *handlers) deletePlugin(w http.ResponseWriter, r *http.Request) {
-	writeAdminCompatNotSupported(w, "api.plugin.delete.not_supported.app_error", "runtime plugin deletion")
+	if h.host == nil {
+		writeError(w, http.StatusServiceUnavailable, "api.plugin.delete.unavailable.app_error", "plugin runtime unavailable")
+		return
+	}
+	id := chi.URLParam(r, "pluginID")
+	if err := h.host.Delete(r.Context(), id); err != nil {
+		if errors.Is(err, pluginhost.ErrPluginNotFound) {
+			writeError(w, http.StatusNotFound, "api.plugin.delete.not_found.app_error", err.Error())
+			return
+		}
+		if errors.Is(err, pluginhost.ErrPluginRuntimeStuck) {
+			writeError(w, http.StatusServiceUnavailable, "api.plugin.delete.restart_required.app_error", err.Error())
+			return
+		}
+		if errors.Is(err, pluginhost.ErrPluginBusy) {
+			writeError(w, http.StatusConflict, "api.plugin.delete.busy.app_error", err.Error())
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "api.plugin.delete.app_error", err.Error())
+		return
+	}
+	if h.audit != nil {
+		h.audit.LogAsync(userID(r), "plugin.delete", id, nil)
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "OK"})
 }
 
 func (h *handlers) enablePlugin(w http.ResponseWriter, r *http.Request) {
-	writeAdminCompatNotSupported(w, "api.plugin.enable.not_supported.app_error", "runtime plugin enablement")
+	if h.host == nil {
+		writeError(w, http.StatusServiceUnavailable, "api.plugin.enable.unavailable.app_error", "plugin runtime unavailable")
+		return
+	}
+	id := chi.URLParam(r, "pluginID")
+	p, err := h.host.Enable(r.Context(), id)
+	if err != nil {
+		if errors.Is(err, pluginhost.ErrPluginNotFound) {
+			writeError(w, http.StatusNotFound, "api.plugin.enable.not_found.app_error", err.Error())
+			return
+		}
+		if errors.Is(err, pluginhost.ErrPluginRuntimeStuck) {
+			writeError(w, http.StatusServiceUnavailable, "api.plugin.enable.restart_required.app_error", err.Error())
+			return
+		}
+		if errors.Is(err, pluginhost.ErrPluginBusy) {
+			writeError(w, http.StatusConflict, "api.plugin.enable.busy.app_error", err.Error())
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "api.plugin.enable.app_error", err.Error())
+		return
+	}
+	if h.audit != nil {
+		h.audit.LogAsync(userID(r), "plugin.enable", id, map[string]any{"version": p.Manifest.Version})
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "OK"})
 }
 
 func (h *handlers) disablePlugin(w http.ResponseWriter, r *http.Request) {
-	writeAdminCompatNotSupported(w, "api.plugin.disable.not_supported.app_error", "runtime plugin disablement")
+	if h.host == nil {
+		writeError(w, http.StatusServiceUnavailable, "api.plugin.disable.unavailable.app_error", "plugin runtime unavailable")
+		return
+	}
+	id := chi.URLParam(r, "pluginID")
+	p, err := h.host.Disable(r.Context(), id)
+	if err != nil {
+		if errors.Is(err, pluginhost.ErrPluginNotFound) {
+			writeError(w, http.StatusNotFound, "api.plugin.disable.not_found.app_error", err.Error())
+			return
+		}
+		if errors.Is(err, pluginhost.ErrPluginRuntimeStuck) {
+			writeError(w, http.StatusServiceUnavailable, "api.plugin.disable.restart_required.app_error", err.Error())
+			return
+		}
+		if errors.Is(err, pluginhost.ErrPluginBusy) {
+			writeError(w, http.StatusConflict, "api.plugin.disable.busy.app_error", err.Error())
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "api.plugin.disable.app_error", err.Error())
+		return
+	}
+	if h.audit != nil {
+		h.audit.LogAsync(userID(r), "plugin.disable", id, map[string]any{"version": p.Manifest.Version})
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "OK"})
+}
+
+func (h *handlers) getPluginConfiguration(w http.ResponseWriter, r *http.Request) {
+	if h.host == nil {
+		writeError(w, http.StatusServiceUnavailable, "api.plugin.configuration.unavailable.app_error", "plugin runtime unavailable")
+		return
+	}
+	id := chi.URLParam(r, "pluginID")
+	configuration, schemaRaw, err := h.host.Configuration(id)
+	if err != nil {
+		status := http.StatusInternalServerError
+		if errors.Is(err, pluginhost.ErrPluginNotFound) {
+			status = http.StatusNotFound
+		} else if errors.Is(err, pluginhost.ErrPluginBusy) {
+			status = http.StatusConflict
+		} else if errors.Is(err, pluginhost.ErrPluginRuntimeStuck) {
+			status = http.StatusServiceUnavailable
+		}
+		writeError(w, status, "api.plugin.configuration.get.app_error", err.Error())
+		return
+	}
+	var schema any = map[string]any{}
+	if len(schemaRaw) > 0 {
+		_ = json.Unmarshal(schemaRaw, &schema)
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"configuration": configuration, "schema": schema})
+}
+
+func (h *handlers) updatePluginConfiguration(w http.ResponseWriter, r *http.Request) {
+	if h.host == nil {
+		writeError(w, http.StatusServiceUnavailable, "api.plugin.configuration.unavailable.app_error", "plugin runtime unavailable")
+		return
+	}
+	id := chi.URLParam(r, "pluginID")
+	var input struct {
+		Configuration map[string]any `json:"configuration"`
+	}
+	decoder := json.NewDecoder(io.LimitReader(r.Body, 2<<20))
+	if err := decoder.Decode(&input); err != nil {
+		writeError(w, http.StatusBadRequest, "api.plugin.configuration.decode.app_error", "invalid plugin configuration")
+		return
+	}
+	if err := h.host.UpdateConfiguration(r.Context(), id, input.Configuration); err != nil {
+		status := http.StatusInternalServerError
+		if errors.Is(err, pluginhost.ErrPluginNotFound) {
+			status = http.StatusNotFound
+		} else if errors.Is(err, pluginhost.ErrPluginBusy) {
+			status = http.StatusConflict
+		} else if errors.Is(err, pluginhost.ErrPluginRuntimeStuck) {
+			status = http.StatusServiceUnavailable
+		}
+		writeError(w, status, "api.plugin.configuration.update.app_error", err.Error())
+		return
+	}
+	if h.audit != nil {
+		// Configuration values may contain secrets. Audit keys only.
+		keys := make([]string, 0, len(input.Configuration))
+		for key := range input.Configuration {
+			keys = append(keys, key)
+		}
+		h.audit.LogAsync(userID(r), "plugin.configuration.update", id, map[string]any{"keys": keys})
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "OK"})
 }
 
 func (h *handlers) installPluginFromURL(w http.ResponseWriter, r *http.Request) {

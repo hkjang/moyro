@@ -17,7 +17,7 @@ const slice = createSlice({
     upsertChannel(state, action: PayloadAction<Channel>) {
       state.byId[action.payload.id] = action.payload;
     },
-    setCurrentChannel(state, action: PayloadAction<string>) {
+    setCurrentChannel(state, action: PayloadAction<string | null>) {
       state.currentId = action.payload;
     },
   },

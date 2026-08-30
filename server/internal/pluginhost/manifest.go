@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -31,6 +32,8 @@ type ServerSpec struct {
 type WebappSpec struct {
 	BundlePath string `json:"bundle_path,omitempty" yaml:"bundle_path,omitempty"`
 }
+
+var pluginIDPattern = regexp.MustCompile(`^[A-Za-z0-9_.-]{3,190}$`)
 
 // LoadManifest reads plugin.json or plugin.yaml from a plugin directory.
 func LoadManifest(dir string) (*Manifest, error) {
@@ -66,6 +69,12 @@ func (m *Manifest) validate() error {
 	if m.ID == "" {
 		return fmt.Errorf("manifest.id required")
 	}
+	if !pluginIDPattern.MatchString(m.ID) {
+		return fmt.Errorf("manifest.id must match %s", pluginIDPattern.String())
+	}
+	if strings.HasPrefix(m.ID, ".") {
+		return fmt.Errorf("manifest.id must not use a reserved hidden directory")
+	}
 	if m.Version == "" {
 		return fmt.Errorf("manifest.version required")
 	}
@@ -83,11 +92,19 @@ func (m *Manifest) ExecutablePath(dir, goos, goarch string) string {
 	if m.Server.Executables != nil {
 		key := goos + "-" + goarch
 		if p, ok := m.Server.Executables[key]; ok {
-			return filepath.Join(dir, p)
+			resolved, err := securePluginPath(dir, p)
+			if err != nil {
+				return ""
+			}
+			return resolved
 		}
 	}
 	if m.Server.Executable != "" {
-		return filepath.Join(dir, m.Server.Executable)
+		resolved, err := securePluginPath(dir, m.Server.Executable)
+		if err != nil {
+			return ""
+		}
+		return resolved
 	}
 	return ""
 }

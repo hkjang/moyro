@@ -1,31 +1,31 @@
 # moyro Offline Deployment Guide
 
-This guide installs a released moyro service image in a network with no
-internet access. The release archive contains the application and web UI. It
-does not contain PostgreSQL; a reachable PostgreSQL service must already exist
-inside the target network.
+This guide describes how to install the v0.2.0 moyro service image in a network
+with no internet access after its release archive is published. The
+archive contains the application and web UI. It does not contain PostgreSQL; a
+reachable PostgreSQL service must already exist inside the target network.
 
 ## Release artifact contract
 
-For the `v0.1.1` release tag:
+For the `v0.2.0` release tag:
 
-- Docker image: `moyro:v0.1.1`
-- Downloaded file: `moyro-v0.1.1.tar.gz`
+- Docker image: `moyro:v0.2.0`
+- Downloaded file: `moyro-v0.2.0.tar.gz`
 - Supported platform for the initial release: `linux/amd64`
 
-Transfer the archive through the organization's approved media and integrity
-process. The release notes publish the archive's SHA-256; compare it before
-loading the image:
+After publication, transfer the archive through the organization's approved
+media and integrity process. Compare it with the SHA-256 in the release notes
+before loading the image:
 
 ```bash
-sha256sum moyro-v0.1.1.tar.gz
+sha256sum moyro-v0.2.0.tar.gz
 ```
 
 Load it without contacting a registry:
 
 ```bash
-docker load --input moyro-v0.1.1.tar.gz
-docker image inspect moyro:v0.1.1
+docker load --input moyro-v0.2.0.tar.gz
+docker image inspect moyro:v0.2.0
 ```
 
 ## PostgreSQL preparation
@@ -89,7 +89,7 @@ docker run -d \
   --env-file /etc/moyro/moyro.env \
   --mount type=volume,src=moyro-data,dst=/var/lib/moyro \
   --publish 8065:8065 \
-  moyro:v0.1.1
+  moyro:v0.2.0
 ```
 
 Check startup and open `http://<server>:8065/`:
@@ -104,7 +104,7 @@ login, configure the canonical site URL, Keycloak OIDC, AI provider, approval,
 key, and MCP policy in the service administrator page. Those values are stored
 in PostgreSQL; provider secrets are encrypted before storage.
 
-v0.1.1 deliberately does not trust `X-Forwarded-For`, `X-Real-IP`, or
+v0.2.0 deliberately does not trust `X-Forwarded-For`, `X-Real-IP`, or
 `True-Client-IP`. Rate limiting and audit addresses use the direct TCP peer, so
 users behind one reverse proxy share that proxy's login/OIDC rate bucket and
 audit address. Configure the proxy to remove client-supplied forwarded headers,
@@ -118,23 +118,32 @@ port, or path in the allow-list entry.
 The Mattermost-compatible `GET /api/v4/config` endpoint is an operational
 snapshot, not a second configuration store. Its legacy `PUT /config`,
 `PUT /config/patch`, and `POST /config/reload` mutations return a 501
-Mattermost AppError in v0.1.1. SMTP, S3, Redis, link-preview toggles, and
-runtime plugin installation or enable/disable therefore cannot appear to save
-successfully. Use the native administrator pages for the PostgreSQL-backed
-site, Keycloak, AI, approval, key, and MCP settings that this release supports.
+Mattermost AppError in v0.2.0. SMTP, S3, Redis, and link-preview toggles
+therefore cannot appear to save successfully. Runtime plugin lifecycle is a
+separate supported native workflow: an administrator with `manage_plugins`
+can upload, replace, enable, disable, configure, and delete reviewed
+Mattermost-style `.tar.gz` archives from **Integrations → Plugins**. Use the
+native administrator pages for the PostgreSQL-backed site, Keycloak, AI,
+approval, key, MCP, and plugin settings that this release supports.
 The application uses local file storage, no Redis fan-out, no SMTP delivery,
 and no outbound link-preview fetching by default.
 
-Run exactly one moyro application container in v0.1.1. PostgreSQL may be
+Run exactly one moyro application container in v0.2.0. PostgreSQL may be
 managed separately, but multi-replica application deployment and cross-node
 live-setting propagation are not supported until the HA/Redis work is
 completed.
 
-Any native executable provisioned under `/var/lib/moyro/plugins` is fully
-trusted code, not a sandboxed extension. It shares the service UID, process
-namespace, volume, and network; install only reviewed operator-approved
-binaries. The minimal plugin command environment is hygiene and does not
-provide secret isolation.
+Any native executable uploaded at runtime or provisioned under
+`/var/lib/moyro/plugins` is fully trusted code, not a sandboxed extension. It
+shares the service UID, process namespace, volume, and network; install only
+reviewed operator-approved archives. Moyro does not verify plugin signatures.
+Archive validation and the minimal plugin command environment are hygiene and
+do not provide secret isolation. Botman 0.1.2, Chatdump 0.5.1, Langflow
+0.1.20, and EchoSummary 0.6.5 define the local release-gate boundary. Public
+CI uses checksum-pinned public archives and currently exercises EchoSummary
+0.6.4. Their functional tests cover only the scenarios documented in
+[Plugin System](plugin-system.md); arbitrary Mattermost plugins, versions, and
+unlisted workflows are not implied compatible.
 
 ## Keycloak in an offline network
 
@@ -171,7 +180,7 @@ file volume can retain message metadata while losing attachments.
 5. Verify `/healthz`, the login page version, administrator login, file access,
    WebSocket delivery, and Keycloak login.
 
-Do not mix an earlier pre-moyro development build with a v0.1.1 node. Upgrade
+Do not mix an earlier pre-moyro development build with a v0.2.0 node. Upgrade
 the service as one coordinated operation and verify the matching database
 backup before discarding the prior container.
 
@@ -185,7 +194,7 @@ On a connected staging host, preload `postgres:16-alpine` and run the same
 offline check used by the release workflow:
 
 ```bash
-bash scripts/verify-release.sh moyro:v0.1.1 moyro-v0.1.1.tar.gz
+bash scripts/verify-release.sh moyro:v0.2.0 moyro-v0.2.0.tar.gz
 ```
 
 The script loads the archive, creates an internal-only Docker network, starts
@@ -203,9 +212,10 @@ logs in again. Temporary containers, network, and volume are removed on exit.
 - Only the four documented moyro application variables are present.
 - Keycloak and AI remain inactive until an administrator configures them;
   outgoing webhook callbacks are denied while the host allow-list is empty.
-- SMTP delivery, S3 storage, Redis fan-out, outbound link previews, and runtime
-  plugin lifecycle changes remain explicitly unsupported in v0.1.1 rather
-  than reporting a false successful save.
+- SMTP delivery, S3 storage, Redis fan-out, and outbound link previews remain
+  explicitly unsupported in v0.2.0 rather than reporting a false successful
+  save. Runtime plugin upload and lifecycle management are supported only for
+  reviewed Trusted Native archives through the native plugin page/API.
 - Network controls independently restrict container egress to approved internal
   endpoints; do not infer a blanket no-egress guarantee from feature defaults.
 - PostgreSQL and file-volume restore has been exercised.

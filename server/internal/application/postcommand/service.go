@@ -30,6 +30,7 @@ const (
 	SourceScheduled       Source = "scheduled"
 	SourceIncomingWebhook Source = "incoming_webhook"
 	SourceSlashCommand    Source = "slash_command"
+	SourcePlugin          Source = "plugin"
 )
 
 // Command is the transport-neutral input required to create a post.
@@ -63,6 +64,15 @@ type Command struct {
 	// SlashCommand identifies the built-in that synthesized the message. It is
 	// currently used to preserve the /me rendering marker.
 	SlashCommand string
+	// PluginID is server-owned provenance for posts created through the
+	// Mattermost plugin API. It is copied to trusted props and audit metadata;
+	// plugins cannot spoof another plugin because the runtime supplies it from
+	// the active generation rather than from Post.Props.
+	PluginID string
+	// PostType preserves Mattermost custom post renderers (for example a
+	// streaming Langflow response). It is persisted in a reserved prop because
+	// Moyro's v0.1 posts table predates Mattermost's type column.
+	PostType string
 }
 
 // FailureCode lets the HTTP adapter preserve its established Mattermost error
@@ -277,6 +287,7 @@ func (s *Service) Execute(ctx context.Context, command Command) (*posts.Post, er
 		}
 		return nil, fail(FailureSave, err)
 	}
+	post.Type = strings.TrimSpace(command.PostType)
 	s.incrementPostCount()
 	s.auditCreated(command, post)
 
@@ -309,6 +320,9 @@ func (s *Service) auditCreated(command Command, post *posts.Post) {
 	}
 	if scheduledPostID := strings.TrimSpace(command.ScheduledPostID); scheduledPostID != "" {
 		payload["scheduled_post_id"] = scheduledPostID
+	}
+	if pluginID := strings.TrimSpace(command.PluginID); pluginID != "" {
+		payload["plugin_id"] = pluginID
 	}
 	s.audit.LogAsync(post.UserID, audit.ActionPostCreate, post.ID, payload)
 }
@@ -524,12 +538,14 @@ func isReservedProp(key string) bool {
 	return key == "approval_request_id" || key == "scheduled_post_id" ||
 		key == "from_mcp" || key == "from_webhook" || key == "webhook_depth" ||
 		key == "override_username" || key == "override_icon_url" ||
-		key == "from_me_command" || strings.HasPrefix(key, "_moyro_")
+		key == "from_me_command" || key == "from_plugin" || key == "plugin_id" ||
+		strings.HasPrefix(key, "_moyro_")
 }
 
 func applyServerMetadata(command Command, props map[string]any) map[string]any {
 	approvalRequestID := strings.TrimSpace(command.ApprovalRequestID)
 	hasMetadata := command.Source == SourceMCP || command.Source == SourceIncomingWebhook ||
+		command.Source == SourcePlugin ||
 		(command.Source == SourceSlashCommand && strings.EqualFold(strings.TrimSpace(command.SlashCommand), "me")) ||
 		approvalRequestID != ""
 	if !hasMetadata {
@@ -556,6 +572,15 @@ func applyServerMetadata(command Command, props map[string]any) map[string]any {
 	}
 	if command.Source == SourceSlashCommand && strings.EqualFold(strings.TrimSpace(command.SlashCommand), "me") {
 		trusted["from_me_command"] = true
+	}
+	if command.Source == SourcePlugin {
+		trusted["from_plugin"] = true
+		if pluginID := strings.TrimSpace(command.PluginID); pluginID != "" {
+			trusted["plugin_id"] = pluginID
+		}
+		if postType := strings.TrimSpace(command.PostType); postType != "" {
+			trusted["_moyro_post_type"] = postType
+		}
 	}
 	if approvalRequestID != "" {
 		trusted["approval_request_id"] = approvalRequestID

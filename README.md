@@ -1,10 +1,14 @@
 # moyro
 
-moyro is a Mattermost-compatible chat platform. The product goal is not a
-pixel-for-pixel clone; it is a practical compatibility layer for
-Mattermost-style clients, bots, webhooks, slash commands, and extension
-concepts while remaining small enough to evolve quickly. Existing Mattermost
-server plugin binaries are not ABI-compatible with moyro's native plugin host.
+moyro is a self-hosted enterprise collaboration platform with a
+Mattermost-compatible boundary and built-in AI, MCP, approval, and audit
+controls. Its product experience is **one workspace to read conversations,
+make decisions, and act**: a global rail connects the Today summary, unified
+inbox, channel workspace, personal work, approvals, AI, and search. The goal
+is not a pixel-for-pixel clone; Mattermost-style clients, bots, webhooks, slash
+commands, and extension concepts remain familiar while the UI can evolve as
+Moyro Flow. Moyro supports its native plugin SDK and a tested subset of the
+Mattermost v1 server-plugin binary ABI.
 
 Product site: <https://hkjang.github.io/moyro/>
 
@@ -25,18 +29,26 @@ Product site: <https://hkjang.github.io/moyro/>
 - Posts, threads, edits, deletes, pins, reactions, markdown, mentions
 - File upload/download, thumbnails, custom emoji, image lightbox
 - WebSocket events with reconnect reconciliation and unread counters
+- Moyro Flow navigation with Today, channel-level unified inbox, My Work for
+  saved/scheduled/reminder data, team-scoped search, and a scoped approval center
+- A workspace context panel for threads, user-triggered AI summary of currently
+  loaded messages, files from those messages, and channel information
 - Search, saved posts, public channel discovery, and a link-preview foundation
-  (outbound previews are disabled by the offline-safe v0.1.1 runtime)
+  (outbound previews are disabled by the offline-safe v0.2.0 runtime)
 - Incoming/outgoing webhooks, slash commands, bots, personal access tokens
 - OAuth compatibility hooks, limited-use invite links, audit logs, and metrics
 - Scheduled messages with PostgreSQL leases and duplicate-post prevention, plus post reminders
 - Versioned, checksummed PostgreSQL migrations with upgrade/restart validation
 - Hashed session lookup identifiers, SMTP capability reporting, and durable
   outgoing-webhook delivery with retry/dead-letter state
-- Server plugin host with Mattermost-style RPC hook surface; v0.1.1 loads fully
-  trusted, operator-provisioned native plugins at startup and does not claim
-  sandboxing, secret isolation, or runtime lifecycle updates
-- Web plugin registry/runtime skeleton
+- Dual server-plugin runtime for Moyro SDK plugins and tested Mattermost v1
+  archives, with admin tar.gz install, enable/disable/delete, encrypted config,
+  PostgreSQL KV, plugin HTTP, restart recovery, and audit events; all native
+  plugins remain fully trusted and unsandboxed
+- Authenticated web-plugin discovery and a reactive Mattermost-style registry
+- A permission-aware SSE AI assistant. Conversation state is browser-session
+  only; v0.2.0 does not claim RAG, durable AI history, Task/Decision records,
+  or AI-triggered actions
 
 ## Quick Start
 
@@ -89,16 +101,24 @@ variables. See the [Offline Deployment Guide](docs/offline-deployment.md) for
 the complete load, run, backup, and upgrade procedure. A redacted four-key
 template is available at [`deploy/docker/moyro.env.example`](deploy/docker/moyro.env.example).
 
-The supported v0.1.1 topology is one moyro application container connected to
+The supported v0.2.0 topology is one moyro application container connected to
 external PostgreSQL, with uploads on the local `/var/lib/moyro` volume. The
 four-variable production contract does not expose SMTP configuration, so email
 is reported unavailable and no digest worker records false delivery success.
-SMTP administration, S3, Redis fan-out, outbound link previews, multi-replica
-operation, and runtime plugin installation or enable/disable are not supported
-in this release.
-Native plugin executables placed in the image or data volume are fully trusted
-operator code, not sandboxed extensions. Keycloak OIDC additionally requires
+SMTP administration, S3, Redis fan-out, outbound link previews, and
+multi-replica operation are not supported in this release. Runtime plugin
+upload and lifecycle management are supported for reviewed Mattermost-style
+archives; Marketplace and URL installation are not.
+Native plugin executables, whether uploaded or pre-provisioned, are fully
+trusted operator code, not sandboxed extensions. Keycloak OIDC additionally requires
 the canonical public Site URL to be saved before the provider is enabled.
+
+The PostgreSQL real-archive E2E boundary is Botman 0.1.2, Chatdump 0.5.1,
+Langflow 0.1.20, and EchoSummary 0.6.5 in the local release gate. Public CI
+uses the checksum-pinned published EchoSummary 0.6.4 archive. The exercised
+status/config, export/replace, mock Langflow SSE bot, and mock vLLM slash/DM
+workflows are not a promise that arbitrary Mattermost plugins or every feature
+of these plugins is compatible. See the [Plugin System](docs/plugin-system.md).
 
 ## Verification
 
@@ -142,6 +162,9 @@ powershell -ExecutionPolicy Bypass -File scripts\audit-mattermost-api.ps1 -Outpu
 - [Offline Deployment](docs/offline-deployment.md)
 - [User Guide](docs/guides/user-guide.html)
 - [Administrator Guide](docs/guides/admin-guide.html)
+- [Product Screens](docs/screens.html) — 41 browser-captured v0.2.0 views,
+  including the 16 Moyro Flow/context views and three tested plugin
+  compatibility states
 - [Brand Assets](docs/assets/brand/README.md) — canonical SVG mark and wordmark,
   favicon, PWA icons, and the social sharing card
 

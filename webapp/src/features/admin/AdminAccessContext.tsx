@@ -7,6 +7,7 @@ export const ADMIN_PERMISSIONS = [
   "manage_settings",
   "manage_oidc",
   "manage_ai",
+  "manage_plugins",
   "manage_key_permissions",
   "manage_roles",
   "manage_api_keys",

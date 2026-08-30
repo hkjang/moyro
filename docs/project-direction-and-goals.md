@@ -1,11 +1,11 @@
 # moyro 프로젝트 방향성과 목표 분석
 
-> 분석 기준일: 2026-08-29
+> 분석 기준일: 2026-08-30
 > 역사 기준선: 기존 저장소의 `48e69ca`와 그 이전 커밋 이력
-> 현재 상태 기준선: 2026-08-29 릴리스 후보 작업 트리와 제품·설계 문서, 서버·웹앱·플러그인 SDK 소스
-> 문서 목적: 저장소에 남은 증거로 처음 지향한 제품 방향을 복원하고, 별도로 표시한 현재 상태 절에서 릴리스 후보가 그 방향에 어디까지 도달했는지 설명한다.
+> 현재 상태 기준선: 2026-08-30 v0.2.0 릴리스 작업 트리와 제품·설계 문서, 서버·웹앱·플러그인 SDK 소스
+> 문서 목적: 저장소에 남은 증거로 처음 지향한 제품 방향을 복원하고, 별도로 표시한 현재 상태 절에서 v0.2.0 릴리스가 그 방향에 어디까지 도달했는지 설명한다.
 
-> **해석 주의:** 여기서 “원래 방향”은 최초로 복구 가능한 Git 스냅샷에 남은 방향을 뜻한다. Mattermost 호환은 설계 목표이며, 아래의 100% 수치는 특정 시점 작업 트리의 HTTP method/path 존재율이다. 공식 클라이언트의 행동 호환, 기존 플러그인의 무수정 실행, 프로덕션급 온프레미스·HA·모바일·상용 준비 상태를 뜻하지 않는다.
+> **해석 주의:** 여기서 “원래 방향”은 최초로 복구 가능한 Git 스냅샷에 남은 방향을 뜻한다. Mattermost 호환은 설계 목표이며, 아래의 100% 수치는 특정 시점 작업 트리의 HTTP method/path 존재율이다. 공식 클라이언트의 행동 호환, 모든 기존 플러그인의 무수정 실행, 프로덕션급 온프레미스·HA·모바일·상용 준비 상태를 뜻하지 않는다.
 
 ## 1. 결론
 
@@ -112,9 +112,9 @@ MVP에는 다음 범위가 포함되었다. ([requirements.md](requirements.md):
 
 근거: [plugin-system.md](plugin-system.md):28-76, [host.go](../server/internal/pluginhost/host.go):125-227, [registry.ts](../webapp/src/plugins/registry.ts):28-76.
 
-장기 목표는 관리자가 재시작 없이 플러그인을 설치·활성화·비활성화·설정하고, 상태·로그·건강·hook 오류를 확인하는 운영형 확장 플랫폼이다. ([plugin-system.md](plugin-system.md):78-90)
+장기 목표였던 재시작 없는 설치·활성화·비활성화·삭제·설정은 현재 lifecycle에 구현됐다. 다음 운영 과제는 상태·로그·health·hook 오류와 장애 격리를 강화하는 것이다. ([plugin-system.md](plugin-system.md))
 
-다만 이 목표는 **기존 Mattermost 플러그인 바이너리의 무수정 실행**을 의미하지 않는다. 실제 프로토콜은 `MOYRO_PLUGIN`, `moyro.v1`, RPC 서비스명 `Moyro`라는 자체 규약을 사용한다. 따라서 manifest와 hook 개념 및 개발 경험을 맞춰 포팅 비용을 낮추는 수준으로 해석하는 것이 안전하다. ([protocol.go](../server/internal/rpcbridge/protocol.go):3-27)
+초기 구현은 `MOYRO_PLUGIN`, `moyro.v1`, RPC 서비스명 `Moyro`라는 자체 규약만 사용했다. 현재는 이 `moyro_v1`을 유지하면서 `mattermost_v1` 바이너리 런타임을 추가했다. Botman 0.1.2, Chatdump 0.5.1, Langflow 0.1.20과 local release gate의 EchoSummary 0.6.5는 실제 PostgreSQL archive 기능 시나리오를 거친다. 공개 CI는 checksum으로 고정한 EchoSummary 0.6.4 자산을 사용한다. 이 네 플러그인의 명시된 workflow만 경계에 포함되며 모든 Mattermost 플러그인·버전·기능에 대한 완전한 ABI·API 호환을 의미하지는 않는다. ([plugin-system.md](plugin-system.md))
 
 ### 목표 5 — 작은 내부 구조로 빠르게 진화한다
 
@@ -197,7 +197,7 @@ flowchart LR
 
 ## 8. 현재 구현과 원래 목표의 거리
 
-이 절부터는 위의 역사 복원과 달리 **2026-08-29 릴리스 후보 작업 트리의 현재 상태**를 설명한다. 따라서 최초 분석 뒤에 해결된 항목은 해결 상태와 남은 회귀 검증을 함께 기록한다.
+이 절부터는 위의 역사 복원과 달리 **2026-08-30 v0.2.0 릴리스 작업 트리의 현재 상태**를 설명한다. 따라서 최초 분석 뒤에 해결된 항목은 해결 상태와 남은 회귀 검증을 함께 기록한다.
 
 | 영역 | 현재 판단 | 근거와 남은 거리 |
 | --- | --- | --- |
@@ -205,8 +205,8 @@ flowchart LR
 | REST route shape | 넓게 확보 | 2026-04-28 작업 트리 audit는 공식 539개 중 539개 match, 100%를 기록한다. 그러나 이는 당시 작업 트리 측정이며 행동 호환이나 현재 고정 릴리스 계약 수치가 아니다. ([mattermost-api-compatibility.md](mattermost-api-compatibility.md):252-268) |
 | 행동·오류 계약 | 부분 구현 | router와 handler에 이메일 확인, MFA, 채널 view, 업로드, recap, AI, cloud 등 200/빈 응답 stub이 다수 명시되어 있다. 성공·오류·권한·not-found 계약 테스트가 더 필요하다. |
 | 실제 클라이언트 호환 | 입증 부족 | 자체 React 웹앱은 동작하지만 공식 desktop/mobile/SDK의 end-to-end 호환 결과와 버전별 지원표는 없다. 최초 “샘플 80%” 기준도 자동화된 결과로 남아 있지 않다. |
-| 서버 플러그인 | 핵심 경로 동작 | manifest, subprocess, RPC, 게시 전·후 hook과 명령 순서는 구현·테스트됐다. v0.1.1 플러그인은 운영자가 이미지에 넣은 완전 신뢰 native code이며 비신뢰 코드 격리 경계가 아니다. 런타임 upload/install/enable/disable 경로는 이제 거짓 성공 대신 명시적인 not-supported 오류를 반환하지만, 동적 lifecycle, 설정 영속화, health, 재시작과 `ServeHTTP` 노출은 후속 범위다. ([admin_compat_handlers.go](../server/internal/httpapi/admin_compat_handlers.go), [plugin-system.md](plugin-system.md)) |
-| 웹 플러그인 | 골격 | runtime과 registry는 있으나 현재 `ChatView`가 registry 상태를 구독·렌더링하지 않는다. admin bundle discovery, 오류 격리와 SDK 계약 테스트도 부족하다. ([registry.ts](../webapp/src/plugins/registry.ts):28-76, [runtime.ts](../webapp/src/plugins/runtime.ts):21-59) |
+| 서버 플러그인 | 네 실제 archive의 기능 경로 동작 | `moyro_v1` SDK 플러그인과 테스트된 `mattermost_v1` 바이너리 ABI를 함께 지원한다. 관리자 tar.gz upload, replace, enable/disable/delete, 암호화 설정, PostgreSQL KV, plugin HTTP와 재시작 복구가 구현됐다. Botman 0.1.2 status/config 보안, Chatdump 0.5.1 export/config/replace, Langflow 0.1.20 mock SSE bot post/update/event/history, EchoSummary 0.6.5 mock vLLM slash/DM을 실제 PostgreSQL archive E2E로 검증한다. 공개 CI의 EchoSummary fixture는 checksum-pinned 0.6.4다. 모든 native 플러그인은 여전히 완전 신뢰 코드이고, 지원하지 않는 Mattermost API·서명·sandbox·Marketplace는 후속 범위다. ([plugin-system.md](plugin-system.md)) |
+| 웹 플러그인 | 테스트된 registry/store 표면 동작 | 인증된 bundle discovery와 동적 load/unload, 공유 React·Redux·Router globals, bounded Mattermost-shaped users/teams/channels/posts/preferences/RHS state, thunk dispatch, channel header, post renderer, official-style RHS action, custom WebSocket handler, admin callback/custom setting과 user setting 소비가 연결됐다. Mattermost 전체 web registry/store 계약과 bundle 오류 격리는 지원 범위가 아니다. ([registry.ts](../webapp/src/plugins/registry.ts), [runtime.ts](../webapp/src/plugins/runtime.ts)) |
 | System Console | 지원 기능은 실제 API에 연결 | 별도 full-page 운영 면과 사이트·OIDC·AI·키·역할·MCP·승인 관리 API가 연결돼 있다. 유효 권한에 따라 위임 관리자 메뉴와 route를 제한하며, 레거시 호환 화면의 미지원 변경은 명시적인 not-supported 응답을 사용한다. Enterprise 전체 호환 화면이 실제 제품 기능이라는 뜻은 아니다. ([AdminAccessContext.tsx](../webapp/src/features/admin/AdminAccessContext.tsx), [AppRouter.tsx](../webapp/src/app/AppRouter.tsx)) |
 | WebSocket 권한 경계 | 차단 위험 해결, 회귀 유지 필요 | channel/team event는 DB membership으로 audience를 해석하고 resolver가 없거나 실패하면 fail closed한다. user 전용과 전역 event 의미도 분리해 단위 회귀 테스트를 추가했다. 실제 PostgreSQL을 둔 다중 사용자 E2E는 계속 릴리스 회귀 항목으로 유지한다. ([hub.go](../server/internal/ws/hub.go), [audience.go](../server/internal/ws/audience.go), [hub_test.go](../server/internal/ws/hub_test.go)) |
 | 세션 폐기 | 차단 위험 해결, 회귀 유지 필요 | HTTP와 WebSocket의 최초 인증은 JWT 서명뿐 아니라 live session, 만료와 active user를 확인한다. logout은 session을 삭제하고 기존 WebSocket도 즉시 종료한다. revoke·inactive까지 포함한 실제 서버 통합 회귀는 계속 보강 대상이다. ([auth.go](../server/internal/auth/auth.go), [handler.go](../server/internal/ws/handler.go), [handlers.go](../server/internal/httpapi/handlers.go)) |
@@ -214,23 +214,24 @@ flowchart LR
 | DB 변경 관리 | 번호형 migration 도입 | 체크섬과 적용 이력을 기록하는 순차 migration과 PostgreSQL 15/16 lifecycle test를 도입했다. v0.1 baseline은 불변 migration으로 보존한다. |
 | 비동기 내구성 | lease/outbox 도입, 원자성 경계 남음 | 예약 발송은 claim token·lease·attempt·unique result post로 중복을 막고, outgoing webhook은 PostgreSQL delivery/attempt/DLQ 상태로 재시작 후 복구된다. 다만 post 저장과 webhook enqueue는 아직 별도 transaction이라 그 사이의 crash gap은 남아 있다. |
 | 운영 | 부분 구현 | health, metrics, Redis fan-out, S3, SMTP worker는 존재. 실제 K8s 배포, backup/restore, 운영 config reference, 완전한 HA 검증은 문서상 다음 작업이다. |
-| 보안·Enterprise | 제품 범위는 구현, 호환 표면은 혼합 | DB RBAC·감사·rate limit, Keycloak OIDC, 개인 API/MCP 키와 승인 정책은 구현됐다. MFA, LDAP/SAML, 보존 정책, 플러그인 서명·sandbox 같은 Mattermost Enterprise 범위는 미지원 또는 후속이며 v0.1.1 플러그인은 완전 신뢰 코드다. |
+| 보안·Enterprise | 제품 범위는 구현, 호환 표면은 혼합 | DB RBAC·감사·rate limit, Keycloak OIDC, 개인 API/MCP 키와 승인 정책은 구현됐다. MFA, LDAP/SAML, 보존 정책, 플러그인 서명·sandbox 같은 Mattermost Enterprise 범위는 미지원 또는 후속이며 v0.2.0 릴리스의 native 플러그인은 완전 신뢰 코드다. |
 | 모바일·음성·화상 | 범위 밖 또는 후속 | MVP에서 음성·화상은 제외되고 모바일은 후속 단계다. 현재 저장소에는 네이티브 모바일 앱이 없다. |
 
-WebSocket audience와 live-session 검증은 최초 분석에서 확인한 릴리스 차단 위험이었으나 현재 후보에서 수정됐다. 이 평가는 단위·패키지 테스트와 정적 소스 감사에 근거하며 별도 침투 테스트 결과는 아니다. 따라서 해결된 항목을 다시 깨뜨리지 않도록 통합·브라우저 회귀 gate는 유지해야 한다.
+WebSocket audience와 live-session 검증은 최초 분석에서 확인한 릴리스 차단 위험이었으나 v0.2.0에서 수정됐다. 이 평가는 단위·패키지 테스트와 정적 소스 감사에 근거하며 별도 침투 테스트 결과는 아니다. 따라서 해결된 항목을 다시 깨뜨리지 않도록 통합·브라우저 회귀 gate는 유지해야 한다.
 
 참고로 audit 스크립트의 동일한 method/path 파서를 당시 539개 공식 목록에 적용한 비교에서는 현재 clean `HEAD`가 local 379개, match 333개, missing 206개(61.78%)이고 작업 트리가 local 595개, match 539개(100%)였다. 이 61.78%도 당시 목록을 재사용한 파생 비교치이지 최신 공식 Mattermost 기준은 아니다. 핵심은 **100%가 커밋·릴리스 기준선이 아니라는 점**이다. 감사 도구 자체도 body, status, auth, error, side effect를 검사하지 않는다. ([audit-mattermost-api.ps1](../scripts/audit-mattermost-api.ps1):59-128)
 
-### 현재 릴리스 후보 검증 결과
+### v0.2.0 릴리스 검증 결과
 
-- `server`의 `go test ./...`: 통과. 현재 서버에는 139개의 `Test*` 함수가 있지만 여전히 직접 테스트가 없는 서비스 패키지가 있다.
-- `plugin-sdk/go`의 `go test ./...`: 통과.
-- 웹앱 `npm run typecheck`와 `npm run build`: 통과. route lazy loading으로 main JavaScript는 1,359.40 kB에서 237.19 kB로 줄었지만, 데이터 그리드가 포함된 개인 키 feature chunk는 추가 분리 대상이다.
-- 현재 후보로 linux/amd64 non-root Docker 이미지를 빌드하고 Playwright 제품 route·새로고침·권한 변경·승인 idempotency·세션 폐기·REST 오류 계약·로그인/프로필 버전·모바일 viewport·브라우저 오류 검증 27개를 릴리스 gate로 실행한다. ([package.json](../webapp/package.json), [product-pages.spec.ts](../webapp/e2e/product-pages.spec.ts))
-- 최신 E2E에서 캡처한 25개 화면을 Pages에 반영했다. 정적 검증은 5개 HTML의 링크·JSON-LD와 JPEG SOF 실제 크기/HTML 선언을 확인하며, desktop `1440x1000`과 mobile `430x932` 기준으로 통과했다.
-- tag workflow는 `moyro-v0.1.1.tar.gz`를 만든 뒤 내부 전용 Docker network에서 다시 load해 offline startup, web UI/version, bootstrap login, restart와 정확히 네 개의 애플리케이션 환경변수를 검증한 자산 하나만 GitHub Release에 게시한다. Pages workflow는 `docs/` 홍보·가이드·실제 제품 캡처를 별도로 배포한다.
-- 저장소의 OpenAPI 3.1 초안은 v0.1.1 세션·예약 메시지 계약을 포함해 28개 path, 31개 operation을 기술한다. Redocly 구조 검증은 통과하지만 수백 개 실제 route의 완전한 계약 문서는 아니므로 router와 OpenAPI 수렴은 계속 필요하다. ([roadmap.md](roadmap.md):16-21)
-- `handlers.go` 약 10,100줄은 `handlers.go` 4,875줄과 `compat_wave_handlers.go` 5,084줄로 분할했다. `ChatView.tsx` 약 4,620줄, `IntegrationsPanel.tsx` 약 1,945줄 등 다음 분리 대상에는 CI source-size ratchet을 적용해 다시 커지지 않게 했다.
+- `server`의 `go test -race ./...`, `go vet ./...`, `govulncheck ./...`: 통과했고 Moyro 실행 경로에서 도달 가능한 취약점은 0건이다. 현재 서버에는 246개의 `Test*` 함수가 있지만 여전히 직접 테스트가 없는 서비스 패키지가 있다.
+- `plugin-sdk/go`의 `go test -race ./...`와 `go vet ./...`: 통과.
+- 웹앱 의존성 감사, `npm test`, `npm run typecheck`, `npm run build`: 통과했고 npm 취약점은 개발 의존성을 포함해 0건이다. route lazy loading으로 Flow·설정·관리·채팅 기능을 별도 chunk로 분리했지만, 데이터 그리드가 포함된 개인 키 feature chunk는 추가 분리 대상이다.
+- PostgreSQL 15·16 고정 digest별 migration·store·RBAC·승인·세션 통합 테스트와 race·vet 검증: 통과.
+- v0.2.0 linux/amd64 non-root Docker 이미지의 Playwright release scenario는 제품 route·새로고침·권한 변경·승인 idempotency·세션 폐기·REST 오류 계약·로그인/프로필 버전·Moyro Flow 원문 이동·모바일 viewport·실제 plugin archive·브라우저 오류 검증 50개를 실행한다. ([package.json](../webapp/package.json), [product-pages.spec.ts](../webapp/e2e/product-pages.spec.ts), [plugin-compatibility.spec.ts](../webapp/e2e/plugin-compatibility.spec.ts))
+- v0.2.0 화면 카탈로그는 41개 실제 캡처다. 26개 인증 desktop route, desktop 컨텍스트 상태, 로그인·프로필 메뉴, 세 개의 plugin compatibility 상태와 9개 mobile 상태를 포함한다. 정적 검증은 HTML 링크·JSON-LD와 JPEG SOF 실제 크기/HTML 선언을 확인한다. 이 증거는 명시된 화면과 plugin workflow의 회귀 범위이며 임의의 Mattermost 플러그인이나 모든 클라이언트 호환을 의미하지 않는다.
+- tag workflow는 `moyro-v0.2.0.tar.gz`를 만든 뒤 내부 전용 Docker network에서 다시 load해 offline startup, web UI/version, bootstrap login, restart와 정확히 네 개의 애플리케이션 환경변수를 검증한 자산 하나만 GitHub Release에 게시한다. Pages workflow는 `docs/` 홍보·가이드·실제 제품 캡처를 별도로 배포한다.
+- 저장소의 OpenAPI 3.1 초안은 v0.2.0 세션·예약 메시지·플러그인 관리 계약을 포함해 37개 path, 42개 operation을 기술한다. Redocly 구조 검증은 통과하지만 수백 개 실제 route의 완전한 계약 문서는 아니므로 router와 OpenAPI 수렴은 계속 필요하다. ([roadmap.md](roadmap.md):16-21)
+- `handlers.go` 약 10,100줄은 `handlers.go` 4,969줄과 `compat_wave_handlers.go` 5,084줄로 분할했다. `ChatView.tsx`는 워크스페이스 feature와 예약·리마인더 다이얼로그를 추출해 3,558줄까지 줄였고 `IntegrationsPanel.tsx`는 1,902줄이다. 남은 대형 파일에는 CI source-size ratchet을 적용해 다시 커지지 않게 했다.
 
 ## 9. 원래 방향에서 제외되거나 후순위였던 것
 
@@ -239,7 +240,7 @@ WebSocket audience와 live-session 검증은 최초 분석에서 확인한 릴�
 - **픽셀 단위 Mattermost 복제**: 명시적으로 부정되어 있다.
 - **Mattermost 내부 구조의 재현**: 호환 약속은 공개 경계에 있고 내부는 단순화할 수 있다.
 - **모든 Enterprise·Cloud·AI 기능의 실제 제공**: backing service가 없으면 호환되는 disabled/not-available 응답을 주는 것이 현재 전략이다. ([mattermost-api-compatibility.md](mattermost-api-compatibility.md):106-114)
-- **기존 서버 플러그인 바이너리의 완전한 ABI 호환**: 현재는 자체 RPC 프로토콜을 사용한다.
+- **모든 기존 서버 플러그인 바이너리의 완전한 ABI 호환**: `mattermost_v1`은 검증된 ABI·API subset이며, 그 밖의 플러그인은 개별 호환성 검증이 필요하다.
 - **초기 네이티브 모바일 앱, 음성·화상**: 모바일은 후속이고 음성·화상은 MVP에서 제외되었다.
 - **SaaS 또는 멀티테넌트 사업**: 조직/워크스페이스 UI 개념은 있지만 배포·테넌시 모델은 문서로 확정되지 않았다.
 - **특정 상용화·오픈소스 모델**: “상용 수준”이라는 성숙도 표현은 있으나 저장소에 LICENSE와 사업 모델이 없다.
@@ -275,9 +276,9 @@ WebSocket audience와 live-session 검증은 최초 분석에서 확인한 릴�
 
 ### 4순위 — 확장 플랫폼의 운영 가능성 완성
 
-- 플러그인 설치·활성화·비활성화·설정·로그·health·restart를 하나의 lifecycle로 연결한다.
-- 서버 API 권한 모델과 웹 bundle 오류 격리를 정의한다.
-- 예제 SDK를 실제 host와 실행하는 계약 테스트로 승격한다.
+- 구현된 설치·활성화·비활성화·삭제·설정·재시작 lifecycle에 health, hook timeout, 장애 격리를 추가한다.
+- 지원하는 Mattermost API subset을 실제 플러그인 계약 테스트와 함께 점진적으로 넓힌다.
+- 서버 API 권한 모델을 세분화하고 웹 bundle 오류 격리를 강화한다.
 
 ### 5순위 — 자체 운영 제품의 기본기
 

@@ -1,6 +1,6 @@
 # Mattermost API Compatibility
 
-Status date: 2026-04-26
+Status date: 2026-08-30
 
 moyro targets Mattermost API v4 compatibility. The official Mattermost
 developer documentation describes the REST API as a JSON web service for
@@ -114,9 +114,13 @@ permission denial, and not-found behavior where applicable.
      retention, OAuth apps, import/export, and compliance reports.
 
 7. Plugin/webapp compatibility
-   - Add `/plugins/statuses`, `/plugins/webapp`, marketplace read stubs, and
-     lifecycle endpoints.
-   - Connect admin UI controls to the same route shapes.
+   - Keep `/plugins/statuses`, `/plugins/webapp`, lifecycle endpoints, and the
+     connected admin controls compatible with the tested plugin subset.
+   - Expand server API methods, hooks, web registry contracts, and automated
+     real-archive fixtures one plugin at a time; do not treat archive-shape
+     compatibility as universal Mattermost plugin compatibility.
+   - Keep marketplace reads separate from Trusted Native archive installation;
+     native server executables are not sandboxed.
 
 ## UI/UX Plan
 
@@ -248,6 +252,15 @@ Admin UI now uses these same Mattermost route shapes in the System Console:
 system status/config/logs, plugin lifecycle controls, role permission browse,
 job creation/cancel smoke controls, and the compliance/policy compatibility
 surface.
+
+The plugin compatibility slice additionally runs real archives against
+PostgreSQL. Botman 0.1.2 covers status and encrypted configuration, Chatdump
+0.5.1 covers export/configuration/replacement, Langflow 0.1.20 covers a mock
+SSE bot post/update/custom-event/history flow, and the local release gate's
+EchoSummary 0.6.5 covers a mock vLLM slash-command-to-DM flow. Public CI uses
+the checksum-pinned published EchoSummary 0.6.4 fixture. This is a named
+workflow boundary, not universal Mattermost plugin compatibility; the exact
+server API and web registry/store subset is in [Plugin System](plugin-system.md).
 
 ## Parallel Workspace Progress
 

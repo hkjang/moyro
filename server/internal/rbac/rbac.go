@@ -17,6 +17,7 @@ const (
 	PermissionManageSettings         = "manage_settings"
 	PermissionManageOIDC             = "manage_oidc"
 	PermissionManageAI               = "manage_ai"
+	PermissionManagePlugins          = "manage_plugins"
 	PermissionUseAI                  = "use_ai"
 	PermissionManageAPIKeys          = "manage_api_keys"
 	PermissionManageOwnAPIKeys       = "manage_own_api_keys"

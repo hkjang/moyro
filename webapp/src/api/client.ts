@@ -149,6 +149,24 @@ export type LinkPreview = {
 
 export type PostList = { order: string[]; posts: Record<string, Post> };
 
+// The native saved-posts route preserves the Mattermost `order` envelope,
+// but returns the visible posts as an array because membership filtering can
+// remove rows. Keep that wire shape explicit instead of pretending every
+// post-list endpoint has the same map representation.
+export type SavedPostsResponse = {
+  order: string[];
+  posts: Post[] | Record<string, Post>;
+};
+
+export function orderedSavedPosts(result: SavedPostsResponse): Post[] {
+  const rows = Array.isArray(result.posts) ? result.posts : Object.values(result.posts ?? {});
+  if (!Array.isArray(result.order) || result.order.length === 0) return rows;
+  const byId = Object.fromEntries(rows.map((post) => [post.id, post]));
+  const ordered = result.order.map((id) => byId[id]).filter((post): post is Post => Boolean(post));
+  const orderedIDs = new Set(ordered.map((post) => post.id));
+  return [...ordered, ...rows.filter((post) => !orderedIDs.has(post.id))];
+}
+
 // Phase 18: ranked search result envelope.
 export type SearchResult = {
   order: string[];
@@ -313,6 +331,14 @@ export type ScheduledPost = {
   create_at: number;
   sent_at: number;
   error_text: string;
+  status: "pending" | "processing" | "retry" | "succeeded" | "dead" | "cancelled" | string;
+  claimed_at?: number;
+  lease_until?: number;
+  attempt_count: number;
+  next_attempt_at?: number;
+  last_error_code?: string;
+  last_error_text?: string;
+  result_post_id?: string;
 };
 
 export type Reminder = {
@@ -491,10 +517,11 @@ export const api = {
       },
     }),
 
-  // Phase 18: saved posts (personal bookmarks). List returns the same
-  // shape as channel post listings so the UI can reuse MessageRow.
+  // Phase 18: saved posts (personal bookmarks). The native route returns
+  // an order envelope with an array after membership filtering; tolerate a
+  // map too for Mattermost-compatible deployments.
   listSavedPosts: (token: string, limit = 20, offset = 0) =>
-    request<PostList>(
+    request<SavedPostsResponse>(
       token,
       `/users/me/saved_posts?limit=${limit}&offset=${offset}`,
     ),
@@ -859,8 +886,6 @@ export type OutgoingWebhook = {
   delete_at: number;
 };
 
-// ---- Admin/operator compatibility types ----
-
 export type AdminConfigSnapshot = Record<string, Record<string, unknown>>;
 
 export type AdminClusterNode = {
@@ -881,12 +906,47 @@ export type AdminPlugin = {
   version?: string;
   state?: string;
   description?: string;
+	 enabled?: boolean;
+	 runtime?: string;
+	 error?: string;
+	 manifest?: Record<string, unknown>;
   [key: string]: unknown;
 };
 
 export type AdminPluginStatus = {
   plugin_id: string;
   state: string;
+};
+
+export type PluginWebappBundle = {
+  id: string;
+  version: string;
+  url: string;
+};
+
+export type PluginInstallResult = {
+  id: string;
+  version: string;
+  state: string;
+  enabled: boolean;
+  runtime: string;
+  sha256: string;
+  replaced: boolean;
+};
+
+export type PluginConfiguration = {
+  configuration: Record<string, unknown>;
+  schema: Record<string, unknown>;
+};
+
+export type PluginManagementCapabilities = {
+  management_enabled: boolean;
+  uploads_enabled: boolean;
+};
+
+export const pluginApi = {
+  listWebapps: (token: string) =>
+    request<PluginWebappBundle[]>(token, "/plugins/webapp"),
 };
 
 export type AdminRole = {
@@ -919,12 +979,6 @@ export type AdminAccessControlSearchResult = {
   total_count?: number;
   [key: string]: unknown;
 };
-
-// ---- Phase 12 API extensions ----
-//
-// Mutating the frozen `api` literal above would force a reorganisation of
-// the whole file; instead, extend it as a secondary export and merge at
-// the call site. Works cleanly because `api` is a const, not a class.
 
 export const integrationsApi = {
   // bots
@@ -1071,6 +1125,8 @@ export const adminApi = {
     request<{ status: string }>(token, "/server_busy", { method: "DELETE" }),
 
   listPlugins: (token: string) => request<AdminPlugin[]>(token, "/plugins"),
+  getPluginManagementCapabilities: (token: string) =>
+    request<PluginManagementCapabilities>(token, "/plugins/capabilities"),
   listPluginStatuses: (token: string) =>
     request<AdminPluginStatus[]>(token, "/plugins/statuses"),
   enablePlugin: (token: string, pluginId: string) =>
@@ -1081,6 +1137,33 @@ export const adminApi = {
     request<{ status: string }>(token, `/plugins/${encodeURIComponent(pluginId)}/disable`, {
       method: "POST",
     }),
+  uploadPlugin: (token: string, file: File, replace = false) => {
+    const body = new FormData();
+    body.set("plugin", file, file.name);
+    return request<PluginInstallResult>(
+      token,
+      `/plugins${replace ? "?force=true" : ""}`,
+      { method: "POST", body },
+    );
+  },
+  deletePlugin: (token: string, pluginId: string) =>
+    request<{ status: string }>(token, `/plugins/${encodeURIComponent(pluginId)}`, {
+      method: "DELETE",
+    }),
+  getPluginConfiguration: (token: string, pluginId: string) =>
+    request<PluginConfiguration>(
+      token,
+      `/plugins/${encodeURIComponent(pluginId)}/configuration`,
+    ),
+  updatePluginConfiguration: (
+    token: string,
+    pluginId: string,
+    configuration: Record<string, unknown>,
+  ) => request<{ status: string }>(
+    token,
+    `/plugins/${encodeURIComponent(pluginId)}/configuration`,
+    { method: "PUT", body: { configuration } },
+  ),
 
   listRoles: (token: string) => request<AdminRole[]>(token, "/roles"),
   patchRole: (token: string, roleId: string, permissions: string[]) =>

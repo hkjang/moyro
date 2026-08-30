@@ -1,0 +1,63 @@
+.admin-status-card {
+  height: 100%;
+  border-color: var(--flow-border, #dfe3ea);
+  border-radius: var(--flow-radius-card, 10px);
+  background: var(--flow-surface, #fff);
+  transition: border-color var(--flow-motion-fast, 140ms) ease, transform var(--flow-motion-fast, 140ms) ease;
+}
+
+.admin-status-card:hover {
+  border-color: color-mix(in srgb, var(--flow-brand, #3157d5) 32%, var(--flow-border, #dfe3ea));
+  transform: translateY(-1px);
+}
+
+.admin-status-icon {
+  display: grid;
+  width: 40px;
+  height: 40px;
+  place-items: center;
+  border-radius: 10px;
+  background: var(--flow-surface-subtle, #f6f7f9);
+  color: var(--flow-text-muted, #667085);
+}
+
+.admin-status-icon.tone-success {
+  background: color-mix(in srgb, var(--flow-success, #218358) 11%, transparent);
+  color: var(--flow-success, #218358);
+}
+
+.admin-status-icon.tone-warning {
+  background: color-mix(in srgb, var(--flow-approval, #a46000) 12%, transparent);
+  color: var(--flow-approval, #a46000);
+}
+
+.admin-status-icon.tone-error {
+  background: color-mix(in srgb, var(--flow-danger, #c2414b) 11%, transparent);
+  color: var(--flow-danger, #c2414b);
+}
+
+.admin-status-icon.tone-info {
+  background: color-mix(in srgb, var(--flow-brand, #3157d5) 10%, transparent);
+  color: var(--flow-brand, #3157d5);
+}
+
+.admin-status-detail {
+  min-height: 2.5em;
+  overflow-wrap: anywhere;
+}
+
+.admin-status-tested-at {
+  display: block;
+  margin-top: 8px;
+  font-variant-numeric: tabular-nums;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .admin-status-card {
+    transition: none;
+  }
+
+  .admin-status-card:hover {
+    transform: none;
+  }
+}

@@ -54,11 +54,27 @@ func TestHandlerFallsBackForBrowserRoute(t *testing.T) {
 	}
 }
 
+func TestHandlerFallsBackForDottedPluginSettingsRoute(t *testing.T) {
+	rr := httptest.NewRecorder()
+	testHandler(t).ServeHTTP(rr, httptest.NewRequest(
+		http.MethodGet,
+		"/settings/plugins/com.mattermost.echosummary",
+		nil,
+	))
+	if rr.Code != http.StatusOK || rr.Body.String() != "<!doctype html><title>moyro</title>" {
+		t.Fatalf("plugin settings SPA response: status=%d body=%q", rr.Code, rr.Body.String())
+	}
+	if got := rr.Header().Get("Content-Type"); got != "text/html; charset=utf-8" {
+		t.Fatalf("Content-Type = %q", got)
+	}
+}
+
 func TestHandlerDoesNotFallbackForMissingAssetOrMutation(t *testing.T) {
 	for _, req := range []*http.Request{
 		httptest.NewRequest(http.MethodGet, "/assets", nil),
 		httptest.NewRequest(http.MethodGet, "/assets/missing.js", nil),
 		httptest.NewRequest(http.MethodGet, "/favicon.svg", nil),
+		httptest.NewRequest(http.MethodGet, "/settings/plugins/com.mattermost.echosummary/missing.js", nil),
 		httptest.NewRequest(http.MethodGet, "/api/v4/missing", nil),
 		httptest.NewRequest(http.MethodGet, "/hooks/missing", nil),
 		httptest.NewRequest(http.MethodGet, "/mcp/missing", nil),

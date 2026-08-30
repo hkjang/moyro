@@ -1,0 +1,38 @@
+:where(button, a, input, select, textarea, [tabindex]:not([tabindex="-1"])):focus-visible {
+  outline: var(--flow-focus-width) solid var(--flow-focus-color);
+  outline-offset: var(--flow-focus-offset);
+}
+
+/* Restore an outline where legacy selectors intentionally removed it in
+ * favour of a shadow. This remains visible when shadows are unavailable. */
+.side-hamburger:focus-visible,
+.user-menu-trigger:focus-visible,
+.user-menu-select:focus-visible,
+.admin-data-table tbody tr:focus-visible {
+  outline: var(--flow-focus-width) solid var(--flow-focus-color);
+  outline-offset: var(--flow-focus-offset);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    transition-delay: 0ms !important;
+  }
+}
+
+@media (forced-colors: active) {
+  :where(button, a, input, select, textarea, [tabindex]:not([tabindex="-1"])):focus-visible,
+  .side-hamburger:focus-visible,
+  .user-menu-trigger:focus-visible,
+  .user-menu-select:focus-visible,
+  .admin-data-table tbody tr:focus-visible {
+    outline: 2px solid Highlight !important;
+    outline-offset: 2px !important;
+    box-shadow: none !important;
+  }
+}

@@ -15,15 +15,15 @@ export function LegacyAdminRoute() {
                 레거시 Mattermost 운영 경계의 지원 상태를 안내합니다.
               </Typography>
             </Box>
-            <Chip label="v0.1.1 제한" color="warning" variant="outlined" />
+            <Chip label="v0.2.0 호환 경계" color="warning" variant="outlined" />
           </Stack>
           <Alert severity="warning">
-            로그·클러스터·Busy 상태·백그라운드 작업과 런타임 플러그인 제어는 moyro v0.1.1에서
+            로그·클러스터·Busy 상태·백그라운드 작업의 레거시 Mattermost 운영 API는 moyro v0.2.0에서
             실제 운영 기능으로 제공하지 않습니다. 관련 호환 API는 거짓 성공 대신 501 Not Implemented를 반환합니다.
           </Alert>
           <Typography>
-            지원되는 사이트, Keycloak OIDC, AI, 키·권한, MCP와 승인 정책은 서비스 관리자 메뉴에서
-            PostgreSQL에 영속적으로 저장하고 관리합니다.
+            사이트, Keycloak OIDC, AI, 키·권한, MCP, 승인 정책과 Trusted Native 플러그인은
+            서비스 관리자 메뉴에서 PostgreSQL 기반 상태로 관리합니다.
           </Typography>
           <Stack direction={{ xs: "column", sm: "row" }} spacing={1.5}>
             <Button variant="contained" startIcon={<ArrowBackRounded />} onClick={() => navigate("/admin/overview")}>
