@@ -64,6 +64,22 @@ type appliedMigration struct {
 	Irreversible bool
 }
 
+// EmbeddedMigrationTarget returns the latest migration bundled into this
+// binary. Operational diagnostics use it to compare the durable ledger with
+// the exact schema version the running process expects; callers never need to
+// duplicate a version number that would drift as migrations are added.
+func EmbeddedMigrationTarget() (version int64, name string, err error) {
+	migrations, err := loadMigrations(embeddedMigrations)
+	if err != nil {
+		return 0, "", err
+	}
+	if len(migrations) == 0 {
+		return 0, "", errors.New("store: no database migrations embedded")
+	}
+	target := migrations[len(migrations)-1]
+	return target.Version, target.Name, nil
+}
+
 // Migrate applies every embedded migration that has not yet been recorded.
 // Applied files are immutable: a checksum or metadata mismatch fails startup
 // instead of silently changing release history.

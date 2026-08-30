@@ -37,6 +37,35 @@
   font-size: inherit;
 }
 
+.message-action-menu .message-action-menu-item {
+  display: flex;
+  min-height: 44px;
+  gap: 12px;
+  font-size: 14px;
+}
+
+.message-action-menu .message-action-menu-item > svg {
+  flex: 0 0 auto;
+  color: var(--flow-text-muted, #667085);
+}
+
+.message-action-menu .message-action-menu-item-danger,
+.message-action-menu .message-action-menu-item-danger > svg {
+  color: var(--flow-danger, #c2414b);
+}
+
+.workspace-message-item .message-reaction-picker {
+  position: absolute;
+  z-index: 12;
+  top: 32px;
+  right: 16px;
+}
+
+.workspace-message-item .message-reaction-picker .emoji-picker {
+  position: static;
+  width: min(260px, calc(100vw - 32px));
+}
+
 .workspace-message-item .message-edit-actions {
   display: flex;
   gap: 8px;
@@ -78,6 +107,29 @@
     width: 44px;
     min-width: 44px;
     height: 44px;
+  }
+}
+
+@media (max-width: 960px), (hover: none) and (pointer: coarse) {
+  .workspace-message-item .msg-actions.message-actions-toolbar {
+    display: flex;
+    opacity: 1;
+    pointer-events: auto;
+    top: 2px;
+    right: 8px;
+  }
+
+  .workspace-message-item .message-action-primary {
+    display: none;
+  }
+
+  .workspace-message-item:not(.msg-compact) .msg-meta {
+    padding-right: 48px;
+  }
+
+  .workspace-message-item .message-reaction-picker {
+    top: 50px;
+    right: 8px;
   }
 }
 

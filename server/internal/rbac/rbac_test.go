@@ -69,6 +69,33 @@ func TestAllowedHonoursResourceConstraints(t *testing.T) {
 	}
 }
 
+func TestResourceConstraintsFailClosedForMissingOrForeignResourceIDs(t *testing.T) {
+	principal := Principal{
+		UserID:            "user",
+		Restricted:        true,
+		AllowedTeamIDs:    map[string]struct{}{"team-a": {}},
+		AllowedChannelIDs: map[string]struct{}{"channel-a": {}},
+	}
+	constraints := ResourceConstraintsFor(principal)
+	if !constraints.Allows("team-a", "channel-a") {
+		t.Fatal("allowed resource intersection was rejected")
+	}
+	for _, scope := range []Scope{
+		{},
+		{TeamID: "team-a"},
+		{ChannelID: "channel-a"},
+		{TeamID: "team-b", ChannelID: "channel-a"},
+		{TeamID: "team-a", ChannelID: "channel-b"},
+	} {
+		if constraints.Allows(scope.TeamID, scope.ChannelID) {
+			t.Fatalf("out-of-scope resource was allowed: %#v", scope)
+		}
+	}
+	if got := ResourceConstraintsFor(UserPrincipal("user")); !got.Allows("", "") || !got.Allows("any-team", "any-channel") {
+		t.Fatalf("unrestricted principal was constrained: %#v", got)
+	}
+}
+
 func TestManageSystemIsOwnerRecoveryAuthorityButNotAKeyGrantWildcard(t *testing.T) {
 	repo := &fakeRepository{effective: map[string]struct{}{PermissionManageSystem: {}}}
 	svc, _ := New(repo)

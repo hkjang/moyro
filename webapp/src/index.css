@@ -659,6 +659,14 @@ select:focus-visible {
   margin-bottom: 4px;
 }
 
+.notify-section-title-spaced {
+  margin-top: 10px;
+}
+
+.channel-archive-action {
+  margin-left: 6px;
+}
+
 .notify-radio {
   display: flex;
   align-items: center;

@@ -4,11 +4,20 @@ import type { RootState } from "@/store";
 import { clearAuth, setAuth } from "@/store/authSlice";
 import { api } from "@/api/client";
 import { AppRouter } from "@/app/AppRouter";
+import { useSystemInfo } from "@/features/system/SystemInfoContext";
+import { clearMoyroDraftsForUser } from "@/features/workspace/composer/useDraft";
 
 export function App() {
   const token = useSelector((s: RootState) => s.auth.token);
+  const user = useSelector((s: RootState) => s.auth.user);
+  const systemInfo = useSystemInfo();
   const dispatch = useDispatch();
   const initialTokenRef = useRef(token);
+  const initialUserRef = useRef(user);
+  const clearDraftsOnLogoutRef = useRef(
+    systemInfo.capabilities?.drafts?.clear_on_logout !== false,
+  );
+  clearDraftsOnLogoutRef.current = systemInfo.capabilities?.drafts?.clear_on_logout !== false;
   // consumingHash flips true while we're resolving a `#token=...` redirect
   // from an OAuth callback. Prevents the LoginView from flashing between
   // "not logged in" and "logged in" when the fragment is present.
@@ -52,7 +61,15 @@ export function App() {
     if (!storedToken || window.location.hash.startsWith("#token=")) return;
     api.me(storedToken).then(
       (user) => dispatch(setAuth({ token: storedToken, user })),
-      () => dispatch(clearAuth()),
+      () => {
+        if (
+          initialUserRef.current?.id
+          && clearDraftsOnLogoutRef.current
+        ) {
+          clearMoyroDraftsForUser(initialUserRef.current.id);
+        }
+        dispatch(clearAuth());
+      },
     ).finally(() => setRestoringSession(false));
   }, [dispatch]);
 

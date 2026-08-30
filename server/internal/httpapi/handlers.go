@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/hkjang/moyro/server/internal/activityevents"
 	"github.com/hkjang/moyro/server/internal/application/postcommand"
 	"github.com/hkjang/moyro/server/internal/audit"
 	"github.com/hkjang/moyro/server/internal/auth"
@@ -48,6 +49,7 @@ import (
 	"github.com/hkjang/moyro/server/internal/tos"
 	"github.com/hkjang/moyro/server/internal/userstatus"
 	"github.com/hkjang/moyro/server/internal/webhooks"
+	"github.com/hkjang/moyro/server/internal/workitems"
 	"github.com/hkjang/moyro/server/internal/ws"
 )
 
@@ -84,6 +86,10 @@ type handlers struct {
 	customProf   *customprofile.Service
 	postacks     *postacks.Service
 	tos          *tos.Service
+	workItems    *workitems.Service
+	activity     activityEventBackend
+	activityEmit activityevents.Emitter
+	operations   nativeOperationsReader
 	hub          *ws.Hub
 	host         *pluginhost.Host
 	native       *nativeServices

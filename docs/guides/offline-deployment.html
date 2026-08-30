@@ -3,8 +3,8 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>moyro v0.2.0 오프라인 설치 | Docker 배포 가이드</title>
-    <meta name="description" content="인터넷 없는 Linux 내부망에서 moyro-v0.2.0.tar.gz를 Docker에 로드하고 PostgreSQL, 네 가지 환경변수, 데이터 volume을 구성해 검증하는 절차입니다.">
+    <title>moyro v0.2.1 오프라인 설치 | Docker 배포 가이드</title>
+    <meta name="description" content="인터넷 없는 Linux 내부망에서 moyro-v0.2.1.tar.gz를 Docker에 로드하고 PostgreSQL, 네 가지 환경변수, 데이터 volume을 구성해 검증하는 절차입니다.">
     <meta name="robots" content="index,follow,max-image-preview:large,max-snippet:-1">
     <meta name="theme-color" content="#101a3b">
     <link rel="icon" href="../favicon.svg" type="image/svg+xml">
@@ -20,7 +20,7 @@
     <meta property="og:type" content="article">
     <meta property="og:locale" content="ko_KR">
     <meta property="og:site_name" content="moyro">
-    <meta property="og:title" content="moyro v0.2.0 오프라인 Docker 설치">
+    <meta property="og:title" content="moyro v0.2.1 오프라인 Docker 설치">
     <meta property="og:description" content="릴리스 이미지 archive와 내부 PostgreSQL로 moyro를 설치하고 재시작까지 검증합니다.">
     <meta property="og:url" content="https://hkjang.github.io/moyro/guides/offline-deployment.html">
     <meta property="og:image" content="https://hkjang.github.io/moyro/assets/brand/moyro-social-card.png">
@@ -30,7 +30,7 @@
     <meta property="og:image:height" content="630">
     <meta property="og:image:alt" content="moyro 로고와 팀의 대화와 업무 흐름을 조직 안에 문구">
     <meta name="twitter:card" content="summary_large_image">
-    <meta name="twitter:title" content="moyro v0.2.0 오프라인 설치">
+    <meta name="twitter:title" content="moyro v0.2.1 오프라인 설치">
     <meta name="twitter:description" content="Docker archive, PostgreSQL과 네 가지 환경변수로 설치하는 단계별 절차입니다.">
     <meta name="twitter:image" content="https://hkjang.github.io/moyro/assets/brand/moyro-social-card.png">
     <meta name="twitter:image:alt" content="moyro 로고와 팀의 대화와 업무 흐름을 조직 안에 문구">
@@ -41,21 +41,21 @@
           {
             "@type": "HowTo",
             "@id": "https://hkjang.github.io/moyro/guides/offline-deployment.html#howto",
-            "name": "moyro v0.2.0 오프라인 Docker 설치",
+            "name": "moyro v0.2.1 오프라인 Docker 설치",
             "description": "릴리스 이미지 archive를 인터넷이 없는 Linux amd64 망에 설치하고 검증합니다.",
             "image": "https://hkjang.github.io/moyro/assets/screenshots/login.jpg",
             "mainEntityOfPage": {"@type": "WebPage", "@id": "https://hkjang.github.io/moyro/guides/offline-deployment.html"},
             "dateModified": "2026-08-30",
             "inLanguage": "ko-KR",
             "supply": [
-              {"@type": "HowToSupply", "name": "moyro-v0.2.0.tar.gz"},
+              {"@type": "HowToSupply", "name": "moyro-v0.2.1.tar.gz"},
               {"@type": "HowToSupply", "name": "내부 PostgreSQL 데이터베이스"},
               {"@type": "HowToSupply", "name": "네 가지 moyro 환경변수"}
             ],
             "tool": [{"@type": "HowToTool", "name": "Docker on Linux amd64"}],
             "step": [
               {"@type": "HowToStep", "name": "대상 망 준비", "text": "Docker 호스트와 전용 PostgreSQL 데이터베이스를 준비합니다."},
-              {"@type": "HowToStep", "name": "무결성 확인과 이미지 로드", "text": "release notes의 SHA-256과 archive를 비교한 뒤 docker load로 moyro-v0.2.0.tar.gz를 불러오고 moyro:v0.2.0 tag를 확인합니다."},
+              {"@type": "HowToStep", "name": "무결성 확인과 이미지 로드", "text": "release notes의 SHA-256과 archive를 비교한 뒤 docker load로 moyro-v0.2.1.tar.gz를 불러오고 moyro:v0.2.1 tag를 확인합니다."},
               {"@type": "HowToStep", "name": "환경 준비", "text": "PostgreSQL DSN, bootstrap 관리자, bootstrap 비밀번호와 32바이트 encryption key를 준비합니다."},
               {"@type": "HowToStep", "name": "서비스 실행", "text": "읽기 전용 container에 데이터 volume과 env-file을 연결해 실행합니다."},
               {"@type": "HowToStep", "name": "인수 검증", "text": "health endpoint, web UI 버전, 관리자 로그인과 restart를 확인합니다."}
@@ -81,7 +81,7 @@
       </div>
     </header>
     <main id="guide">
-      <section class="guide-hero"><div class="shell"><p class="eyebrow eyebrow-light"><span></span> Air-gap installation · v0.2.0 release</p><h1>레지스트리 없이 설치하는<br>moyro 오프라인 배포</h1><p>하나의 압축 Docker image와 내부 PostgreSQL로 서비스를 기동하고 로그인과 재시작까지 확인합니다.</p><span class="status-note">v0.2.0 release platform · linux/amd64</span></div></section>
+      <section class="guide-hero"><div class="shell"><p class="eyebrow eyebrow-light"><span></span> Air-gap installation · v0.2.1 release</p><h1>레지스트리 없이 설치하는<br>moyro 오프라인 배포</h1><p>하나의 압축 Docker image와 내부 PostgreSQL로 서비스를 기동하고 로그인과 재시작까지 확인합니다.</p><span class="status-note">v0.2.1 release platform · linux/amd64</span></div></section>
       <div class="shell guide-layout">
         <aside class="guide-toc" aria-label="설치 목차"><strong>설치 순서</strong><a href="#prepare">준비</a><a href="#load">이미지 로드</a><a href="#environment">환경 파일</a><a href="#run">실행</a><a href="#verify">인수 검증</a><a href="#configure">최초 설정</a><a href="#backup">백업·업그레이드</a></aside>
         <article class="guide-content">
@@ -89,22 +89,22 @@
             <h2>1. 대상 망 준비</h2>
             <p>Docker를 실행할 수 있는 Linux amd64 호스트와 moyro 전용 PostgreSQL 데이터베이스를 준비합니다. 릴리스 archive에는 애플리케이션과 웹 UI만 있으며 PostgreSQL image는 포함하지 않습니다.</p>
             <ul><li>호스트에서 PostgreSQL 내부 주소와 port로 연결할 수 있어야 합니다.</li><li>사용자 접속용 8065 port 또는 내부 reverse proxy를 준비합니다.</li><li>PostgreSQL과 <code>moyro-data</code> volume을 함께 백업할 위치를 정합니다.</li><li>TLS가 필요하면 승인된 내부 reverse proxy에서 종료합니다.</li></ul>
-            <div class="callout"><strong>지원 토폴로지는 애플리케이션 컨테이너 한 개입니다.</strong><br>v0.2.0은 외부 PostgreSQL과 로컬 file volume을 사용합니다. SMTP 관리 설정, S3, Redis fan-out, outbound link preview와 multi-replica 설정 전파는 지원하지 않습니다. SMTP host가 없으면 이메일 capability는 false이고 digest worker도 시작하지 않습니다.</div>
-            <div class="callout"><strong>v0.2.0은 forwarded client IP를 신뢰하지 않습니다.</strong><br><code>X-Forwarded-For</code>, <code>X-Real-IP</code>, <code>True-Client-IP</code> 대신 직접 TCP peer를 rate limit과 audit 주소로 사용합니다. Reverse proxy 뒤의 사용자는 로그인·OIDC rate bucket과 audit 주소를 공유하므로 배포 전에 용량을 확인하고, proxy가 외부에서 들어온 forwarded header를 제거하도록 설정하세요. 이 릴리스에는 trusted-proxy CIDR 설정과 사용자별 원본 IP 귀속 기능이 없습니다.</div>
+            <div class="callout"><strong>지원 토폴로지는 애플리케이션 컨테이너 한 개입니다.</strong><br>v0.2.1은 외부 PostgreSQL과 로컬 file volume을 사용합니다. SMTP 관리 설정, S3, Redis fan-out, outbound link preview와 multi-replica 설정 전파는 지원하지 않습니다. SMTP host가 없으면 이메일 capability는 false이고 digest worker도 시작하지 않습니다.</div>
+            <div class="callout"><strong>v0.2.1은 forwarded client IP를 신뢰하지 않습니다.</strong><br><code>X-Forwarded-For</code>, <code>X-Real-IP</code>, <code>True-Client-IP</code> 대신 직접 TCP peer를 rate limit과 audit 주소로 사용합니다. Reverse proxy 뒤의 사용자는 로그인·OIDC rate bucket과 audit 주소를 공유하므로 배포 전에 용량을 확인하고, proxy가 외부에서 들어온 forwarded header를 제거하도록 설정하세요. 이 릴리스에는 trusted-proxy CIDR 설정과 사용자별 원본 IP 귀속 기능이 없습니다.</div>
           </section>
 
           <section id="load">
-            <h2>2. v0.2.0 이미지 로드</h2>
-            <p>v0.2.0 릴리스의 custom asset 이름은 <code>moyro-v0.2.0.tar.gz</code>이며 로드되는 image tag는 <code>moyro:v0.2.0</code>입니다. 실제 게시 여부와 SHA-256은 GitHub Release에서 확인한 뒤 조직의 승인된 매체로 archive를 반입하세요.</p>
-            <div class="terminal"><pre><code><span>$</span> sha256sum moyro-v0.2.0.tar.gz
+            <h2>2. v0.2.1 이미지 로드</h2>
+            <p>v0.2.1 릴리스의 custom asset 이름은 <code>moyro-v0.2.1.tar.gz</code>이며 로드되는 image tag는 <code>moyro:v0.2.1</code>입니다. 실제 게시 여부와 SHA-256은 GitHub Release에서 확인한 뒤 조직의 승인된 매체로 archive를 반입하세요.</p>
+            <div class="terminal"><pre><code><span>$</span> sha256sum moyro-v0.2.1.tar.gz
 
-<span>$</span> docker load --input moyro-v0.2.0.tar.gz
-Loaded image: moyro:v0.2.0
+<span>$</span> docker load --input moyro-v0.2.1.tar.gz
+Loaded image: moyro:v0.2.1
 
 <span>$</span> docker image inspect \
     --format '{{.Os}}/{{.Architecture}} {{.Config.Labels}}' \
-    moyro:v0.2.0</code></pre></div>
-            <p>먼저 SHA-256이 게시된 GitHub Release notes의 값과 정확히 같은지 확인합니다. 그 다음 출력 platform이 <code>linux/amd64</code>이고 OCI version label이 <code>v0.2.0</code>인지 확인합니다.</p>
+    moyro:v0.2.1</code></pre></div>
+            <p>먼저 SHA-256이 게시된 GitHub Release notes의 값과 정확히 같은지 확인합니다. 그 다음 출력 platform이 <code>linux/amd64</code>이고 OCI version label이 <code>v0.2.1</code>인지 확인합니다.</p>
           </section>
 
           <section id="environment">
@@ -115,7 +115,7 @@ BOOTSTRAP_ADMIN=admin@example.internal
 BOOTSTRAP_ADMIN_PASSWORD=replace-with-12-to-72-byte-secret
 ENCRYPTION_KEY=replace-with-standard-base64-for-32-random-bytes</code></pre></div>
             <p>신뢰할 수 있는 관리 workstation에서 <code>openssl rand -base64 32</code>로 encryption key를 생성하고 결과 한 줄을 사용합니다. 파일 권한을 <code>600</code>으로 제한하세요.</p>
-            <div class="callout"><strong>ENCRYPTION_KEY를 잃어버리거나 바꾸지 마세요.</strong><br>v0.2.0에는 온라인 root-key 재암호화 절차가 없습니다. DB와 별도의 보호 위치에 백업하고 인스턴스 수명 동안 같은 값을 유지합니다.</div>
+            <div class="callout"><strong>ENCRYPTION_KEY를 잃어버리거나 바꾸지 마세요.</strong><br>v0.2.1에는 온라인 root-key 재암호화 절차가 없습니다. DB와 별도의 보호 위치에 백업하고 인스턴스 수명 동안 같은 값을 유지합니다.</div>
           </section>
 
           <section id="run">
@@ -131,7 +131,7 @@ ENCRYPTION_KEY=replace-with-standard-base64-for-32-random-bytes</code></pre></di
   --env-file /etc/moyro/moyro.env \
   --mount type=volume,src=moyro-data,dst=/var/lib/moyro \
   --publish 8065:8065 \
-  moyro:v0.2.0</code></pre></div>
+  moyro:v0.2.1</code></pre></div>
             <p>Container는 non-root 사용자로 실행되며 <code>/var/lib/moyro</code> volume에 로컬 파일 상태를 보존합니다. 시작 과정에서 PostgreSQL advisory lock을 얻은 뒤 아직 적용하지 않은 번호형 migration을 순서대로 실행하고, 이름·checksum·적용 시각을 <code>schema_migrations</code>에 기록합니다. 이미 적용한 파일의 checksum이 달라졌거나 migration이 실패하면 서비스 시작도 실패합니다.</p>
           </section>
 
@@ -141,15 +141,16 @@ ENCRYPTION_KEY=replace-with-standard-base64-for-32-random-bytes</code></pre></di
 ok
 
 <span>$</span> docker logs --tail 100 moyro</code></pre></div>
-            <ol><li><code>/healthz</code>가 <code>ok</code>를 반환하는지 확인합니다.</li><li>브라우저에서 로그인 화면과 React asset이 표시되는지 확인합니다.</li><li>로그인 화면의 버전이 <code>v0.2.0</code>인지 확인합니다.</li><li>Bootstrap 관리자 로그인이 되는지 확인합니다.</li><li><code>docker restart moyro</code> 뒤 health와 같은 관리자 로그인을 다시 확인합니다.</li><li>업그레이드 설치라면 예약 발송의 중복 여부와 outgoing webhook의 PostgreSQL 재시도를 확인합니다.</li></ol>
+            <ol><li><code>/healthz</code>가 <code>ok</code>를 반환하는지 확인합니다.</li><li>브라우저에서 로그인 화면과 React asset이 표시되는지 확인합니다.</li><li>로그인 화면의 버전이 <code>v0.2.1</code>인지 확인합니다.</li><li>Bootstrap 관리자 로그인이 되는지 확인합니다.</li><li><code>docker restart moyro</code> 뒤 health와 같은 관리자 로그인을 다시 확인합니다.</li><li>업그레이드 설치라면 durable 업데이트의 읽음 상태, 작업·결정의 원본 링크와 권한, 예약 발송의 중복 여부 및 outgoing webhook의 PostgreSQL 재시도를 확인합니다.</li></ol>
             <figure class="guide-figure"><picture><img src="../assets/screenshots/login.jpg" width="1440" height="1000" loading="lazy" decoding="async" alt="오프라인 배포 검증 대상인 moyro 로그인 화면과 버전"></picture><figcaption>로그인 화면과 프로필 컨텍스트 메뉴의 버전은 로드한 Docker tag와 같아야 합니다.</figcaption></figure>
           </section>
 
           <section id="configure">
             <h2>6. 첫 로그인 뒤 서비스 설정</h2>
-            <p>관리자 프로필 메뉴에서 <strong>서비스 관리</strong>를 엽니다. 먼저 사이트 이름, 사용자가 접속하는 canonical Public Base URL, 로컬 가입 정책과 outgoing webhook hostname allowlist를 저장합니다. Keycloak OIDC를 활성화하려면 Public Base URL이 반드시 먼저 저장되어 있어야 합니다. 공개 가입을 계속 닫아 둘 때는 사이트 설정의 <strong>사용자 초대</strong>에서 만료·사용 횟수가 제한된 링크를 발급합니다.</p>
+            <p>관리자 프로필 메뉴에서 <strong>서비스 관리</strong>를 엽니다. 먼저 사이트 이름, 사용자가 접속하는 canonical Public Base URL, 로컬 가입 정책, outgoing webhook hostname allowlist와 메시지 초안 보안 정책을 저장합니다. 초안은 1~30일 local 보존, 현재 session만 또는 저장 안 함 중 하나를 선택하고 로그아웃 cleanup을 정합니다. Keycloak OIDC를 활성화하려면 Public Base URL이 반드시 먼저 저장되어 있어야 합니다. 공개 가입을 계속 닫아 둘 때는 사이트 설정의 <strong>사용자 초대</strong>에서 만료·사용 횟수가 제한된 링크를 발급합니다.</p>
             <figure class="guide-figure"><picture><img src="../assets/screenshots/admin-site.jpg" width="1440" height="1000" loading="lazy" decoding="async" alt="오프라인 설치 뒤 입력하는 moyro 사이트와 outbound 설정"></picture><figcaption>Allowlist가 비어 있으면 outgoing webhook callback이 차단됩니다.</figcaption></figure>
             <p>필요한 경우에만 내부 Keycloak, OpenAI 호환 AI, 개인 키 정책, MCP와 승인 정책을 각각 설정하고 연결을 확인합니다. 연결 대상은 container에서 접근 가능한 내부 주소여야 합니다.</p>
+            <p>운영 자동화는 <a href="../openapi-moyro.yaml">Moyro native <code>/api/moyro/v1</code></a>와 <a href="../openapi-v4.yaml">Mattermost 호환 <code>/api/v4</code></a> OpenAPI 3.1 계약을 구분해 사용합니다.</p>
             <div class="callout"><strong>Native plugin을 sandbox로 취급하지 마세요.</strong><br>관리 페이지에서 업로드하거나 <code>/var/lib/moyro/plugins</code>에 배치한 실행 파일은 서비스 UID, 컨테이너 namespace, volume과 network를 공유하는 서명 미검증 완전 신뢰 코드입니다. <code>manage_plugins</code> 관리자는 검토한 Mattermost <code>.tar.gz</code>를 runtime에 업로드·교체·활성화·비활성화·설정·삭제할 수 있지만 archive 검사는 sandbox나 공급망 검증이 아닙니다.</div>
             <p>PostgreSQL archive E2E는 Botman 0.1.2의 status/config 보안, Chatdump 0.5.1의 export/config/replace, Langflow 0.1.20의 mock SSE bot workflow, EchoSummary 0.6.5의 mock vLLM slash/DM workflow를 기능적으로 검증합니다. 네 archive 모두 설치와 재시작을 거칩니다. 공개 CI는 checksum으로 고정한 EchoSummary 0.6.4 자산을 사용하고 local release gate가 0.6.5를 추가 검증합니다. 이 경계는 임의의 Mattermost 플러그인, 다른 버전, 실제 외부 AI 공급자나 명시하지 않은 기능의 호환을 보장하지 않습니다.</p>
           </section>
@@ -158,16 +159,16 @@ ok
             <h2>7. 백업과 업그레이드</h2>
             <p>다음 세 항목을 같은 복구 시점의 세트로 보관합니다.</p>
             <ol><li>조직의 PostgreSQL 절차로 생성한 moyro DB 백업</li><li>업로드 파일이 있는 <code>moyro-data</code> volume 백업</li><li>별도 보호 위치의 <code>ENCRYPTION_KEY</code></li></ol>
-            <p>업그레이드 전 세 항목을 백업하고 새 archive를 로드한 뒤 같은 환경 파일과 volume으로 새 tag를 실행합니다. Health, 버전, 로그인, 채널 게시, 예약 발송, WebSocket, 파일 및 활성화한 내부 연동을 다시 확인하고 <code>schema_migrations</code>의 최신 version과 checksum을 기록하세요.</p>
-            <p>v0.2.0은 session <code>jti_hash</code>, 예약 작업 lease와 outgoing webhook delivery table을 포함합니다. Session은 요청 시 legacy row를 HMAC JTI digest로 보완하며 이전 binary 호환을 위해 raw token 열을 아직 제거하지 않습니다. 예약 발송은 결과 post ID의 unique 제약으로 worker 재시도의 중복 생성을 막습니다.</p>
+            <p>업그레이드 전 세 항목을 백업하고 새 archive를 로드한 뒤 같은 환경 파일과 volume으로 새 tag를 실행합니다. Health, 버전, 로그인, 채널 게시, durable 업데이트 읽음 상태, 작업·결정, 예약 발송, WebSocket, 파일 및 활성화한 내부 연동을 다시 확인하고 <code>schema_migrations</code>의 최신 version과 checksum을 기록하세요.</p>
+            <p>v0.2.1은 session <code>jti_hash</code>, 예약 작업 lease, outgoing webhook delivery, 사용자별 activity event와 conversation-derived work item table을 포함합니다. Session은 요청 시 legacy row를 HMAC JTI digest로 보완하며 이전 binary 호환을 위해 raw token 열을 아직 제거하지 않습니다. 예약 발송은 결과 post ID의 unique 제약으로 worker 재시도의 중복 생성을 막습니다. Activity와 work item 복구 검증은 소유자·담당자·현재 채널 멤버십 경계를 함께 확인해야 합니다.</p>
             <div class="callout"><strong>Webhook queue는 durable하지만 아직 완전한 transactional outbox는 아닙니다.</strong><br>Callback과 시도 이력은 PostgreSQL에 남아 재시작 뒤에도 lease와 backoff로 처리됩니다. 다만 post commit과 delivery 등록은 하나의 transaction이 아니므로 enqueue 오류 로그를 별도로 감시하세요.</div>
             <div class="callout"><strong>Image-only rollback을 가정하지 마세요.</strong><br>DB schema가 변경된 릴리스는 이전 image만 다시 실행해 안전하게 돌아갈 수 없을 수 있습니다. 이전 image와 그 시점의 DB·volume 백업을 함께 보존하세요.</div>
-            <p>연결 가능한 staging host에서는 저장소의 <code>scripts/verify-release.sh moyro:v0.2.0 moyro-v0.2.0.tar.gz</code>로 offline startup, web UI, version, bootstrap login과 restart 검증을 실행할 수 있습니다. v0.2.0의 최종 통과 여부는 해당 릴리스 gate 결과로 확인하세요.</p>
+            <p>연결 가능한 staging host에서는 저장소의 <code>scripts/verify-release.sh moyro:v0.2.1 moyro-v0.2.1.tar.gz</code>로 offline startup, web UI, version, bootstrap login과 restart 검증을 실행할 수 있습니다. v0.2.1의 최종 통과 여부는 해당 릴리스 gate 결과로 확인하세요.</p>
           </section>
           <nav class="guide-next" aria-label="다음 문서"><a class="text-link" href="admin-guide.html">← 관리자 설정</a><a class="text-link" href="../screens.html">제품 화면 →</a></nav>
         </article>
       </div>
     </main>
-    <footer class="site-footer"><div class="shell footer-bottom"><span>© 2026 moyro contributors · v0.2.0 release</span><span><a href="../screens.html">제품 화면</a> · <a href="https://github.com/hkjang/moyro/releases">Releases</a></span></div></footer>
+    <footer class="site-footer"><div class="shell footer-bottom"><span>© 2026 moyro contributors · v0.2.1 release</span><span><a href="../screens.html">제품 화면</a> · <a href="https://github.com/hkjang/moyro/releases">Releases</a></span></div></footer>
   </body>
 </html>

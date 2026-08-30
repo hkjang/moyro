@@ -14,6 +14,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/hkjang/moyro/server/internal/activityevents"
 	"github.com/hkjang/moyro/server/internal/application/postcommand"
 	"github.com/hkjang/moyro/server/internal/audit"
 	"github.com/hkjang/moyro/server/internal/files"
@@ -249,6 +250,7 @@ type Host struct {
 	postCommands *postcommand.Service
 	files        *files.Service
 	events       interface{ Broadcast(ws.Event) }
+	activity     activityevents.Emitter
 	audit        interface {
 		LogAsync(actorID, action, target string, payload map[string]any)
 	}
@@ -256,6 +258,18 @@ type Host struct {
 	activationTimeout     time.Duration
 	activationStopTimeout time.Duration
 	runtimePoisoned       atomic.Bool
+}
+
+// BindActivityEmitter enables durable user-scoped plugin notifications. It is
+// separate from BindApplicationServices so existing embedders and ABI tests do
+// not need to construct the native Moyro activity subsystem.
+func (h *Host) BindActivityEmitter(emitter activityevents.Emitter) {
+	if h == nil {
+		return
+	}
+	h.mu.Lock()
+	h.activity = emitter
+	h.mu.Unlock()
 }
 
 // BindApplicationServices connects plugin mutations to the same command,

@@ -1,10 +1,8 @@
 import AddTaskRounded from "@mui/icons-material/AddTaskRounded";
-import AppsRounded from "@mui/icons-material/AppsRounded";
 import AutoAwesomeRounded from "@mui/icons-material/AutoAwesomeRounded";
 import ChatBubbleOutlineRounded from "@mui/icons-material/ChatBubbleOutlineRounded";
 import CloseRounded from "@mui/icons-material/CloseRounded";
 import CommandRounded from "@mui/icons-material/KeyboardCommandKeyRounded";
-import DashboardCustomizeRounded from "@mui/icons-material/DashboardCustomizeRounded";
 import FactCheckRounded from "@mui/icons-material/FactCheckRounded";
 import InboxRounded from "@mui/icons-material/InboxRounded";
 import ManageAccountsRounded from "@mui/icons-material/ManageAccountsRounded";
@@ -33,6 +31,7 @@ import { useSelector } from "react-redux";
 import { Outlet, useLocation, useNavigate } from "react-router-dom";
 import { BrandMark } from "@/components/brand/BrandMark";
 import { useAdminAccess } from "@/features/admin/AdminAccessContext";
+import { WorkItemCreationProvider } from "@/features/work-items/WorkItemCreationProvider";
 import type { RootState } from "@/store";
 import "@/features/shell/product-shell.css";
 
@@ -87,6 +86,7 @@ export function ProductShell() {
   const location = useLocation();
   const navigate = useNavigate();
   const user = useSelector((state: RootState) => state.auth.user);
+  const token = useSelector((state: RootState) => state.auth.token) ?? "";
   const access = useAdminAccess();
   const [moreOpen, setMoreOpen] = useState(false);
   const [commandOpen, setCommandOpen] = useState(false);
@@ -156,7 +156,8 @@ export function ProductShell() {
   };
 
   return (
-    <Box className="product-shell" aria-keyshortcuts="Control+K Meta+K">
+    <WorkItemCreationProvider token={token} currentUserID={user?.id ?? ""}>
+      <Box className="product-shell" aria-keyshortcuts="Control+K Meta+K">
       <a className="flow-skip-link" href="#main-content">본문으로 건너뛰기</a>
       <aside className="product-rail" aria-label="글로벌 탐색">
         <Tooltip title="moyro · 오늘" placement="right" arrow>
@@ -173,7 +174,6 @@ export function ProductShell() {
           {access.hasAdminAccess && (
             <RailLink item={{ to: "/admin/overview", label: "관리", icon: <ManageAccountsRounded /> }} />
           )}
-          <RailLink item={{ to: "/settings/profile", label: "설정", icon: <SettingsRounded /> }} />
           <Tooltip title={`${user?.username ?? "사용자"} 프로필`} placement="right" arrow>
             <button
               type="button"
@@ -230,14 +230,6 @@ export function ProductShell() {
               <ListItemText primary={item.label} />
             </ListItemButton>
           ))}
-          <ListItemButton disabled>
-            <ListItemIcon><AppsRounded /></ListItemIcon>
-            <ListItemText primary="연결 앱" secondary="관리자가 허용한 앱이 표시됩니다" />
-          </ListItemButton>
-          <ListItemButton disabled>
-            <ListItemIcon><DashboardCustomizeRounded /></ListItemIcon>
-            <ListItemText primary="레이아웃 편집" secondary="후속 버전에서 제공" />
-          </ListItemButton>
         </List>
       </Drawer>
 
@@ -296,6 +288,7 @@ export function ProductShell() {
           </List>
         </DialogContent>
       </Dialog>
-    </Box>
+      </Box>
+    </WorkItemCreationProvider>
   );
 }

@@ -98,9 +98,16 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func pluginSettingsRoute(clean string) bool {
-	const prefix = "/settings/plugins/"
-	pluginID, ok := strings.CutPrefix(clean, prefix)
-	return ok && pluginID != "" && !strings.Contains(pluginID, "/")
+	for _, prefix := range []string{
+		"/settings/plugins/",
+		"/admin/integrations/plugins/",
+	} {
+		pluginID, ok := strings.CutPrefix(clean, prefix)
+		if ok && pluginID != "" && !strings.Contains(pluginID, "/") {
+			return true
+		}
+	}
+	return false
 }
 
 func reservedRoute(clean string) bool {

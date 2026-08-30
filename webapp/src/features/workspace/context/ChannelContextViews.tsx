@@ -221,10 +221,10 @@ export function ChannelFilesView({ token, entries, onJumpToPost }: {
   }
 
   return (
-    <section className="context-view" aria-label="채널 파일">
+    <section className="context-view" aria-label="최근 불러온 파일">
       <div className="context-view-heading">
         <div>
-          <h3>파일</h3>
+          <h3>최근 파일</h3>
           <p>현재 로드된 채널 메시지의 첨부파일 {entries.length}개</p>
         </div>
       </div>

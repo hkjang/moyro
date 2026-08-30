@@ -141,6 +141,9 @@ func TestValidateSiteSettingsCanonicalizesValues(t *testing.T) {
 	if value.SiteName != "Moyro Intranet" || value.PublicBaseURL != "https://chat.internal" {
 		t.Fatalf("unexpected canonical site settings: %#v", value)
 	}
+	if value.DraftStorageMode != "local" || value.DraftRetentionDays != 7 {
+		t.Fatalf("draft defaults = %#v", value)
+	}
 	wantHosts := []string{"10.20.30.40", "fd00::1", "keycloak.internal"}
 	if !reflect.DeepEqual(value.AllowedOutgoingHosts, wantHosts) {
 		t.Fatalf("allowed hosts = %#v, want %#v", value.AllowedOutgoingHosts, wantHosts)
@@ -154,6 +157,8 @@ func TestValidateSiteSettingsRejectsUnsafeValues(t *testing.T) {
 		{SiteName: "moyro", PublicBaseURL: "https://chat.internal/subpath"},
 		{SiteName: "moyro", AllowedOutgoingHosts: []string{"https://keycloak.internal"}},
 		{SiteName: "moyro", AllowedOutgoingHosts: []string{"keycloak.internal:8080"}},
+		{SiteName: "moyro", DraftStorageMode: "database"},
+		{SiteName: "moyro", DraftStorageMode: "local", DraftRetentionDays: 31},
 	}
 	for _, value := range tests {
 		if err := validateSiteSettings(&value); err == nil {

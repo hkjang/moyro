@@ -164,6 +164,10 @@ const (
 	ActionPostRewrite       = "post.rewrite"
 	ActionTeamImport        = "team.import"
 	ActionRestart           = "admin.restart"
+	// Moyro Flow work objects.
+	ActionWorkItemCreate = "work_item.create"
+	ActionWorkItemUpdate = "work_item.update"
+	ActionWorkItemDelete = "work_item.delete"
 )
 
 type Entry struct {

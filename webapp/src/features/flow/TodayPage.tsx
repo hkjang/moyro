@@ -21,7 +21,6 @@ import {
   FlowLoading,
   FlowMetric,
   FlowPage,
-  FlowPrepared,
   FlowSection,
   FlowStatusBadge,
 } from "./FlowPage";
@@ -31,8 +30,8 @@ import {
   formatRelativeTime,
   isToday,
   normalizeSavedPosts,
-  useFlowWorkspaceIndex,
 } from "./flow-data";
+import { useFlowWorkspaceIndex } from "./FlowDataProvider";
 import { TodayBriefing } from "./TodayBriefing";
 
 type TodayData = {
@@ -53,7 +52,7 @@ export function TodayPage() {
   const navigate = useNavigate();
   const token = useSelector((state: RootState) => state.auth.token);
   const user = useSelector((state: RootState) => state.auth.user);
-  const workspace = useFlowWorkspaceIndex(token);
+  const workspace = useFlowWorkspaceIndex();
   const [data, setData] = useState<TodayData>(EMPTY_DATA);
   const [loading, setLoading] = useState(true);
   const [warnings, setWarnings] = useState<string[]>([]);
@@ -98,7 +97,7 @@ export function TodayPage() {
       setLoading(false);
     })();
     return () => { active = false; };
-  }, [revision, token]);
+  }, [revision, token, workspace.activityRevision, workspace.workItemRevision]);
 
   const unreadEntries = useMemo(
     () => workspace.entries
@@ -125,7 +124,7 @@ export function TodayPage() {
     <FlowPage
       eyebrow="Moyro Flow"
       title={`${user?.username ?? "사용자"}님, 오늘의 흐름입니다`}
-      description={new Intl.DateTimeFormat("ko-KR", { dateStyle: "full" }).format(new Date()) + " · 실제 대화와 개인 업무 상태를 한곳에서 확인합니다."}
+      description={new Intl.DateTimeFormat("ko-KR", { dateStyle: "full" }).format(new Date()) + " · 대화와 개인 업무 상태를 한곳에서 확인합니다."}
       actions={<Button startIcon={<RefreshRounded />} onClick={refreshAll} disabled={loading || workspace.loading}>새로고침</Button>}
     >
       {workspace.error && <FlowError message={workspace.error} onRetry={workspace.refresh} />}
@@ -133,7 +132,7 @@ export function TodayPage() {
 
       <section aria-label="오늘 요약" className="flow-metric-grid">
         <FlowMetric label="읽지 않은 메시지" value={unreadCount} detail={`${unreadEntries.length}개 대화`} tone="brand" onClick={() => navigate("/inbox")} />
-        <FlowMetric label="멘션" value={mentionCount} detail="채널 단위 실제 카운터" tone="warning" onClick={() => navigate("/inbox")} />
+        <FlowMetric label="멘션" value={mentionCount} detail="확인할 대화" tone="warning" onClick={() => navigate("/inbox")} />
         <FlowMetric label="오늘 리마인더" value={dueReminders.length} detail={`${data.reminders.length}개 예정`} tone="success" onClick={() => navigate("/my-work/reminders")} />
         <FlowMetric label="검토할 승인" value={pendingReview.length} detail={`내 요청 대기 ${pendingMine.length}개`} tone="ai" onClick={() => navigate("/approvals/review")} />
       </section>
@@ -146,9 +145,9 @@ export function TodayPage() {
         />
       </FlowSection>
 
-      <FlowSection title="먼저 볼 대화" description="서버에 저장된 채널별 읽지 않음·멘션 카운터입니다." id="today-unreads">
+      <FlowSection title="먼저 볼 대화" description="채널별 읽지 않은 메시지와 멘션을 우선순위대로 확인합니다." id="today-unreads">
         {workspace.loading ? <FlowLoading label="읽지 않은 대화를 불러오는 중…" /> : unreadEntries.length === 0 ? (
-          <FlowEmpty title="읽지 않은 대화가 없습니다" description="새 메시지가 도착하면 채널별 실제 카운터가 여기에 표시됩니다." />
+          <FlowEmpty title="읽지 않은 대화가 없습니다" description="새 메시지가 도착하면 확인할 대화가 여기에 표시됩니다." />
         ) : (
           <div className="flow-list">
             {unreadEntries.slice(0, 6).map((entry) => (
@@ -171,7 +170,7 @@ export function TodayPage() {
         )}
       </FlowSection>
 
-      <FlowSection title="내 업무" description="저장, 예약, 리마인더, 승인의 실제 서버 상태입니다." id="today-work">
+      <FlowSection title="내 업무" description="저장, 예약, 리마인더와 승인을 한곳에서 확인합니다." id="today-work">
         {loading ? <FlowLoading label="개인 업무를 불러오는 중…" /> : (
           <div className="flow-card-grid">
             <FlowCard>
@@ -202,12 +201,6 @@ export function TodayPage() {
         )}
       </FlowSection>
 
-      <FlowSection title="구조화된 업무" description="서버 계약이 준비된 뒤 실제 메시지와 연결됩니다." id="today-prepared">
-        <div className="flow-card-grid">
-          <FlowPrepared title="Action Item" description="작업 저장 API가 아직 없어 임시 항목을 만들거나 완료로 표시하지 않습니다." />
-          <FlowPrepared title="Decision Record" description="결정 기록 API가 아직 없어 예시 결정이나 가짜 통계를 표시하지 않습니다." />
-        </div>
-      </FlowSection>
     </FlowPage>
   );
 }

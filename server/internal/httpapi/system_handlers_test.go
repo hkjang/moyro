@@ -87,6 +87,27 @@ func TestNativeSystemInfoReportsEmailDigestCapability(t *testing.T) {
 	}
 }
 
+func TestNativeSystemInfoReportsSecureDraftDefaults(t *testing.T) {
+	h := &handlers{cfg: &config.Config{}}
+	recorder := httptest.NewRecorder()
+	h.nativeSystemInfo(recorder, httptest.NewRequest(http.MethodGet, "/api/moyro/v1/system/info", nil))
+	var body struct {
+		Capabilities struct {
+			Drafts struct {
+				StorageMode   string `json:"storage_mode"`
+				RetentionDays int    `json:"retention_days"`
+				ClearOnLogout bool   `json:"clear_on_logout"`
+			} `json:"drafts"`
+		} `json:"capabilities"`
+	}
+	if err := json.NewDecoder(recorder.Body).Decode(&body); err != nil {
+		t.Fatal(err)
+	}
+	if body.Capabilities.Drafts.StorageMode != "local" || body.Capabilities.Drafts.RetentionDays != 7 || !body.Capabilities.Drafts.ClearOnLogout {
+		t.Fatalf("draft capability = %#v", body.Capabilities.Drafts)
+	}
+}
+
 func TestGetClientLicenseRequiresOldFormat(t *testing.T) {
 	h := &handlers{}
 

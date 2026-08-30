@@ -71,10 +71,6 @@ test("uploads and activates all four official-layout plugin archives", async ({ 
   await uploadArchive(page, botmanArchive, "com.mattermost.botman");
   await uploadArchive(page, chatdumpArchive, "com.hkjang.mattermost-chatdump-plugin");
   await uploadArchive(page, echoArchive, "com.mattermost.echosummary");
-  await expect(page.getByLabel("vLLM Base URL")).toBeVisible({ timeout: compatibilityTimeout });
-  const secret = page.locator('[data-plugin-setting-key="VLLMAPIKey"]');
-  await expect(secret).toHaveAttribute("type", "password", { timeout: compatibilityTimeout });
-
   await uploadArchive(page, langflowArchive, "com.mattermost.langflow");
   await expect.poll(async () => page.evaluate(() => (
     Object.keys((window as Window & { __moyro_plugins__?: Record<string, unknown> }).__moyro_plugins__ ?? {}).sort()
@@ -85,8 +81,28 @@ test("uploads and activates all four official-layout plugin archives", async ({ 
     "com.mattermost.langflow",
   ]);
 
+  const pluginSubmenu = page.getByRole("list", { name: "설치된 플러그인" });
+  await expect(pluginSubmenu).toBeVisible({ timeout: compatibilityTimeout });
+  await expect(pluginSubmenu.getByRole("button")).toHaveCount(4, { timeout: compatibilityTimeout });
+  for (const pluginName of ["Botman Analytics", "Mattermost Chatdump Plugin", "Echo Summary", "Langflow"]) {
+    await expect(pluginSubmenu.getByRole("button", { name: new RegExp(`^${pluginName} 플러그인 설정`) })).toBeVisible();
+  }
+
   await settle(page);
   await capture(page, "admin-plugins-compatible.jpg");
+
+  await pluginSubmenu.getByRole("button", { name: /^Echo Summary 플러그인 설정/ }).click();
+  await expect(page).toHaveURL(/\/admin\/integrations\/plugins\/com\.mattermost\.echosummary$/);
+  await expect(page.getByRole("heading", { name: "Echo Summary", level: 1 })).toBeVisible({ timeout: compatibilityTimeout });
+  await expect(page.getByLabel("vLLM Base URL")).toBeVisible({ timeout: compatibilityTimeout });
+  const secret = page.locator('[data-plugin-setting-key="VLLMAPIKey"]');
+  await expect(secret).toHaveAttribute("type", "password", { timeout: compatibilityTimeout });
+  await expect(secret).toHaveValue("");
+  await page.reload();
+  await expect(page.getByRole("heading", { name: "Echo Summary", level: 1 })).toBeVisible({ timeout: compatibilityTimeout });
+  await expect(page.getByRole("button", { name: /^Echo Summary 플러그인 설정/ })).toHaveAttribute("aria-current", "page");
+  await settle(page);
+  await capture(page, "admin-plugin-echosummary.jpg");
   assertNoRuntimeIssues(issues, "real plugin upload and activation");
 });
 

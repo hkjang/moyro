@@ -7,7 +7,7 @@ import StopCircleRounded from "@mui/icons-material/StopCircleRounded";
 import type { FileInfo, PersonalAIPreferences } from "@/api/client";
 import { moyroMeApi } from "@/api/client";
 import { useMentionAutocomplete } from "@/components/MentionPicker";
-import { useDraft } from "@/features/workspace/composer/useDraft";
+import { clearMoyroDraft, useDraft } from "@/features/workspace/composer/useDraft";
 import "@/features/workspace/composer/message-composer.css";
 
 type RewriteMode = "concise" | "polite" | "report";
@@ -65,6 +65,7 @@ export function MessageComposer({
   const scopeGenerationRef = useRef(0);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const composingRef = useRef(false);
   const typingAtRef = useRef(0);
   const mentions = useMentionAutocomplete({
     token,
@@ -78,6 +79,7 @@ export function MessageComposer({
     ? `moyro:draft:${userId}:${channelID}:${rootId || "root"}`
     : null;
   const draft = useDraft(draftKey, value, setValue);
+  const hasSubmittableContent = value.trim().length > 0 || pending.length > 0;
 
   function clearRewrite(abort = true) {
     if (abort) rewriteControllerRef.current?.abort();
@@ -91,11 +93,11 @@ export function MessageComposer({
 
   async function submit() {
     const trimmed = value.trim();
-    if (sending || uploading || (!trimmed && pending.length === 0)) return;
+    if (sending || uploading || !hasSubmittableContent) return;
     const generation = scopeGenerationRef.current;
     const submittedDraftKey = draftKey;
     if (submittedDraftKey && value.trim()) {
-      try { localStorage.setItem(submittedDraftKey, value); } catch { /* storage is best-effort */ }
+      draft.flush();
     }
     setSending(true);
     setSendError("");
@@ -103,7 +105,7 @@ export function MessageComposer({
       const sent = await onSend(trimmed, pending.map((file) => file.id));
       if (scopeGenerationRef.current !== generation) {
         if (sent && submittedDraftKey) {
-          try { localStorage.removeItem(submittedDraftKey); } catch { /* storage is best-effort */ }
+          clearMoyroDraft(submittedDraftKey);
         }
         return;
       }
@@ -129,6 +131,7 @@ export function MessageComposer({
     if (resetSeqRef.current === resetSeq) return;
     resetSeqRef.current = resetSeq;
     scopeGenerationRef.current += 1;
+    composingRef.current = false;
     clearRewrite();
     setSending(false);
     setSendError("");
@@ -143,6 +146,7 @@ export function MessageComposer({
     if (previousScopeRef.current === composerScope) return;
     previousScopeRef.current = composerScope;
     scopeGenerationRef.current += 1;
+    composingRef.current = false;
     clearRewrite();
     setPending([]);
     setUploading(false);
@@ -390,9 +394,26 @@ export function MessageComposer({
                 mentions.onChange(event);
                 notifyTyping();
               }}
-              onBlur={draft.flush}
+              onCompositionStart={() => {
+                composingRef.current = true;
+              }}
+              onCompositionEnd={() => {
+                composingRef.current = false;
+              }}
+              onBlur={() => {
+                composingRef.current = false;
+                draft.flush();
+              }}
               onKeyDown={(event) => {
                 if (mentions.handleKeyDown(event)) return;
+                const nativeEvent = event.nativeEvent;
+                if (
+                  composingRef.current
+                  || nativeEvent.isComposing
+                  || nativeEvent.keyCode === 229
+                ) {
+                  return;
+                }
                 if (event.key === "Enter" && !event.shiftKey) {
                   event.preventDefault();
                   void submit();
@@ -401,7 +422,11 @@ export function MessageComposer({
             />
             {mentions.render()}
           </div>
-          <button type="submit" className="btn-primary composer-send-button" disabled={uploading || sending}>
+          <button
+            type="submit"
+            className="btn-primary composer-send-button"
+            disabled={uploading || sending || !hasSubmittableContent}
+          >
             <SendRounded fontSize="inherit" aria-hidden />
             <span>{sending ? "전송 중" : "전송"}</span>
           </button>
@@ -409,7 +434,7 @@ export function MessageComposer({
 
         {draft.hasSaved && (
           <div className="draft-badge">
-            <span>초안 저장됨</span>
+            <span>이 기기에 초안 저장됨</span>
             <button type="button" className="draft-clear" onClick={draft.clear} aria-label="저장된 초안 지우기">
               지우기
             </button>

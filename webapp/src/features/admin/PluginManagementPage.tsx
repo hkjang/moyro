@@ -1,60 +1,31 @@
 import { Alert, CircularProgress, LinearProgress, Stack, Typography } from "@mui/material";
-import { useCallback, useEffect, useState } from "react";
+import { useState } from "react";
 import { useSelector } from "react-redux";
+import { useNavigate } from "react-router-dom";
 
-import {
-  adminApi,
-  type AdminPlugin,
-  type AdminPluginStatus,
-} from "@/api/client";
 import { SettingsCard, SettingsPage } from "@/components/settings/SettingsPrimitives";
 import { PluginAdminPanel } from "@/plugins/PluginAdminPanel";
 import type { RootState } from "@/store";
+import { useAdminPlugins } from "./AdminPluginsContext";
 
 export function PluginManagementPage() {
   const token = useSelector((state: RootState) => state.auth.token);
-  const [plugins, setPlugins] = useState<AdminPlugin[]>([]);
-  const [statuses, setStatuses] = useState<AdminPluginStatus[]>([]);
-  const [runtimeManagementEnabled, setRuntimeManagementEnabled] = useState(false);
-  const [loading, setLoading] = useState(true);
-  const [initialized, setInitialized] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  const load = useCallback(async () => {
-    if (!token) {
-      setLoading(false);
-      setInitialized(true);
-      return;
-    }
-    setLoading(true);
-    setError(null);
-    try {
-      const [pluginRows, statusRows, capabilities] = await Promise.all([
-        adminApi.listPlugins(token),
-        adminApi.listPluginStatuses(token),
-        adminApi.getPluginManagementCapabilities(token),
-      ]);
-      setPlugins(pluginRows);
-      setStatuses(statusRows);
-      setRuntimeManagementEnabled(
-        capabilities.management_enabled && capabilities.uploads_enabled,
-      );
-    } catch (loadError) {
-      setError(loadError instanceof Error ? loadError.message : "플러그인 목록을 불러오지 못했습니다.");
-    } finally {
-      setLoading(false);
-      setInitialized(true);
-    }
-  }, [token]);
-
-  useEffect(() => {
-    void load();
-  }, [load]);
+  const navigate = useNavigate();
+  const {
+    plugins,
+    statuses,
+    runtimeManagementEnabled,
+    initialized,
+    loading,
+    error,
+    refresh,
+  } = useAdminPlugins();
+  const [operationError, setOperationError] = useState<string | null>(null);
 
   return (
     <SettingsPage
       title="플러그인"
-      description="Mattermost 호환 플러그인 번들을 설치하고 런타임 상태와 플러그인별 설정을 관리합니다."
+      description="Mattermost 호환 플러그인 번들을 설치하고 실행 상태를 관리합니다. 각 플러그인의 설정은 왼쪽 하위 메뉴에서 엽니다."
     >
       <SettingsCard
         title="설치된 플러그인"
@@ -72,13 +43,15 @@ export function PluginManagementPage() {
           <Stack spacing={2}>
             {loading && <LinearProgress aria-label="플러그인 목록 새로고침 중" />}
             {error && <Alert severity="warning">{error}</Alert>}
+            {operationError && <Alert severity="warning">{operationError}</Alert>}
             <PluginAdminPanel
               token={token}
-              plugins={plugins}
-              statuses={statuses}
+              plugins={[...plugins]}
+              statuses={[...statuses]}
               runtimeManagementEnabled={runtimeManagementEnabled}
-              onRefresh={load}
-              onError={setError}
+              onRefresh={refresh}
+              onError={setOperationError}
+              onOpenSettings={(pluginID) => navigate(`/admin/integrations/plugins/${encodeURIComponent(pluginID)}`)}
             />
           </Stack>
         ) : (

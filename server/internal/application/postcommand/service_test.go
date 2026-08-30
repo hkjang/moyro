@@ -37,6 +37,21 @@ func (f *fakeChannels) BumpUnread(_ context.Context, channelID, authorID string,
 	return f.counters, nil
 }
 
+type filteringChannels struct {
+	fakeChannels
+	allowed map[string]bool
+}
+
+func (f *filteringChannels) MembersByChannel(_ context.Context, channelID string, userIDs []string) ([]channels.Member, error) {
+	members := make([]channels.Member, 0, len(userIDs))
+	for _, userID := range userIDs {
+		if f.allowed[userID] {
+			members = append(members, channels.Member{ChannelID: channelID, UserID: userID})
+		}
+	}
+	return members, nil
+}
+
 type createCall struct {
 	channelID string
 	userID    string
@@ -156,6 +171,16 @@ type fakeEvents struct {
 	events []ws.Event
 }
 
+type fakeActivity struct {
+	post       *posts.Post
+	mentionIDs []string
+}
+
+func (f *fakeActivity) PostCreated(_ context.Context, post *posts.Post, mentionedUserIDs []string) {
+	f.post = post
+	f.mentionIDs = append([]string(nil), mentionedUserIDs...)
+}
+
 func (f *fakeEvents) Broadcast(event ws.Event) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -227,10 +252,11 @@ func TestExecutePreservesRESTLifecycle(t *testing.T) {
 	events := &fakeEvents{}
 	outgoing := &fakeOutgoing{}
 	auditLog := &fakeAudit{}
+	activity := &fakeActivity{}
 	metricCount := 0
 	service := New(Dependencies{
 		Channels: channelSvc, Posts: postStore, Files: fileSvc, Users: userSvc,
-		Bots: &fakeBots{}, Plugins: pluginSvc, Events: events, Outgoing: outgoing, Audit: auditLog,
+		Bots: &fakeBots{}, Plugins: pluginSvc, Events: events, Outgoing: outgoing, Audit: auditLog, Activity: activity,
 		Logger:             slog.New(slog.NewTextHandler(io.Discard, nil)),
 		IncrementPostCount: func() { metricCount++ },
 	})
@@ -277,6 +303,9 @@ func TestExecutePreservesRESTLifecycle(t *testing.T) {
 	}
 	if !reflect.DeepEqual(channelSvc.bumpedIDs, []string{"user-alice", "user-bob"}) {
 		t.Fatalf("bumped mention ids = %#v", channelSvc.bumpedIDs)
+	}
+	if activity.post != post || !reflect.DeepEqual(activity.mentionIDs, []string{"user-alice", "user-bob"}) {
+		t.Fatalf("activity call = post %#v mentions %#v", activity.post, activity.mentionIDs)
 	}
 	if outgoing.post != post || outgoing.username != "author" {
 		t.Fatalf("outgoing dispatch = %#v, %q", outgoing.post, outgoing.username)
@@ -333,6 +362,41 @@ func TestExecutePreservesRESTLifecycle(t *testing.T) {
 	}
 	if gotEvents[4].Event != "unread_updated" || gotEvents[4].Data["is_mention"] != false {
 		t.Fatalf("ordinary unread event = %#v", gotEvents[4])
+	}
+}
+
+func TestExecuteFiltersMentionsToCurrentChannelMembers(t *testing.T) {
+	channelSvc := &filteringChannels{
+		fakeChannels: fakeChannels{member: true},
+		allowed:      map[string]bool{"member-id": true},
+	}
+	activity := &fakeActivity{}
+	events := &fakeEvents{}
+	service := New(Dependencies{
+		Channels: channelSvc,
+		Posts:    &fakePosts{},
+		Users: &fakeUsers{resolved: map[string]string{
+			"member": "member-id", "outsider": "outsider-id",
+		}},
+		Events: events, Activity: activity,
+		Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
+	})
+	if _, err := service.Execute(context.Background(), Command{
+		Source: SourceREST, ActorID: "author", ChannelID: "private-channel",
+		Message: "@member @outsider",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(channelSvc.bumpedIDs, []string{"member-id"}) {
+		t.Fatalf("unread mention ids = %#v", channelSvc.bumpedIDs)
+	}
+	if !reflect.DeepEqual(activity.mentionIDs, []string{"member-id"}) {
+		t.Fatalf("activity mention ids = %#v", activity.mentionIDs)
+	}
+	for _, event := range events.snapshot() {
+		if event.Event == "mention" && event.Broadcast.UserID == "outsider-id" {
+			t.Fatal("private-channel mention leaked to non-member")
+		}
 	}
 }
 

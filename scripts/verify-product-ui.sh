@@ -12,7 +12,45 @@ shift 2
 if [[ $# -gt 0 ]]; then
   playwright_specs=("$@")
 else
-  playwright_specs=(e2e/product-pages.spec.ts e2e/plugin-compatibility.spec.ts)
+  playwright_specs=(
+    e2e/product-pages.spec.ts
+    e2e/plugin-compatibility.spec.ts
+    e2e/accessibility.spec.ts
+    e2e/visual-regression.spec.ts
+  )
+fi
+playwright_args=("${playwright_specs[@]}" --project=chromium)
+if [[ "${MOYRO_UPDATE_SNAPSHOTS:-false}" == "true" ]]; then
+  playwright_args+=(--update-snapshots)
+fi
+
+requires_plugin_fixtures=false
+for spec in "${playwright_specs[@]}"; do
+  if [[ "${spec}" == *"plugin-compatibility.spec.ts" ]]; then
+    requires_plugin_fixtures=true
+    break
+  fi
+done
+if [[ "${requires_plugin_fixtures}" == "true" ]]; then
+  fixture_dir="${MOYRO_PLUGIN_FIXTURE_DIR:-}"
+  if [[ -z "${fixture_dir}" || ! -d "${fixture_dir}" ]]; then
+    echo "MOYRO_PLUGIN_FIXTURE_DIR must name a directory when plugin compatibility is part of the browser gate" >&2
+    exit 2
+  fi
+  for prefix in \
+    com.mattermost.botman- \
+    com.hkjang.mattermost-chatdump-plugin- \
+    com.mattermost.echosummary- \
+    com.mattermost.langflow-
+  do
+    shopt -s nullglob
+    matches=("${fixture_dir}/${prefix}"*.tar.gz)
+    shopt -u nullglob
+    if [[ ${#matches[@]} -ne 1 ]]; then
+      echo "expected exactly one ${prefix}*.tar.gz in ${fixture_dir}, found ${#matches[@]}" >&2
+      exit 2
+    fi
+  done
 fi
 port="${MOYRO_E2E_PORT:-18065}"
 suffix="${GITHUB_RUN_ID:-local}-$$"
@@ -90,5 +128,5 @@ bash scripts/contract-test.sh
   MOYRO_ADMIN_PASSWORD="${admin_password}" \
   MOYRO_CAPTURE_DIR="${capture_dir}" \
   MOYRO_EXPECTED_VERSION="${expected_version}" \
-  npx playwright test "${playwright_specs[@]}" --project=chromium
+  npx playwright test "${playwright_args[@]}"
 )

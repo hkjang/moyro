@@ -1,13 +1,17 @@
-import { useMemo, useRef, useState } from "react";
+import { useId, useMemo, useRef, useState } from "react";
 import AddReactionRounded from "@mui/icons-material/AddReactionRounded";
+import AssignmentTurnedInRounded from "@mui/icons-material/AssignmentTurnedInRounded";
 import AttachFileRounded from "@mui/icons-material/AttachFileRounded";
 import ChatBubbleOutlineRounded from "@mui/icons-material/ChatBubbleOutlineRounded";
 import DeleteOutlineRounded from "@mui/icons-material/DeleteOutlineRounded";
 import EditOutlined from "@mui/icons-material/EditOutlined";
+import GavelRounded from "@mui/icons-material/GavelRounded";
+import MoreHorizRounded from "@mui/icons-material/MoreHorizRounded";
 import NotificationsNoneRounded from "@mui/icons-material/NotificationsNoneRounded";
 import PushPinRounded from "@mui/icons-material/PushPinRounded";
 import StarBorderRounded from "@mui/icons-material/StarBorderRounded";
 import StarRounded from "@mui/icons-material/StarRounded";
+import { Menu, MenuItem } from "@mui/material";
 import type { FileInfo, Post, Reaction, User, UserStatusValue } from "@/api/client";
 import { api } from "@/api/client";
 import { EmojiPicker, customEmojiByName } from "@/components/EmojiPicker";
@@ -16,6 +20,7 @@ import { Lightbox } from "@/components/Lightbox";
 import { MessageBody } from "@/components/MessageBody";
 import { useMentionAutocomplete } from "@/components/MentionPicker";
 import { useDraft } from "@/features/workspace/composer/useDraft";
+import { useWorkItemCreation } from "@/features/work-items/WorkItemCreationProvider";
 import { WorkspaceAvatar } from "@/features/workspace/sidebar/WorkspaceAvatar";
 import { PluginSurface } from "@/plugins/PluginSurface";
 import { usePluginRegistryState } from "@/plugins/registry";
@@ -81,6 +86,7 @@ export type MessageItemProps = {
 
 export function MessageItem(props: MessageItemProps) {
   const pluginRegistry = usePluginRegistryState();
+  const workItemCreation = useWorkItemCreation();
   const {
     post,
     isMe,
@@ -108,6 +114,8 @@ export function MessageItem(props: MessageItemProps) {
   const [editError, setEditError] = useState("");
   const [draft, setDraft] = useState(post.message);
   const [pickerOpen, setPickerOpen] = useState(false);
+  const [moreMenuAnchor, setMoreMenuAnchor] = useState<HTMLElement | null>(null);
+  const moreMenuID = `message-actions-${useId()}`;
   const editSavingRef = useRef(false);
   const editRef = useRef<HTMLTextAreaElement>(null);
   const editMentions = useMentionAutocomplete({
@@ -140,6 +148,11 @@ export function MessageItem(props: MessageItemProps) {
     editDraft.clearSaved();
     setEditing(false);
     setDraft(post.message);
+  }
+
+  function runMoreAction(action: () => void) {
+    setMoreMenuAnchor(null);
+    action();
   }
 
   return (
@@ -281,10 +294,10 @@ export function MessageItem(props: MessageItemProps) {
       )}
 
       {!editing && !compact && (
-        <div className="msg-actions" aria-label="메시지 작업">
+        <div className="msg-actions message-actions-toolbar" aria-label="메시지 작업">
           <button
             type="button"
-            className="action-btn message-action-button"
+            className="action-btn message-action-button message-action-primary"
             onClick={() => setPickerOpen((open) => !open)}
             title="리액션"
             aria-label="리액션 추가"
@@ -295,7 +308,7 @@ export function MessageItem(props: MessageItemProps) {
           {!hideThreadAction && onOpenThread && (
             <button
               type="button"
-              className="action-btn message-action-button"
+              className="action-btn message-action-button message-action-primary"
               onClick={() => onOpenThread(post.root_id || post.id)}
               title="스레드 열기"
               aria-label="스레드 열기"
@@ -306,7 +319,7 @@ export function MessageItem(props: MessageItemProps) {
           {onToggleSaved && (
             <button
               type="button"
-              className={`action-btn message-action-button ${isSaved ? "action-saved" : ""}`}
+              className={`action-btn message-action-button message-action-primary ${isSaved ? "action-saved" : ""}`}
               onClick={onToggleSaved}
               title={isSaved ? "저장 해제" : "저장"}
               aria-label={isSaved ? "메시지 저장 해제" : "메시지 저장"}
@@ -316,47 +329,120 @@ export function MessageItem(props: MessageItemProps) {
                 : <StarBorderRounded fontSize="inherit" aria-hidden />}
             </button>
           )}
+          <button
+            type="button"
+            className="action-btn message-action-button message-action-more"
+            onClick={(event) => {
+              setPickerOpen(false);
+              setMoreMenuAnchor((anchor) => anchor ? null : event.currentTarget);
+            }}
+            title="더보기"
+            aria-label="메시지 작업 더보기"
+            aria-haspopup="menu"
+            aria-controls={moreMenuAnchor ? moreMenuID : undefined}
+            aria-expanded={Boolean(moreMenuAnchor)}
+          >
+            <MoreHorizRounded fontSize="inherit" aria-hidden />
+          </button>
+        </div>
+      )}
+
+      {!editing && !compact && (
+        <Menu
+          id={moreMenuID}
+          anchorEl={moreMenuAnchor}
+          open={Boolean(moreMenuAnchor)}
+          onClose={() => setMoreMenuAnchor(null)}
+          slotProps={{
+            list: {
+              "aria-label": "메시지 작업 더보기",
+              className: "message-action-menu",
+            },
+          }}
+        >
+          <MenuItem
+            className="message-action-menu-item"
+            onClick={() => runMoreAction(() => setPickerOpen(true))}
+          >
+            <AddReactionRounded fontSize="small" aria-hidden />
+            <span>리액션 추가</span>
+          </MenuItem>
+          {!hideThreadAction && onOpenThread && (
+            <MenuItem
+              className="message-action-menu-item"
+              onClick={() => runMoreAction(() => onOpenThread(post.root_id || post.id))}
+            >
+              <ChatBubbleOutlineRounded fontSize="small" aria-hidden />
+              <span>스레드 열기</span>
+            </MenuItem>
+          )}
+          {onToggleSaved && (
+            <MenuItem
+              className="message-action-menu-item"
+              onClick={() => runMoreAction(onToggleSaved)}
+            >
+              {isSaved
+                ? <StarRounded fontSize="small" aria-hidden />
+                : <StarBorderRounded fontSize="small" aria-hidden />}
+              <span>{isSaved ? "저장 해제" : "저장"}</span>
+            </MenuItem>
+          )}
           {onRemindMe && (
-            <button
-              type="button"
-              className="action-btn message-action-button"
-              onClick={onRemindMe}
-              title="나중에 알림"
-              aria-label="메시지 리마인더 설정"
+            <MenuItem
+              className="message-action-menu-item"
+              onClick={() => runMoreAction(onRemindMe)}
             >
-              <NotificationsNoneRounded fontSize="inherit" aria-hidden />
-            </button>
+              <NotificationsNoneRounded fontSize="small" aria-hidden />
+              <span>나중에 알림</span>
+            </MenuItem>
+          )}
+          {workItemCreation.available && (
+            <MenuItem
+              className="message-action-menu-item"
+              onClick={() => runMoreAction(() => workItemCreation.open(post, "task"))}
+            >
+              <AssignmentTurnedInRounded fontSize="small" aria-hidden />
+              <span>작업으로 만들기</span>
+            </MenuItem>
+          )}
+          {workItemCreation.available && (
+            <MenuItem
+              className="message-action-menu-item"
+              onClick={() => runMoreAction(() => workItemCreation.open(post, "decision"))}
+            >
+              <GavelRounded fontSize="small" aria-hidden />
+              <span>결정으로 기록</span>
+            </MenuItem>
           )}
           {isMe && (
-            <button
-              type="button"
-              className="action-btn message-action-button"
-              onClick={() => { setEditError(""); setEditing(true); }}
-              title="편집"
-              aria-label="메시지 편집"
+            <MenuItem
+              className="message-action-menu-item"
+              onClick={() => runMoreAction(() => { setEditError(""); setEditing(true); })}
             >
-              <EditOutlined fontSize="inherit" aria-hidden />
-            </button>
+              <EditOutlined fontSize="small" aria-hidden />
+              <span>편집</span>
+            </MenuItem>
           )}
           {isMe && (
-            <button
-              type="button"
-              className="action-btn message-action-button"
-              onClick={() => onDelete(post.id)}
-              title="삭제"
-              aria-label="메시지 삭제"
+            <MenuItem
+              className="message-action-menu-item message-action-menu-item-danger"
+              onClick={() => runMoreAction(() => onDelete(post.id))}
             >
-              <DeleteOutlineRounded fontSize="inherit" aria-hidden />
-            </button>
+              <DeleteOutlineRounded fontSize="small" aria-hidden />
+              <span>삭제</span>
+            </MenuItem>
           )}
-          {pickerOpen && (
-            <EmojiPicker
-              token={token}
-              quick={QUICK_EMOJIS}
-              onPick={(name) => { onToggleReaction(name); setPickerOpen(false); }}
-              onClose={() => setPickerOpen(false)}
-            />
-          )}
+        </Menu>
+      )}
+
+      {!editing && !compact && pickerOpen && (
+        <div className="message-reaction-picker" role="dialog" aria-label="리액션 선택">
+          <EmojiPicker
+            token={token}
+            quick={QUICK_EMOJIS}
+            onPick={(name) => { onToggleReaction(name); setPickerOpen(false); }}
+            onClose={() => setPickerOpen(false)}
+          />
         </div>
       )}
 

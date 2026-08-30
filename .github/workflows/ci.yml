@@ -66,8 +66,8 @@ jobs:
           MOYRO_TEST_ECHOSUMMARY_PLUGIN_ARCHIVE: ${{ steps.plugin-fixtures.outputs.echosummary }}
           MOYRO_TEST_LANGFLOW_PLUGIN_ARCHIVE: ${{ steps.plugin-fixtures.outputs.langflow }}
         run: |
-          go test -race -p 1 ./internal/store ./internal/auth ./internal/files ./internal/scheduled ./internal/webhooks ./internal/pluginhost
-          go vet ./internal/store ./internal/auth ./internal/files ./internal/scheduled ./internal/webhooks ./internal/pluginhost
+          go test -race -p 1 ./internal/store ./internal/auth ./internal/files ./internal/scheduled ./internal/webhooks ./internal/pluginhost ./internal/ws ./internal/workitems ./internal/activityevents ./internal/approval ./internal/httpapi
+          go vet ./internal/store ./internal/auth ./internal/files ./internal/scheduled ./internal/webhooks ./internal/pluginhost ./internal/ws ./internal/workitems ./internal/activityevents ./internal/approval ./internal/httpapi
 
   verify:
     runs-on: ubuntu-latest

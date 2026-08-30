@@ -1,0 +1,1100 @@
+openapi: 3.1.0
+info:
+  title: Moyro Native API
+  version: 0.2.1
+  description: |
+    Moyro Flow, durable activity inbox, conversation-derived work items, safe
+    approval previews, and service policy endpoints under `/api/moyro/v1`.
+    This contract is intentionally separate from `openapi-v4.yaml`, which
+    documents the Mattermost-compatible `/api/v4` boundary.
+
+    Except for `GET /system/info`, requests require an `Authorization: Bearer`
+    header containing a live session JWT, PAT, or Moyro API key accepted by the
+    endpoint. Protected native endpoints reject credentials supplied through
+    the `access_token` query parameter. Every resource operation documents the
+    current membership and endpoint-specific RBAC checks it applies.
+servers:
+  - url: /api/moyro/v1
+    description: Native API on the current Moyro deployment origin
+tags:
+  - name: System
+    description: Public build metadata and client capabilities.
+  - name: Settings
+    description: Administrator-owned site and browser policy.
+  - name: Operations
+    description: Evidence-backed administrator diagnostics for durable runtime state.
+  - name: Flow
+    description: User-scoped navigation and unread read models.
+  - name: Activity
+    description: Durable personal inbox events and their state.
+  - name: Work items
+    description: Tasks and decisions derived from accessible conversations.
+  - name: Approvals
+    description: Protected MCP requests and display-safe review projections.
+security:
+  - bearerAuth: []
+paths:
+  /system/info:
+    get:
+      operationId: getSystemInfo
+      tags: [System]
+      summary: Read public build and capability information
+      description: |
+        Returns only public service metadata. Draft capability values are the
+        effective administrator policy consumed by the web client.
+      security: []
+      responses:
+        "200":
+          description: Public service information
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SystemInfo"
+  /admin/settings/site:
+    get:
+      operationId: getSiteSettings
+      tags: [Settings]
+      summary: Read site and browser-draft policy
+      description: Requires the `manage_settings` permission.
+      responses:
+        "200":
+          description: Current site settings
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SiteSettings"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "500": { $ref: "#/components/responses/InternalError" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+    patch:
+      operationId: updateSiteSettings
+      tags: [Settings]
+      summary: Replace site and browser-draft policy
+      description: |
+        Requires `manage_settings`. Although the method is PATCH, the handler
+        decodes a complete settings view over server defaults. Send every field
+        to avoid unintentionally restoring an omitted value to its default.
+        `public_base_url` cannot be cleared while Keycloak is enabled.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SiteSettings"
+      responses:
+        "200":
+          description: Normalized and stored site settings
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SiteSettings"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "500": { $ref: "#/components/responses/InternalError" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+  /admin/operations:
+    get:
+      operationId: getAdminOperations
+      tags: [Operations]
+      summary: Read evidence-backed operational state
+      description: |
+        Requires `manage_system`. Database, migration, queue, webhook-delivery,
+        and file-metadata values come from the current PostgreSQL state and
+        selected storage runtime. A subsystem remains `unknown` when Moyro has
+        no heartbeat or connection probe that can prove it healthy; an empty
+        queue is not reported as a running worker.
+      responses:
+        "200":
+          description: Current operational snapshot
+          headers:
+            Cache-Control:
+              schema: { type: string, const: "private, no-store" }
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminOperationsSnapshot"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+  /me/flow-summary:
+    get:
+      operationId: getFlowSummary
+      tags: [Flow]
+      summary: Read the current user's Flow navigation model
+      description: |
+        Returns accessible teams, active team channels, membership counters,
+        and up to six priority unread channels in one request. Browser sessions
+        use their live memberships. Restricted API keys additionally require
+        the current `mcp_read` grant and remain bounded by their team/channel
+        scopes. Direct and group-message channels are not included in this read
+        model.
+      responses:
+        "200":
+          description: User-scoped Flow summary
+          headers:
+            Cache-Control:
+              schema: { type: string, const: "private, no-store" }
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FlowSummary"
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "500": { $ref: "#/components/responses/InternalError" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+  /me/activity-events:
+    get:
+      operationId: listActivityEvents
+      tags: [Activity]
+      summary: List durable activity inbox events
+      description: |
+        Events are always constrained to the authenticated owner. Channel-bound
+        events disappear from subsequent reads if that user loses access to the
+        channel. The cursor is opaque and orders rows by `(create_at, id)`
+        descending. Repeated `type` parameters and comma-separated type values
+        are both accepted.
+      parameters:
+        - $ref: "#/components/parameters/ActivityCursor"
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 100, default: 50 }
+        - name: unread
+          in: query
+          schema: { type: boolean, default: false }
+        - name: type
+          in: query
+          description: Event type filter; repeat the parameter to select several types.
+          style: form
+          explode: true
+          schema:
+            type: array
+            items: { $ref: "#/components/schemas/ActivityEventType" }
+      responses:
+        "200":
+          description: Cursor page of safe, owner-scoped activity views
+          headers:
+            Cache-Control:
+              schema: { type: string, const: "private, no-store" }
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ActivityEventPage"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "500": { $ref: "#/components/responses/InternalError" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+  /me/activity-events/{eventID}:
+    patch:
+      operationId: updateActivityEventState
+      tags: [Activity]
+      summary: Update read, completed, or snooze state
+      description: |
+        Only the authenticated owner's row can be changed. Foreign and
+        inaccessible channel events are returned as not found.
+      parameters:
+        - $ref: "#/components/parameters/EventID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ActivityStatePatch"
+      responses:
+        "200":
+          description: Updated activity event
+          headers:
+            Cache-Control:
+              schema: { type: string, const: "private, no-store" }
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ActivityEvent"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "500": { $ref: "#/components/responses/InternalError" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+  /me/activity-events/mark-read:
+    post:
+      operationId: markActivityEventsRead
+      tags: [Activity]
+      summary: Mark several activity events read
+      description: |
+        Updates at most 200 owner-scoped events. Foreign, missing, or no-longer
+        accessible event IDs are indistinguishable no-ops and are not included
+        in the returned count.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ActivityMarkReadRequest"
+      responses:
+        "200":
+          description: Number of rows newly marked read
+          headers:
+            Cache-Control:
+              schema: { type: string, const: "private, no-store" }
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ActivityMarkReadResult"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "500": { $ref: "#/components/responses/InternalError" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+  /me/work-items:
+    get:
+      operationId: listWorkItems
+      tags: [Work items]
+      summary: List accessible tasks and decisions
+      description: |
+        Tasks are visible only to their creator or current assignee. Decisions
+        are visible to current members of the source channel. Removed channel
+        membership removes both kinds from future reads. When `status` is
+        supplied, a matching `kind` is required. The cursor is opaque and sorts
+        by `(create_at, id)` descending.
+      parameters:
+        - name: kind
+          in: query
+          schema: { $ref: "#/components/schemas/WorkItemKind" }
+        - name: status
+          in: query
+          description: Must be valid for the accompanying kind.
+          schema: { $ref: "#/components/schemas/WorkItemStatus" }
+        - name: cursor
+          in: query
+          schema: { type: string, maxLength: 1024 }
+        - name: per_page
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 100, default: 40 }
+      responses:
+        "200":
+          description: Cursor page of work items
+          headers:
+            Cache-Control:
+              schema: { type: string, const: "private, no-store" }
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WorkItemPage"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "500": { $ref: "#/components/responses/InternalError" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+    post:
+      operationId: createWorkItem
+      tags: [Work items]
+      summary: Create a task or record a decision from a message
+      description: |
+        The server derives team, channel, and root-thread scope from the live
+        source post and rechecks source-channel membership. A task assignee must
+        be an active channel member; an omitted task assignee defaults to the
+        caller. Decisions reject assignee and due-date values.
+
+        An idempotency key of 1–200 characters is required in either the
+        `Idempotency-Key` header or `idempotency_key` body field. If both are
+        sent they must match. Replaying the same actor/key with every durable
+        input unchanged returns `200` and `replayed: true`; reuse for different
+        input or a deleted item returns `409`.
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateWorkItem"
+      responses:
+        "201":
+          description: Newly created work item
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CreateWorkItemResult"
+        "200":
+          description: Idempotent replay of the original work item
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CreateWorkItemResult"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "500": { $ref: "#/components/responses/InternalError" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+  /me/work-items/{workItemID}:
+    patch:
+      operationId: updateWorkItem
+      tags: [Work items]
+      summary: Update a task or decision
+      description: |
+        The creator can change owner-controlled fields. A current task assignee
+        can change status only. Decisions remain creator-controlled. Guessed
+        task IDs that are not visible to the caller are returned as not found.
+      parameters:
+        - $ref: "#/components/parameters/WorkItemID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PatchWorkItem"
+      responses:
+        "200":
+          description: Updated work item
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WorkItem"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "500": { $ref: "#/components/responses/InternalError" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+    delete:
+      operationId: deleteWorkItem
+      tags: [Work items]
+      summary: Delete a work item
+      description: Only the creator, while still a source-channel member, can delete it.
+      parameters:
+        - $ref: "#/components/parameters/WorkItemID"
+      responses:
+        "204":
+          description: Work item deleted; no response body
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "500": { $ref: "#/components/responses/InternalError" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+  /me/approval-requests:
+    get:
+      operationId: listOwnApprovalRequests
+      tags: [Approvals]
+      summary: List approval requests submitted by the current user
+      description: |
+        Returns display-oriented projections. Durable execution payloads and
+        producer-private credential metadata are never included.
+      parameters:
+        - $ref: "#/components/parameters/ApprovalStatus"
+      responses:
+        "200":
+          description: Up to 100 approval request views
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/ApprovalRequestView" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "500": { $ref: "#/components/responses/InternalError" }
+    post:
+      operationId: submitApprovalRequest
+      tags: [Approvals]
+      summary: Submit a supported protected MCP write
+      description: |
+        Requires a currently valid scoped MCP key with `mcp_write` and
+        `request_approval` in the destination channel. The supported actions
+        are `mcp.create_post` and `mcp.reply_to_thread`. The response contains
+        a safe preview only; the raw execution payload is never returned.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SubmitApprovalRequest"
+      responses:
+        "200":
+          description: Approval requirement and optional safe request view
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApprovalResultView"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /reviews/approval-requests:
+    get:
+      operationId: listReviewApprovalRequests
+      tags: [Approvals]
+      summary: List approval requests the current principal can review
+      description: |
+        Team/channel scope and `review_approval` are evaluated for every row.
+        Self-review exclusions configured by policy are also applied.
+      parameters:
+        - $ref: "#/components/parameters/ApprovalStatus"
+      responses:
+        "200":
+          description: Up to 100 safe approval request views
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/ApprovalRequestView" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "500": { $ref: "#/components/responses/InternalError" }
+  /reviews/approval-requests/{requestID}/decision:
+    post:
+      operationId: decideApprovalRequest
+      tags: [Approvals]
+      summary: Approve or reject an in-scope request
+      description: |
+        Requires current `review_approval` in the request resource scope. An
+        approved request is executed through the MCP approved-action path
+        before the response is returned. The response remains the safe view
+        without the raw durable payload.
+      parameters:
+        - $ref: "#/components/parameters/ApprovalRequestID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ApprovalDecisionInput"
+      responses:
+        "200":
+          description: Updated safe approval request view
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApprovalRequestView"
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT, PAT, or scoped Moyro API key
+  parameters:
+    EventID:
+      name: eventID
+      in: path
+      required: true
+      schema: { type: string, minLength: 1, maxLength: 128 }
+    WorkItemID:
+      name: workItemID
+      in: path
+      required: true
+      schema: { type: string, minLength: 1, maxLength: 128 }
+    ApprovalRequestID:
+      name: requestID
+      in: path
+      required: true
+      schema: { type: string, minLength: 1, maxLength: 128 }
+    ActivityCursor:
+      name: cursor
+      in: query
+      description: Opaque cursor returned as `next_cursor` by the preceding page.
+      schema: { type: string, maxLength: 1024 }
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: false
+      description: Required here or in the body; if both are sent, values must match.
+      schema: { type: string, minLength: 1, maxLength: 200 }
+    ApprovalStatus:
+      name: status
+      in: query
+      schema:
+        type: string
+        enum: [pending, approved, rejected, expired, executed]
+  responses:
+    BadRequest:
+      description: Invalid query, JSON body, cursor, or domain input
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    Unauthorized:
+      description: Missing, expired, invalid, or disallowed credential
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    Forbidden:
+      description: Current principal lacks the required permission or resource scope
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    NotFound:
+      description: Resource is absent or intentionally hidden from this principal
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    Conflict:
+      description: Idempotency key conflicts with a different or deleted resource
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    InternalError:
+      description: Server could not complete the operation
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    Unavailable:
+      description: Required native service is not configured or available
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+  schemas:
+    Error:
+      type: object
+      additionalProperties: false
+      required: [id, message, status_code]
+      properties:
+        id: { type: string }
+        message: { type: string }
+        detailed_error: { type: string }
+        request_id: { type: string }
+        status_code: { type: integer, minimum: 400, maximum: 599 }
+    SystemInfo:
+      type: object
+      required:
+        - name
+        - version
+        - build_hash
+        - build_date
+        - oidc_enabled
+        - approval_enabled
+        - local_signup_enabled
+        - capabilities
+      properties:
+        name: { type: string, const: moyro }
+        version: { type: string }
+        build_hash: { type: string }
+        build_date: { type: string }
+        oidc_enabled: { type: boolean }
+        oidc_provider_name: { type: string }
+        approval_enabled: { type: boolean }
+        local_signup_enabled: { type: boolean }
+        capabilities:
+          $ref: "#/components/schemas/Capabilities"
+    Capabilities:
+      type: object
+      required: [email_digest, drafts]
+      properties:
+        email_digest:
+          type: object
+          required: [configured, enabled]
+          properties:
+            configured: { type: boolean }
+            enabled: { type: boolean }
+        drafts:
+          $ref: "#/components/schemas/DraftPolicy"
+    DraftPolicy:
+      type: object
+      required: [storage_mode, retention_days, clear_on_logout]
+      properties:
+        storage_mode:
+          type: string
+          enum: [local, session, disabled]
+          description: Browser persistence, current browser session only, or no local draft storage.
+        retention_days: { type: integer, minimum: 1, maximum: 30, default: 7 }
+        clear_on_logout: { type: boolean, default: true }
+    SiteSettings:
+      type: object
+      required:
+        - site_name
+        - public_base_url
+        - allowed_outgoing_hosts
+        - local_signup_enabled
+        - draft_storage_mode
+        - draft_retention_days
+        - draft_clear_on_logout
+      properties:
+        site_name: { type: string, minLength: 1, maxLength: 80 }
+        public_base_url:
+          description: Empty or an absolute HTTP(S) origin without path, query, credentials, or fragment.
+          oneOf:
+            - { type: string, const: "" }
+            - { type: string, format: uri, pattern: "^https?://" }
+        allowed_outgoing_hosts:
+          type: array
+          maxItems: 256
+          items:
+            type: string
+            description: Hostname or IP address without scheme, port, or path.
+        local_signup_enabled: { type: boolean }
+        draft_storage_mode: { $ref: "#/components/schemas/DraftPolicy/properties/storage_mode" }
+        draft_retention_days: { type: integer, minimum: 1, maximum: 30, default: 7 }
+        draft_clear_on_logout: { type: boolean, default: true }
+    OperationalState:
+      type: string
+      enum: [ready, warning, unknown]
+    DatabasePoolStatus:
+      type: object
+      additionalProperties: false
+      required: [acquired, idle, total, max]
+      properties:
+        acquired: { type: integer, format: int32, minimum: 0 }
+        idle: { type: integer, format: int32, minimum: 0 }
+        total: { type: integer, format: int32, minimum: 0 }
+        max: { type: integer, format: int32, minimum: 0 }
+    DatabaseMigrationStatus:
+      type: object
+      additionalProperties: false
+      required: [applied_version, applied_name, applied_at, target_version, target_name]
+      properties:
+        applied_version: { type: integer, format: int64, minimum: 0 }
+        applied_name: { type: string }
+        applied_at: { type: integer, format: int64, minimum: 0 }
+        target_version: { type: integer, format: int64, minimum: 0 }
+        target_name: { type: string }
+    DatabaseOperationalStatus:
+      type: object
+      additionalProperties: false
+      required: [state, message, migration, pool]
+      properties:
+        state: { $ref: "#/components/schemas/OperationalState" }
+        message: { type: string }
+        migration: { $ref: "#/components/schemas/DatabaseMigrationStatus" }
+        pool: { $ref: "#/components/schemas/DatabasePoolStatus" }
+    ScheduledQueueStatus:
+      type: object
+      additionalProperties: false
+      required: [pending, processing, retry, dead, due, expired_leases]
+      properties:
+        pending: { type: integer, format: int64, minimum: 0 }
+        processing: { type: integer, format: int64, minimum: 0 }
+        retry: { type: integer, format: int64, minimum: 0 }
+        dead: { type: integer, format: int64, minimum: 0 }
+        due: { type: integer, format: int64, minimum: 0 }
+        expired_leases: { type: integer, format: int64, minimum: 0 }
+    ReminderQueueStatus:
+      type: object
+      additionalProperties: false
+      required: [pending, processing, due]
+      properties:
+        pending: { type: integer, format: int64, minimum: 0 }
+        processing: { type: integer, format: int64, minimum: 0 }
+        due: { type: integer, format: int64, minimum: 0 }
+    ApprovalQueueStatus:
+      type: object
+      additionalProperties: false
+      required: [pending, processing, failed]
+      properties:
+        pending: { type: integer, format: int64, minimum: 0 }
+        processing: { type: integer, format: int64, minimum: 0 }
+        failed: { type: integer, format: int64, minimum: 0 }
+    WorkerOperationalStatus:
+      type: object
+      additionalProperties: false
+      required: [state, message, runtime_observable, scheduled, reminders, approvals]
+      properties:
+        state: { $ref: "#/components/schemas/OperationalState" }
+        message: { type: string }
+        runtime_observable:
+          type: boolean
+          description: False until a worker heartbeat proves that a worker is executing.
+        scheduled: { $ref: "#/components/schemas/ScheduledQueueStatus" }
+        reminders: { $ref: "#/components/schemas/ReminderQueueStatus" }
+        approvals: { $ref: "#/components/schemas/ApprovalQueueStatus" }
+    WebhookOperationalStatus:
+      type: object
+      additionalProperties: false
+      required:
+        - state
+        - message
+        - runtime_observable
+        - pending
+        - processing
+        - retry
+        - succeeded
+        - dead
+        - expired_leases
+        - last_succeeded_at
+        - last_dead_at
+      properties:
+        state: { $ref: "#/components/schemas/OperationalState" }
+        message: { type: string }
+        runtime_observable:
+          type: boolean
+          description: False until a dispatcher heartbeat proves that delivery is executing.
+        pending: { type: integer, format: int64, minimum: 0 }
+        processing: { type: integer, format: int64, minimum: 0 }
+        retry: { type: integer, format: int64, minimum: 0 }
+        succeeded: { type: integer, format: int64, minimum: 0 }
+        dead: { type: integer, format: int64, minimum: 0 }
+        expired_leases: { type: integer, format: int64, minimum: 0 }
+        last_succeeded_at: { type: integer, format: int64, minimum: 0 }
+        last_dead_at: { type: integer, format: int64, minimum: 0 }
+    StorageOperationalStatus:
+      type: object
+      additionalProperties: false
+      required: [state, message, configured_backend, active_backend, fallback, file_count, bytes]
+      properties:
+        state: { $ref: "#/components/schemas/OperationalState" }
+        message: { type: string }
+        configured_backend: { type: string }
+        active_backend: { type: string }
+        fallback: { type: boolean }
+        file_count: { type: integer, format: int64, minimum: 0 }
+        bytes: { type: integer, format: int64, minimum: 0 }
+    AdminOperationsSnapshot:
+      type: object
+      additionalProperties: false
+      required: [checked_at, database, workers, webhooks, storage]
+      properties:
+        checked_at: { type: integer, format: int64, minimum: 0 }
+        database: { $ref: "#/components/schemas/DatabaseOperationalStatus" }
+        workers: { $ref: "#/components/schemas/WorkerOperationalStatus" }
+        webhooks: { $ref: "#/components/schemas/WebhookOperationalStatus" }
+        storage: { $ref: "#/components/schemas/StorageOperationalStatus" }
+    Team:
+      type: object
+      required: [id, name, display_name, type, create_at, update_at, delete_at]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        display_name: { type: string }
+        type: { type: string, enum: [O, I] }
+        create_at: { type: integer, format: int64, minimum: 0 }
+        update_at: { type: integer, format: int64, minimum: 0 }
+        delete_at: { type: integer, format: int64, minimum: 0 }
+    Channel:
+      type: object
+      required: [id, team_id, type, display_name, name, header, purpose, create_at, update_at, delete_at]
+      properties:
+        id: { type: string }
+        team_id: { type: string }
+        type: { type: string, enum: [O, P, D, G] }
+        display_name: { type: string }
+        name: { type: string }
+        header: { type: string }
+        purpose: { type: string }
+        create_at: { type: integer, format: int64, minimum: 0 }
+        update_at: { type: integer, format: int64, minimum: 0 }
+        delete_at: { type: integer, format: int64, minimum: 0 }
+    ChannelMembership:
+      type: object
+      required: [channel_id, user_id, roles, last_viewed_at, msg_count, mention_count, notify_props]
+      properties:
+        channel_id: { type: string }
+        user_id: { type: string }
+        roles: { type: string }
+        last_viewed_at: { type: integer, format: int64, minimum: 0 }
+        msg_count: { type: integer, format: int64, minimum: 0 }
+        mention_count: { type: integer, format: int64, minimum: 0 }
+        notify_props: { type: object, additionalProperties: true }
+    FlowCounts:
+      type: object
+      required: [unread_channels, mentions]
+      properties:
+        unread_channels: { type: integer, format: int64, minimum: 0 }
+        mentions: { type: integer, format: int64, minimum: 0 }
+    FlowUnreadChannel:
+      type: object
+      required: [team_id, channel_id, msg_count, mention_count, last_viewed_at]
+      properties:
+        team_id: { type: string }
+        channel_id: { type: string }
+        msg_count: { type: integer, format: int64, minimum: 0 }
+        mention_count: { type: integer, format: int64, minimum: 0 }
+        last_viewed_at: { type: integer, format: int64, minimum: 0 }
+    FlowSummary:
+      type: object
+      required: [updated_at, counts, teams, channels, memberships, top_unread_channels]
+      properties:
+        updated_at: { type: integer, format: int64, minimum: 1 }
+        counts: { $ref: "#/components/schemas/FlowCounts" }
+        teams:
+          type: array
+          items: { $ref: "#/components/schemas/Team" }
+        channels:
+          type: array
+          items: { $ref: "#/components/schemas/Channel" }
+        memberships:
+          type: array
+          items: { $ref: "#/components/schemas/ChannelMembership" }
+        top_unread_channels:
+          type: array
+          maxItems: 6
+          items: { $ref: "#/components/schemas/FlowUnreadChannel" }
+    ActivityEventType:
+      type: string
+      enum:
+        - mention
+        - thread_reply
+        - direct_message
+        - approval_requested
+        - decided
+        - reminder_fired
+        - task_assigned
+        - system_warning
+        - plugin_event
+    ActivityEvent:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - type
+        - title
+        - create_at
+        - update_at
+        - read_at
+        - completed_at
+        - snoozed_until
+      properties:
+        id: { type: string }
+        type: { $ref: "#/components/schemas/ActivityEventType" }
+        actor_id: { type: string }
+        team_id: { type: string }
+        channel_id: { type: string }
+        post_id: { type: string }
+        resource_type: { type: string }
+        resource_id: { type: string }
+        title: { type: string, minLength: 1, maxLength: 256 }
+        summary: { type: string, maxLength: 4096 }
+        create_at: { type: integer, format: int64, minimum: 1 }
+        update_at: { type: integer, format: int64, minimum: 1 }
+        read_at: { type: integer, format: int64, minimum: 0 }
+        completed_at: { type: integer, format: int64, minimum: 0 }
+        snoozed_until: { type: integer, format: int64, minimum: 0 }
+    ActivityEventPage:
+      type: object
+      additionalProperties: false
+      required: [events, next_cursor]
+      properties:
+        events:
+          type: array
+          items: { $ref: "#/components/schemas/ActivityEvent" }
+        next_cursor: { type: string }
+    ActivityStatePatch:
+      type: object
+      additionalProperties: false
+      minProperties: 1
+      properties:
+        read: { type: boolean }
+        completed: { type: boolean }
+        snoozed_until: { type: integer, format: int64, minimum: 0 }
+    ActivityMarkReadRequest:
+      type: object
+      additionalProperties: false
+      required: [ids]
+      properties:
+        ids:
+          type: array
+          minItems: 1
+          maxItems: 200
+          items: { type: string, minLength: 1, maxLength: 128 }
+    ActivityMarkReadResult:
+      type: object
+      additionalProperties: false
+      required: [updated]
+      properties:
+        updated: { type: integer, format: int64, minimum: 0 }
+    WorkItemKind:
+      type: string
+      enum: [task, decision]
+    WorkItemStatus:
+      type: string
+      enum: [open, in_progress, done, cancelled, recorded, superseded]
+    WorkItem:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - kind
+        - title
+        - description
+        - status
+        - created_by
+        - channel_id
+        - due_at
+        - decided_at
+        - create_at
+        - update_at
+        - delete_at
+      properties:
+        id: { type: string, minLength: 1, maxLength: 128 }
+        kind: { $ref: "#/components/schemas/WorkItemKind" }
+        title: { type: string, minLength: 1, maxLength: 240 }
+        description: { type: string, maxLength: 10000 }
+        status: { $ref: "#/components/schemas/WorkItemStatus" }
+        created_by: { type: string }
+        assignee_id: { type: string }
+        team_id: { type: string }
+        channel_id: { type: string }
+        source_post_id: { type: string }
+        source_thread_id: { type: string }
+        due_at: { type: integer, format: int64, minimum: 0 }
+        decided_at: { type: integer, format: int64, minimum: 0 }
+        create_at: { type: integer, format: int64, minimum: 1 }
+        update_at: { type: integer, format: int64, minimum: 1 }
+        delete_at: { type: integer, format: int64, minimum: 0 }
+    WorkItemPage:
+      type: object
+      additionalProperties: false
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/WorkItem" }
+        next_cursor: { type: string }
+    CreateWorkItem:
+      type: object
+      additionalProperties: false
+      required: [kind, title, source_post_id]
+      properties:
+        kind: { $ref: "#/components/schemas/WorkItemKind" }
+        title: { type: string, minLength: 1, maxLength: 240 }
+        description: { type: string, maxLength: 10000, default: "" }
+        assignee_id:
+          type: string
+          maxLength: 128
+          description: Task only; an empty value defaults to the caller.
+        source_post_id: { type: string, minLength: 1, maxLength: 128 }
+        due_at:
+          type: integer
+          format: int64
+          minimum: 0
+          default: 0
+          description: Task only; milliseconds since Unix epoch, or zero for no due date.
+        idempotency_key:
+          type: string
+          minLength: 1
+          maxLength: 200
+          description: Required when the Idempotency-Key header is omitted.
+    CreateWorkItemResult:
+      type: object
+      additionalProperties: false
+      required: [item, replayed]
+      properties:
+        item: { $ref: "#/components/schemas/WorkItem" }
+        replayed: { type: boolean }
+    PatchWorkItem:
+      type: object
+      additionalProperties: false
+      minProperties: 1
+      properties:
+        title: { type: string, minLength: 1, maxLength: 240 }
+        description: { type: string, maxLength: 10000 }
+        status: { $ref: "#/components/schemas/WorkItemStatus" }
+        assignee_id:
+          type: string
+          maxLength: 128
+          description: Task creator only; empty string removes the assignee.
+        due_at: { type: integer, format: int64, minimum: 0 }
+    ApprovalAction:
+      type: string
+      enum: [mcp.create_post, mcp.reply_to_thread]
+    ApprovalPreviewActor:
+      type: object
+      additionalProperties: false
+      required: [type, display_name]
+      properties:
+        type: { type: string, enum: [mcp_key, automation] }
+        display_name: { type: string }
+    ApprovalPreviewTarget:
+      type: object
+      additionalProperties: false
+      required: [type, display_name]
+      properties:
+        type: { type: string, enum: [channel, team, resource] }
+        display_name: { type: string }
+    ApprovalPreviewChange:
+      type: object
+      additionalProperties: false
+      required: [label, after]
+      properties:
+        label: { type: string }
+        after:
+          type: string
+          maxLength: 4000
+          description: Server-redacted and bounded display text.
+    ApprovalPreviewPolicy:
+      type: object
+      additionalProperties: false
+      required: [name, reason]
+      properties:
+        name: { type: string }
+        reason: { type: string }
+    ApprovalPreview:
+      type: object
+      additionalProperties: false
+      required: [title, risk_level, actor, target, changes, policy, secrets_redacted]
+      properties:
+        title: { type: string }
+        risk_level: { type: string, enum: [medium, unknown] }
+        actor: { $ref: "#/components/schemas/ApprovalPreviewActor" }
+        target: { $ref: "#/components/schemas/ApprovalPreviewTarget" }
+        changes:
+          type: array
+          items: { $ref: "#/components/schemas/ApprovalPreviewChange" }
+        policy: { $ref: "#/components/schemas/ApprovalPreviewPolicy" }
+        secrets_redacted:
+          type: boolean
+          const: true
+          description: Raw durable payload is never part of the view.
+    ApprovalRequestView:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - policy_id
+        - action_type
+        - requester_id
+        - team_id
+        - resource_type
+        - resource_id
+        - status
+        - create_at
+        - update_at
+        - decided_at
+        - executed_at
+        - expires_at
+        - preview
+      properties:
+        id: { type: string }
+        policy_id: { type: string }
+        action_type: { $ref: "#/components/schemas/ApprovalAction" }
+        requester_id: { type: string }
+        team_id: { type: string }
+        resource_type: { type: string, enum: [channel, team] }
+        resource_id: { type: string }
+        status: { type: string, enum: [pending, approved, rejected, expired, executed] }
+        idempotency_key: { type: string }
+        create_at: { type: integer, format: int64, minimum: 0 }
+        update_at: { type: integer, format: int64, minimum: 0 }
+        decided_at: { type: integer, format: int64, minimum: 0 }
+        executed_at: { type: integer, format: int64, minimum: 0 }
+        expires_at: { type: integer, format: int64, minimum: 0 }
+        preview: { $ref: "#/components/schemas/ApprovalPreview" }
+    SubmitApprovalRequest:
+      type: object
+      required: [action_type, resource_type, resource_id, payload]
+      properties:
+        action_type: { $ref: "#/components/schemas/ApprovalAction" }
+        team_id: { type: string }
+        resource_type: { type: string, const: channel }
+        resource_id: { type: string, minLength: 1 }
+        payload:
+          type: object
+          required: [channel_id, message]
+          properties:
+            channel_id: { type: string, minLength: 1 }
+            message: { type: string, minLength: 1 }
+            root_id:
+              type: string
+              description: Required and source-channel validated for mcp.reply_to_thread.
+          additionalProperties: true
+        idempotency_key: { type: string }
+    ApprovalResultView:
+      type: object
+      additionalProperties: false
+      required: [approval_required]
+      properties:
+        approval_required: { type: boolean }
+        request: { $ref: "#/components/schemas/ApprovalRequestView" }
+    ApprovalDecisionInput:
+      type: object
+      required: [decision]
+      properties:
+        decision: { type: string, enum: [approve, reject] }
+        reason:
+          type: string
+          description: Required for rejection when the matching policy requires it.

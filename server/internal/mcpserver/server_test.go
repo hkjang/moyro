@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/hkjang/moyro/server/internal/application/postcommand"
@@ -114,6 +115,41 @@ func TestFilterAuthorizedApprovalsPreservesOnlyCredentialScopedRequests(t *testi
 	}
 	if len(filtered) != 1 || filtered[0].ID != "team-a-request" {
 		t.Fatalf("filtered approvals = %#v", filtered)
+	}
+}
+
+func TestApprovalToolOutputsNeverSerializeExecutionPayload(t *testing.T) {
+	const credentialID = "credential-id-must-stay-internal"
+	const messageSecret = "bearer-secret-value-123456789"
+	request := &approval.Request{
+		ID: "approval-1", ActionType: "mcp.create_post", Status: "pending",
+		ResourceType: "channel",
+		Payload:      json.RawMessage(`{"message":"운영 공지\\nAuthorization: Bearer ` + messageSecret + `","_moyro_credential_id":"` + credentialID + `"}`),
+	}
+	view := approval.ToRequestView(request, "운영 공지")
+	for name, output := range map[string]any{
+		"create": createPostOutput{ApprovalRequired: true, ApprovalRequest: view},
+		"list":   listApprovalsOutput{Requests: approval.ToRequestViews([]approval.Request{*request})},
+		"decide": decideApprovalOutput{Request: view},
+	} {
+		t.Run(name, func(t *testing.T) {
+			wire, err := json.Marshal(output)
+			if err != nil {
+				t.Fatalf("marshal output: %v", err)
+			}
+			serialized := string(wire)
+			for _, forbidden := range []string{`"payload"`, "_moyro_credential_id", credentialID, messageSecret} {
+				if strings.Contains(serialized, forbidden) {
+					t.Fatalf("MCP output contains forbidden approval data %q: %s", forbidden, serialized)
+				}
+			}
+			if !strings.Contains(serialized, "approval-1") {
+				t.Fatalf("MCP output lost safe request metadata: %s", serialized)
+			}
+			if !strings.Contains(serialized, `"preview"`) || !strings.Contains(serialized, approval.PreviewRedactedValue) {
+				t.Fatalf("MCP output lacks the shared structured redacted preview: %s", serialized)
+			}
+		})
 	}
 }
 

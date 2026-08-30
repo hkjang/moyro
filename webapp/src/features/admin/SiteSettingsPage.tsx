@@ -1,6 +1,7 @@
 import {
   Alert,
   FormControlLabel,
+  MenuItem,
   Stack,
   Switch,
   TextField,
@@ -10,6 +11,7 @@ import { useSelector } from "react-redux";
 import { moyroAdminApi, type SiteSettings } from "@/api/client";
 import { LoadState, SaveBar, SettingsCard, SettingsPage } from "@/components/settings/SettingsPrimitives";
 import { InviteManagementCard } from "@/features/admin/InviteManagementCard";
+import { useSystemInfo } from "@/features/system/SystemInfoContext";
 import type { RootState } from "@/store";
 
 const DEFAULT_SETTINGS: SiteSettings = {
@@ -17,6 +19,9 @@ const DEFAULT_SETTINGS: SiteSettings = {
   public_base_url: "",
   allowed_outgoing_hosts: [],
   local_signup_enabled: false,
+  draft_storage_mode: "local",
+  draft_retention_days: 7,
+  draft_clear_on_logout: true,
 };
 
 const parseHosts = (value: string) => Array.from(new Set(
@@ -42,6 +47,7 @@ function validatePublicURL(value: string): string {
 
 export function SiteSettingsPage() {
   const token = useSelector((state: RootState) => state.auth.token);
+  const systemInfo = useSystemInfo();
   const [settings, setSettings] = useState<SiteSettings>(DEFAULT_SETTINGS);
   const [hostsText, setHostsText] = useState("");
   const [loading, setLoading] = useState(true);
@@ -78,10 +84,12 @@ export function SiteSettingsPage() {
   async function save() {
     if (!token) return;
     const validationError = validatePublicURL(settings.public_base_url);
-    if (!settings.site_name.trim() || validationError || invalidHost) {
+    const draftRetentionInvalid = !Number.isInteger(settings.draft_retention_days)
+      || settings.draft_retention_days < 1 || settings.draft_retention_days > 30;
+    if (!settings.site_name.trim() || validationError || invalidHost || draftRetentionInvalid) {
       setError(validationError || (invalidHost
         ? `hostname/IP만 입력하세요: ${invalidHost}`
-        : "사이트 이름을 입력하세요."));
+        : draftRetentionInvalid ? "초안 보존 기간은 1~30일 사이의 정수여야 합니다." : "사이트 이름을 입력하세요."));
       return;
     }
     setSaving(true);
@@ -92,12 +100,16 @@ export function SiteSettingsPage() {
         public_base_url: settings.public_base_url.trim().replace(/\/+$/, ""),
         allowed_outgoing_hosts: parseHosts(hostsText),
         local_signup_enabled: settings.local_signup_enabled,
+        draft_storage_mode: settings.draft_storage_mode,
+        draft_retention_days: settings.draft_retention_days,
+        draft_clear_on_logout: settings.draft_clear_on_logout,
       };
       const result = await moyroAdminApi.patchSettings<SiteSettings>(token, "site", payload);
       setSettings(result);
       setHostsText(result.allowed_outgoing_hosts.join("\n"));
       setError("");
       setSaved("사이트 설정을 저장했습니다.");
+      await systemInfo.refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : "사이트 설정을 저장하지 못했습니다.");
     } finally {
@@ -149,6 +161,50 @@ export function SiteSettingsPage() {
               <Alert severity="warning">내부망에 접근할 수 있는 모든 사용자가 계정을 만들 수 있습니다. 필요한 기간에만 켜세요.</Alert>
             ) : (
               <Alert severity="info">공개 회원가입이 닫혀 있습니다. 관리자가 발급한 초대 링크 또는 Keycloak SSO를 사용하세요.</Alert>
+            )}
+          </Stack>
+        </SettingsCard>
+
+        <SettingsCard title="메시지 초안 보안" description="작성 중인 메시지를 이 기기에 저장하는 방식과 보존 기간을 조직 정책으로 제한합니다.">
+          <Stack spacing={2}>
+            <TextField
+              select
+              label="초안 저장 방식"
+              value={settings.draft_storage_mode}
+              onChange={(event) => {
+                setSettings((current) => ({
+                  ...current,
+                  draft_storage_mode: event.target.value as SiteSettings["draft_storage_mode"],
+                }));
+                setSaved("");
+              }}
+              helperText="로컬은 브라우저를 닫아도 유지되고, 세션은 브라우저 세션이 끝나면 제거됩니다."
+            >
+              <MenuItem value="local">이 기기에 보존</MenuItem>
+              <MenuItem value="session">현재 브라우저 세션 동안만</MenuItem>
+              <MenuItem value="disabled">초안 저장 안 함</MenuItem>
+            </TextField>
+            <TextField
+              type="number"
+              label="초안 보존 기간(일)"
+              value={settings.draft_retention_days}
+              disabled={settings.draft_storage_mode === "disabled"}
+              slotProps={{ htmlInput: { min: 1, max: 30 } }}
+              onChange={(event) => {
+                setSettings((current) => ({ ...current, draft_retention_days: Number(event.target.value) }));
+                setSaved("");
+              }}
+              helperText="마지막 수정 후 1~30일 사이에서 자동 삭제합니다."
+            />
+            <FormControlLabel
+              control={<Switch checked={settings.draft_clear_on_logout} onChange={(event) => {
+                setSettings((current) => ({ ...current, draft_clear_on_logout: event.target.checked }));
+                setSaved("");
+              }} />}
+              label="로그아웃할 때 해당 사용자의 이 기기 초안을 모두 삭제"
+            />
+            {settings.draft_storage_mode === "disabled" && (
+              <Alert severity="info">기존 로컬·세션 초안도 다음 워크스페이스 진입 시 제거됩니다.</Alert>
             )}
           </Stack>
         </SettingsCard>

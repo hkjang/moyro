@@ -255,7 +255,7 @@ export function TodayBriefing({
       : !access.loaded || preferencesLoading
         ? "AI 사용 조건을 확인하는 중입니다."
         : !allowed
-          ? "현재 계정에 use_ai 권한이 없습니다."
+          ? "AI 사용 권한이 없습니다."
           : preferencesError
             ? preferencesError
             : preferences?.enabled !== true

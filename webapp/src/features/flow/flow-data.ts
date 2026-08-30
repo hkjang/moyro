@@ -1,6 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
 import {
-  api,
   type Channel,
   type ChannelMemberWithCounts,
   type Post,
@@ -20,6 +18,10 @@ export type FlowWorkspaceIndex = {
   loading: boolean;
   error: string;
   warnings: string[];
+  /** Changes when the durable activity feed should be reloaded. */
+  activityRevision: number;
+  /** Changes when a visible task or decision is created, updated, or removed. */
+  workItemRevision: number;
   refresh: () => void;
 };
 
@@ -104,84 +106,4 @@ export function normalizeSavedPosts(value: unknown): Post[] {
     return [...ordered, ...Object.values(byId).filter(isPost).filter((post) => !included.has(post.id))];
   }
   return Object.values(byId).filter(isPost);
-}
-
-export function useFlowWorkspaceIndex(token: string | null): FlowWorkspaceIndex {
-  const [teams, setTeams] = useState<Team[]>([]);
-  const [entries, setEntries] = useState<FlowChannelEntry[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
-  const [warnings, setWarnings] = useState<string[]>([]);
-  const [revision, setRevision] = useState(0);
-  const refresh = useCallback(() => setRevision((current) => current + 1), []);
-
-  useEffect(() => {
-    let active = true;
-    if (!token) {
-      setTeams([]);
-      setEntries([]);
-      setWarnings([]);
-      setError("로그인 세션이 없습니다.");
-      setLoading(false);
-      return () => { active = false; };
-    }
-
-    setLoading(true);
-    setError("");
-    void (async () => {
-      try {
-        const teamRows = await api.listTeams(token);
-        const settled = await Promise.all(teamRows.map(async (team) => {
-          const [channelsResult, membersResult] = await Promise.allSettled([
-            api.listChannels(token, team.id),
-            api.listMyChannelMembers(token, team.id),
-          ]);
-          return { team, channelsResult, membersResult };
-        }));
-        if (!active) return;
-
-        const nextWarnings: string[] = [];
-        const deduped = new Map<string, FlowChannelEntry>();
-        for (const row of settled) {
-          if (row.channelsResult.status === "rejected") {
-            nextWarnings.push(`${row.team.display_name} 채널 목록을 불러오지 못했습니다.`);
-            continue;
-          }
-          const members = row.membersResult.status === "fulfilled" ? row.membersResult.value : [];
-          if (row.membersResult.status === "rejected") {
-            nextWarnings.push(`${row.team.display_name} 읽지 않음 집계를 불러오지 못했습니다.`);
-          }
-          const memberByChannel = new Map(members.map((member) => [member.channel_id, member]));
-          for (const channel of row.channelsResult.value) {
-            const existing = deduped.get(channel.id);
-            const membership = memberByChannel.get(channel.id) ?? existing?.membership;
-            if (!existing) {
-              deduped.set(channel.id, { channel, team: row.team, membership });
-            } else if (!existing.membership && membership) {
-              deduped.set(channel.id, { ...existing, membership });
-            }
-          }
-        }
-        setTeams(teamRows);
-        setEntries([...deduped.values()]);
-        setWarnings(nextWarnings);
-      } catch (loadError) {
-        if (!active) return;
-        setTeams([]);
-        setEntries([]);
-        setWarnings([]);
-        setError(errorMessage(loadError, "워크스페이스 정보를 불러오지 못했습니다."));
-      } finally {
-        if (active) setLoading(false);
-      }
-    })();
-    return () => { active = false; };
-  }, [revision, token]);
-
-  const channelById = useMemo(
-    () => Object.fromEntries(entries.map((entry) => [entry.channel.id, entry])),
-    [entries],
-  );
-
-  return { teams, entries, channelById, loading, error, warnings, refresh };
 }

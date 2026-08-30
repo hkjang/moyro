@@ -4,7 +4,7 @@ import SearchRounded from "@mui/icons-material/SearchRounded";
 import { Alert, Button, Chip, MenuItem, TextField, Typography } from "@mui/material";
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { useSelector } from "react-redux";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { api, compatApi, type Post, type SearchResult, type User } from "@/api/client";
 import type { RootState } from "@/store";
 import {
@@ -12,12 +12,18 @@ import {
   FlowError,
   FlowLoading,
   FlowPage,
-  FlowPrepared,
   FlowSection,
 } from "./FlowPage";
-import { channelPath, errorMessage, formatDateTime, postNavigationState, useFlowWorkspaceIndex } from "./flow-data";
+import { channelPath, errorMessage, formatDateTime, postNavigationState } from "./flow-data";
+import { useFlowWorkspaceIndex } from "./FlowDataProvider";
 
 const PAGE_SIZE = 20;
+
+function searchPage(value: string | null): number {
+  if (!value || !/^\d+$/.test(value)) return 0;
+  const parsed = Number(value);
+  return Number.isSafeInteger(parsed) && parsed <= 10_000 ? parsed : 0;
+}
 
 function orderedResults(result: SearchResult): Post[] {
   const ordered = result.order.map((id) => result.posts[id]).filter((post): post is Post => Boolean(post));
@@ -27,8 +33,9 @@ function orderedResults(result: SearchResult): Post[] {
 
 export function GlobalSearchPage() {
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const token = useSelector((state: RootState) => state.auth.token);
-  const workspace = useFlowWorkspaceIndex(token);
+  const workspace = useFlowWorkspaceIndex();
   const [teamId, setTeamId] = useState("");
   const [query, setQuery] = useState("");
   const [submittedQuery, setSubmittedQuery] = useState("");
@@ -41,11 +48,45 @@ export function GlobalSearchPage() {
   const [error, setError] = useState("");
   const [metadataWarning, setMetadataWarning] = useState("");
   const searchGeneration = useRef(0);
+  const loadedRouteRef = useRef("");
 
   useEffect(() => {
-    if (!teamId && workspace.teams.length > 0) setTeamId(workspace.teams[0].id);
-    if (teamId && !workspace.teams.some((team) => team.id === teamId)) setTeamId(workspace.teams[0]?.id ?? "");
-  }, [teamId, workspace.teams]);
+    if (workspace.loading || workspace.teams.length === 0) return;
+    const requestedTeamID = searchParams.get("team")?.trim() ?? "";
+    const targetTeamID = workspace.teams.some((team) => team.id === requestedTeamID)
+      ? requestedTeamID
+      : workspace.teams[0].id;
+    const routeQuery = (searchParams.get("q") ?? "").trim().slice(0, 500);
+    const routePage = searchPage(searchParams.get("page"));
+    setTeamId(targetTeamID);
+    setQuery(routeQuery);
+
+    if (routeQuery && (requestedTeamID !== targetTeamID || searchParams.get("page") !== String(routePage))) {
+      const canonical = new URLSearchParams();
+      canonical.set("q", routeQuery);
+      canonical.set("team", targetTeamID);
+      canonical.set("page", String(routePage));
+      setSearchParams(canonical, { replace: true });
+      return;
+    }
+    if (!routeQuery) {
+      loadedRouteRef.current = "";
+      setResults([]);
+      setUsers({});
+      setTotalHits(0);
+      setSearched(false);
+      setSubmittedQuery("");
+      setPage(0);
+      return;
+    }
+    const signature = `${targetTeamID}\u0000${routeQuery}\u0000${routePage}`;
+    if (loadedRouteRef.current === signature) return;
+    loadedRouteRef.current = signature;
+    void search(routePage, routeQuery, targetTeamID);
+  // `search` deliberately stays event-local: the route signature is the
+  // stable source of truth and prevents duplicate requests across refreshes.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams, setSearchParams, workspace.loading, workspace.teams]);
 
   useEffect(() => {
     if (token) return;
@@ -55,16 +96,17 @@ export function GlobalSearchPage() {
     setTotalHits(0);
     setSearched(false);
     setSubmittedQuery("");
+    loadedRouteRef.current = "";
   }, [token]);
 
-  async function search(nextPage: number, terms: string) {
-    if (!token || !teamId || !terms.trim()) return;
+  async function search(nextPage: number, terms: string, targetTeamID = teamId) {
+    if (!token || !targetTeamID || !terms.trim()) return;
     const generation = ++searchGeneration.current;
     setLoading(true);
     setError("");
     setMetadataWarning("");
     try {
-      const response = await api.searchPosts(token, teamId, terms.trim(), { page: nextPage, perPage: PAGE_SIZE });
+      const response = await api.searchPosts(token, targetTeamID, terms.trim(), { page: nextPage, perPage: PAGE_SIZE });
       if (generation !== searchGeneration.current) return;
       const rows = orderedResults(response);
       setResults(rows);
@@ -99,7 +141,22 @@ export function GlobalSearchPage() {
 
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    void search(0, query);
+    const terms = query.trim();
+    if (!teamId || !terms) return;
+    const next = new URLSearchParams();
+    next.set("q", terms);
+    next.set("team", teamId);
+    next.set("page", "0");
+    setSearchParams(next);
+  }
+
+  function openResultPage(nextPage: number) {
+    if (!teamId || !submittedQuery) return;
+    const next = new URLSearchParams();
+    next.set("q", submittedQuery);
+    next.set("team", teamId);
+    next.set("page", String(nextPage));
+    setSearchParams(next);
   }
 
   const totalPages = Math.max(1, Math.ceil(totalHits / PAGE_SIZE));
@@ -108,15 +165,15 @@ export function GlobalSearchPage() {
   return (
     <FlowPage
       eyebrow="발견"
-      title="통합 검색"
-      description="접근 가능한 팀을 선택하고 서버의 PostgreSQL 메시지 검색 결과를 확인합니다."
+      title="메시지 검색"
+      description="접근 가능한 팀을 선택하고 필요한 대화를 찾습니다."
     >
       {workspace.error && <FlowError message={workspace.error} onRetry={workspace.refresh} />}
       {workspace.warnings.map((warning) => <Alert severity="warning" key={warning}>{warning}</Alert>)}
       {error && <FlowError message={error} />}
       {metadataWarning && <Alert severity="warning">{metadataWarning}</Alert>}
 
-      <FlowSection title="메시지 검색" description="팀 범위와 검색어는 실제 검색 API에 전달됩니다." id="global-search-form">
+      <FlowSection title="검색 조건" description="현재 계정이 접근할 수 있는 선택한 팀의 메시지만 검색합니다." id="global-search-form">
         <form className="flow-search-form" onSubmit={submit}>
           <TextField
             select
@@ -124,12 +181,19 @@ export function GlobalSearchPage() {
             value={teamId}
             onChange={(event) => {
               searchGeneration.current += 1;
+              loadedRouteRef.current = "";
               setTeamId(event.target.value);
+              setQuery("");
               setResults([]);
+              setUsers({});
               setTotalHits(0);
               setSearched(false);
+              setSubmittedQuery("");
               setError("");
               setLoading(false);
+              const next = new URLSearchParams();
+              next.set("team", event.target.value);
+              setSearchParams(next);
             }}
             disabled={workspace.loading || workspace.teams.length === 0}
           >
@@ -180,21 +244,15 @@ export function GlobalSearchPage() {
             })}
             {totalHits > PAGE_SIZE && (
               <nav className="flow-toolbar" aria-label="검색 결과 페이지">
-                <Button startIcon={<ArrowBackRounded />} disabled={loading || page <= 0} onClick={() => void search(page - 1, submittedQuery)}>이전</Button>
+                <Button startIcon={<ArrowBackRounded />} disabled={loading || page <= 0} onClick={() => openResultPage(page - 1)}>이전</Button>
                 <Typography className="flow-item-subtitle">{page + 1} / {totalPages} 페이지</Typography>
-                <Button endIcon={<ArrowForwardRounded />} disabled={loading || page + 1 >= totalPages} onClick={() => void search(page + 1, submittedQuery)}>다음</Button>
+                <Button endIcon={<ArrowForwardRounded />} disabled={loading || page + 1 >= totalPages} onClick={() => openResultPage(page + 1)}>다음</Button>
               </nav>
             )}
           </div>
         )}
       </FlowSection>
 
-      <FlowSection title="검색 확장" id="search-prepared">
-        <div className="flow-card-grid">
-          <FlowPrepared title="하이브리드·자연어 검색" description="Vector 검색과 자연어 조건 변환 API가 아직 없어 일반 메시지 검색 결과를 AI 검색처럼 표시하지 않습니다." />
-          <FlowPrepared title="파일 본문·OCR 검색" description="파일 인덱스 계약이 준비되면 메시지 결과와 출처 유형을 구분해 함께 제공합니다." />
-        </div>
-      </FlowSection>
     </FlowPage>
   );
 }

@@ -117,6 +117,133 @@
   background: color-mix(in srgb, var(--flow-color-brand, #3157d5) 16%, transparent);
 }
 
+.admin-navigation-tree-item {
+  list-style: none;
+}
+
+.admin-navigation-item-ancestor {
+  color: var(--flow-color-brand-dark, #203e9f);
+}
+
+.admin-navigation-item-ancestor .MuiListItemIcon-root {
+  color: var(--flow-color-brand, #3157d5);
+}
+
+.admin-plugin-navigation-list {
+  position: relative;
+  margin: 2px 0 6px 18px;
+  padding-left: 10px;
+}
+
+.admin-plugin-navigation-list::before {
+  position: absolute;
+  inset: 2px auto 2px 0;
+  width: 1px;
+  background: var(--flow-color-border, #dfe3ea);
+  content: "";
+}
+
+.admin-navigation-item-nested {
+  min-height: 36px;
+  padding-left: 10px;
+  border-radius: var(--flow-radius-input, 8px);
+}
+
+.admin-navigation-item-nested .MuiListItemIcon-root {
+  min-width: 26px;
+}
+
+.admin-navigation-item-nested .MuiListItemText-primary {
+  overflow: hidden;
+  font-size: 0.8125rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.admin-plugin-state-dot {
+  display: block;
+  width: 8px;
+  height: 8px;
+  border: 1px solid var(--flow-color-text-secondary, #667085);
+  border-radius: 50%;
+  background: var(--flow-color-surface, #fff);
+}
+
+.admin-plugin-state-dot.ok {
+  border-color: var(--flow-color-success, #218358);
+  background: var(--flow-color-success, #218358);
+}
+
+.admin-plugin-state-dot.danger {
+  border-color: var(--flow-color-danger, #c2414b);
+  background: var(--flow-color-danger, #c2414b);
+}
+
+.plugin-management-row-main {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.plugin-management-row-actions {
+  display: flex;
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.plugin-management-row-actions .btn-ghost,
+.plugin-settings-actions .btn-ghost,
+.plugin-settings-actions .btn-primary {
+  width: auto;
+  min-width: 0;
+  height: 32px;
+  padding: 0 11px;
+}
+
+.plugin-management-row-actions .plugin-delete-button {
+  color: var(--danger);
+}
+
+.plugin-settings-actions {
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.plugin-setting-field {
+  display: grid;
+  gap: 4px;
+}
+
+.plugin-setting-field + .plugin-setting-field {
+  margin-top: 10px;
+}
+
+.plugin-setting-field small {
+  color: var(--muted);
+}
+
+.plugin-setting-field-label {
+  display: grid;
+  gap: 5px;
+}
+
+.plugin-setting-field-label > span {
+  font-weight: 600;
+}
+
+.plugin-setting-checkbox {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.plugin-custom-setting + .plugin-custom-setting {
+  margin-top: 8px;
+}
+
 .admin-mobile-menu-button {
   display: none;
 }
@@ -236,6 +363,15 @@
   .admin-settings-role .MuiChip-label {
     overflow: hidden;
     text-overflow: ellipsis;
+  }
+
+  .plugin-management-row-main {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .plugin-management-row-actions {
+    justify-content: flex-start;
   }
 
   .personal-settings-shell {

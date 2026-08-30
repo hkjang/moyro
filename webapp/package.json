@@ -1,6 +1,6 @@
 {
   "name": "moyro-web",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "private": true,
   "type": "module",
   "scripts": {
@@ -31,6 +31,7 @@
     "remark-gfm": "^4.0.1"
   },
   "devDependencies": {
+    "@axe-core/playwright": "4.13.0",
     "@playwright/test": "1.62.1",
     "@types/prop-types": "15.7.15",
     "@types/react": "^18.3.3",

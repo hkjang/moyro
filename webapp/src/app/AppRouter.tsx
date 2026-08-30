@@ -26,6 +26,9 @@ const AIAssistantPage = lazy(() =>
 const GlobalSearchPage = lazy(() =>
   import("@/features/flow/GlobalSearchPage").then((module) => ({ default: module.GlobalSearchPage })),
 );
+const FlowDataLayout = lazy(() =>
+  import("@/features/flow/FlowDataProvider").then((module) => ({ default: module.FlowDataLayout })),
+);
 
 const ChatView = lazy(() =>
   import("@/components/ChatView").then((module) => ({ default: module.ChatView })),
@@ -62,6 +65,9 @@ const MCPSettingsPage = lazy(() =>
 );
 const PluginManagementPage = lazy(() =>
   import("@/features/admin/PluginManagementPage").then((module) => ({ default: module.PluginManagementPage })),
+);
+const PluginSettingsPage = lazy(() =>
+  import("@/features/admin/PluginSettingsPage").then((module) => ({ default: module.PluginSettingsPage })),
 );
 const SiteSettingsPage = lazy(() =>
   import("@/features/admin/SiteSettingsPage").then((module) => ({ default: module.SiteSettingsPage })),
@@ -186,17 +192,19 @@ export function AppRouter() {
       <Route element={routeElement(ProductShell)}>
         <Route path="/" element={<Navigate to="/today" replace />} />
         <Route path="/login" element={<Navigate to="/today" replace />} />
-        <Route path="/today" element={routeElement(TodayPage)} />
-        <Route path="/inbox" element={routeElement(UnifiedInboxPage)} />
-        <Route path="/inbox/:tab" element={routeElement(UnifiedInboxPage)} />
-        <Route path="/my-work" element={<Navigate to="/my-work/saved" replace />} />
-        <Route path="/my-work/:tab" element={routeElement(MyWorkPage)} />
-        <Route path="/approvals" element={<Navigate to="/approvals/mine" replace />} />
-        <Route path="/approvals/:tab" element={routeElement(ApprovalCenterPage)} />
+        <Route element={routeElement(FlowDataLayout)}>
+          <Route path="/today" element={routeElement(TodayPage)} />
+          <Route path="/inbox" element={<Navigate to="/inbox/updates" replace />} />
+          <Route path="/inbox/:tab" element={routeElement(UnifiedInboxPage)} />
+          <Route path="/my-work" element={<Navigate to="/my-work/tasks" replace />} />
+          <Route path="/my-work/:tab" element={routeElement(MyWorkPage)} />
+          <Route path="/approvals" element={<Navigate to="/approvals/mine" replace />} />
+          <Route path="/approvals/:tab" element={routeElement(ApprovalCenterPage)} />
+          <Route path="/search" element={routeElement(GlobalSearchPage)} />
+        </Route>
         <Route element={<RequirePermission anyOf={["use_ai"]} fallback="/today" />}>
           <Route path="/assistant" element={routeElement(AIAssistantPage)} />
         </Route>
-        <Route path="/search" element={routeElement(GlobalSearchPage)} />
 
         <Route path="/workspace" element={routeElement(ChatView)} />
         <Route path="/workspace/:teamId" element={routeElement(ChatView)} />
@@ -234,6 +242,7 @@ export function AppRouter() {
             </Route>
             <Route element={<RequirePermission anyOf={["manage_plugins"]} />}>
               <Route path="integrations/plugins" element={routeElement(PluginManagementPage)} />
+              <Route path="integrations/plugins/:pluginId" element={routeElement(PluginSettingsPage)} />
             </Route>
             <Route element={<RequirePermission anyOf={["manage_oidc"]} />}>
               <Route path="auth/keycloak" element={routeElement(KeycloakSettingsPage)} />

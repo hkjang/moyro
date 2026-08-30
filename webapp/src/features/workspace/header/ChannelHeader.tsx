@@ -3,6 +3,10 @@ import type { ComponentType, ReactNode } from "react";
 import AttachFileRounded from "@mui/icons-material/AttachFileRounded";
 import CloseRounded from "@mui/icons-material/CloseRounded";
 import InfoOutlined from "@mui/icons-material/InfoOutlined";
+import ArchiveOutlined from "@mui/icons-material/ArchiveOutlined";
+import PeopleAltOutlined from "@mui/icons-material/PeopleAltOutlined";
+import SearchRounded from "@mui/icons-material/SearchRounded";
+import SettingsRounded from "@mui/icons-material/SettingsRounded";
 import SummarizeRounded from "@mui/icons-material/SummarizeRounded";
 import type {
   Channel,
@@ -83,7 +87,7 @@ function ChannelSettingsMenu({
         aria-label="채널 알림 설정"
         onClick={() => setOpen((value) => !value)}
       >
-        ⚙
+        <SettingsRounded fontSize="inherit" aria-hidden />
       </button>
       {open && (
         <div className="notify-menu" role="dialog" aria-label="알림 설정">
@@ -105,7 +109,7 @@ function ChannelSettingsMenu({
               </span>
             </label>
           ))}
-          <div className="notify-section-title" style={{ marginTop: 10 }}>읽지 않음 표시</div>
+          <div className="notify-section-title notify-section-title-spaced">읽지 않음 표시</div>
           {(["all", "mention"] as MarkUnreadPref[]).map((value) => (
             <label key={value} className="notify-radio">
               <input
@@ -180,19 +184,19 @@ export function ChannelHeader(props: ChannelHeaderProps) {
               className="channel-stats-chip"
               title={`멤버 ${stats.member_count}명 · 고정 ${stats.pinnedpost_count}개 · 파일 ${stats.files_count}개`}
             >
-              👥 {stats.member_count}
+              <PeopleAltOutlined fontSize="inherit" aria-hidden /> {stats.member_count}
             </span>
           )}
           <ChannelSettingsMenu props={notifyProps} onChange={onChangeNotify} />
           {isAdmin && channel.type !== "D" && channel.type !== "G" && (
             <button
               type="button"
-              className="action-btn"
+              className="action-btn channel-archive-action"
               title="채널 보관"
-              style={{ marginLeft: 6 }}
+              aria-label="채널 보관"
               onClick={onArchive}
             >
-              🗄️
+              <ArchiveOutlined fontSize="inherit" aria-hidden />
             </button>
           )}
         </h2>
@@ -225,12 +229,12 @@ export function ChannelHeader(props: ChannelHeaderProps) {
           <button
             type="button"
             className={`channel-context-action ${activeContext === "files" ? "is-active" : ""}`}
-            aria-label="파일 패널 열기"
+            aria-label="최근 파일 패널 열기"
             aria-pressed={activeContext === "files"}
             onClick={() => onOpenContext("files")}
           >
             <AttachFileRounded fontSize="inherit" aria-hidden />
-            <span>파일</span>
+            <span>최근 파일</span>
           </button>
           <button
             type="button"
@@ -250,7 +254,7 @@ export function ChannelHeader(props: ChannelHeaderProps) {
             onSearch();
           }}
         >
-          <span className="search-icon" aria-hidden>🔍</span>
+          <span className="search-icon" aria-hidden><SearchRounded fontSize="inherit" /></span>
           <input
             className="search-input"
             placeholder="메시지 검색"

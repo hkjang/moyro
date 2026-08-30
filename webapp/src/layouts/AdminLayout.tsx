@@ -18,6 +18,7 @@ import {
   Drawer,
   IconButton,
   List,
+  ListItem,
   ListItemButton,
   ListItemIcon,
   ListItemText,
@@ -25,12 +26,19 @@ import {
   Stack,
   Typography,
 } from "@mui/material";
-import { useState, type ReactNode } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 import { useSelector } from "react-redux";
 import { Outlet, useLocation, useNavigate } from "react-router-dom";
 import type { RootState } from "@/store";
 import { displayVersion, useSystemInfo } from "@/features/system/SystemInfoContext";
 import { useAdminAccess } from "@/features/admin/AdminAccessContext";
+import { AdminPluginsProvider, useAdminPlugins } from "@/features/admin/AdminPluginsContext";
+import {
+  adminPluginDisplayName,
+  adminPluginID,
+  adminPluginVersion,
+  sortAdminPlugins,
+} from "@/features/admin/adminPluginIdentity";
 import { BrandMark } from "@/components/brand/BrandMark";
 import "@/layouts/settings-layout.css";
 
@@ -39,6 +47,10 @@ type AdminNavigationItem = {
   label: string;
   icon: ReactNode;
   anyOf: readonly string[];
+  exact?: boolean;
+  nested?: boolean;
+  ariaLabel?: string;
+  children?: readonly AdminNavigationItem[];
 };
 
 type AdminNavigationGroup = {
@@ -80,7 +92,7 @@ const adminNavigationGroups: readonly AdminNavigationGroup[] = [
     description: "MCP와 외부 API",
     items: [
       { to: "/admin/integrations/mcp", label: "MCP · API", icon: <HubRounded />, anyOf: ["manage_settings"] },
-      { to: "/admin/integrations/plugins", label: "플러그인", icon: <ExtensionRounded />, anyOf: ["manage_plugins"] },
+      { to: "/admin/integrations/plugins", label: "플러그인", icon: <ExtensionRounded />, anyOf: ["manage_plugins"], exact: true },
     ],
   },
   {
@@ -102,8 +114,12 @@ const adminNavigationGroups: readonly AdminNavigationGroup[] = [
   },
 ];
 
-function routeIsActive(pathname: string, to: string): boolean {
-  return pathname === to || pathname.startsWith(`${to}/`);
+function routeIsActive(pathname: string, item: AdminNavigationItem): boolean {
+  return pathname === item.to || (!item.exact && pathname.startsWith(`${item.to}/`));
+}
+
+function childRouteIsActive(pathname: string, item: AdminNavigationItem): boolean {
+  return item.children?.some((child) => routeIsActive(pathname, child)) ?? false;
 }
 
 function AdminNavigation({
@@ -129,18 +145,45 @@ function AdminNavigation({
             </Box>
             <List disablePadding aria-labelledby={headingID}>
               {group.items.map((item) => {
-                const active = routeIsActive(pathname, item.to);
+                const active = routeIsActive(pathname, item);
+                const activeDescendant = childRouteIsActive(pathname, item);
+                const showChildren = Boolean(item.children?.length && (active || activeDescendant));
                 return (
-                  <ListItemButton
-                    key={item.to}
-                    selected={active}
-                    aria-current={active ? "page" : undefined}
-                    onClick={() => onNavigate(item.to)}
-                    className="admin-navigation-item"
-                  >
-                    <ListItemIcon>{item.icon}</ListItemIcon>
-                    <ListItemText primary={item.label} />
-                  </ListItemButton>
+                  <Box component="li" className="admin-navigation-tree-item" key={item.to}>
+                    <ListItemButton
+                      selected={active}
+                      aria-current={active ? "page" : undefined}
+                      aria-expanded={item.children?.length ? showChildren : undefined}
+                      aria-label={item.ariaLabel}
+                      onClick={() => onNavigate(item.to)}
+                      className={`admin-navigation-item${activeDescendant ? " admin-navigation-item-ancestor" : ""}`}
+                    >
+                      <ListItemIcon>{item.icon}</ListItemIcon>
+                      <ListItemText primary={item.label} />
+                    </ListItemButton>
+                    {showChildren && (
+                      <List disablePadding className="admin-plugin-navigation-list" aria-label="설치된 플러그인">
+                        {item.children?.map((child) => {
+                          const childActive = routeIsActive(pathname, child);
+                          return (
+                            <ListItem key={child.to} disablePadding>
+                              <ListItemButton
+                                selected={childActive}
+                                aria-current={childActive ? "page" : undefined}
+                                aria-label={child.ariaLabel}
+                                title={child.ariaLabel ?? child.label}
+                                onClick={() => onNavigate(child.to)}
+                                className="admin-navigation-item admin-navigation-item-nested"
+                              >
+                                <ListItemIcon>{child.icon}</ListItemIcon>
+                                <ListItemText primary={child.label} />
+                              </ListItemButton>
+                            </ListItem>
+                          );
+                        })}
+                      </List>
+                    )}
+                  </Box>
                 );
               })}
             </List>
@@ -151,23 +194,83 @@ function AdminNavigation({
   );
 }
 
-export function AdminLayout() {
+function AdminLayoutContent() {
   const navigate = useNavigate();
   const location = useLocation();
   const user = useSelector((state: RootState) => state.auth.user);
   const info = useSystemInfo();
   const access = useAdminAccess();
+  const { plugins, statuses } = useAdminPlugins();
   const [mobileNavigationOpen, setMobileNavigationOpen] = useState(false);
-  const visibleNavigationGroups = adminNavigationGroups
+  const pluginStateByID = useMemo(() => new Map(
+    statuses.map((status) => [status.plugin_id, status.state]),
+  ), [statuses]);
+  const pluginNavigationItems = useMemo<AdminNavigationItem[]>(() => {
+    const seen = new Set<string>();
+    const uniquePlugins = sortAdminPlugins(plugins).filter((plugin) => {
+      const pluginID = adminPluginID(plugin);
+      if (!pluginID || seen.has(pluginID)) return false;
+      seen.add(pluginID);
+      return true;
+    });
+    const displayNameCounts = new Map<string, number>();
+    for (const plugin of uniquePlugins) {
+      const displayName = adminPluginDisplayName(plugin);
+      displayNameCounts.set(displayName, (displayNameCounts.get(displayName) ?? 0) + 1);
+    }
+    return uniquePlugins.map((plugin) => {
+      const pluginID = adminPluginID(plugin);
+      const state = pluginStateByID.get(pluginID) ?? String(plugin.state ?? "unknown");
+      const enabled = typeof plugin.enabled === "boolean"
+        ? plugin.enabled
+        : state === "running" || state === "enabled";
+      const stateTone = enabled && state !== "running" && state !== "enabled"
+        ? "danger"
+        : enabled
+          ? "ok"
+          : "disabled";
+      const displayName = adminPluginDisplayName(plugin);
+      const label = (displayNameCounts.get(displayName) ?? 0) > 1
+        ? `${displayName} · ${pluginID}`
+        : displayName;
+      return {
+        to: `/admin/integrations/plugins/${encodeURIComponent(pluginID)}`,
+        label,
+        icon: <Box component="span" className={`admin-plugin-state-dot ${stateTone}`} />,
+        anyOf: ["manage_plugins"],
+        exact: true,
+        nested: true,
+        ariaLabel: `${displayName} 플러그인 설정 · ${pluginID} · ${state} · v${adminPluginVersion(plugin)}`,
+      };
+    });
+  }, [pluginStateByID, plugins]);
+  const navigationGroups = useMemo<AdminNavigationGroup[]>(() => adminNavigationGroups.map((group) => ({
+    ...group,
+    items: group.items.map((item) => (
+      item.to === "/admin/integrations/plugins"
+        ? { ...item, children: pluginNavigationItems }
+        : item
+    )),
+  })), [pluginNavigationItems]);
+  const visibleNavigationGroups = navigationGroups
     .map((group) => ({
       ...group,
-      items: group.items.filter((item) => item.anyOf.length === 0 || access.canAny(item.anyOf)),
+      items: group.items
+        .filter((item) => item.anyOf.length === 0 || access.canAny(item.anyOf))
+        .map((item) => ({
+          ...item,
+          children: item.children?.filter((child) => child.anyOf.length === 0 || access.canAny(child.anyOf)),
+        })),
     }))
     .filter((group) => group.items.length > 0);
   const activeGroup = visibleNavigationGroups.find((group) =>
-    group.items.some((item) => routeIsActive(location.pathname, item.to)),
+    group.items.some((item) => routeIsActive(location.pathname, item) || childRouteIsActive(location.pathname, item)),
   );
-  const activeItem = activeGroup?.items.find((item) => routeIsActive(location.pathname, item.to));
+  const activeParentItem = activeGroup?.items.find((item) => (
+    routeIsActive(location.pathname, item) || childRouteIsActive(location.pathname, item)
+  ));
+  const activeItem = activeParentItem?.children?.find((item) => routeIsActive(location.pathname, item))
+    ?? (activeParentItem && routeIsActive(location.pathname, activeParentItem) ? activeParentItem : undefined);
 
   const navigateFromMenu = (to: string) => {
     navigate(to);
@@ -269,5 +372,14 @@ export function AdminLayout() {
         </Box>
       </Drawer>
     </Box>
+  );
+}
+
+export function AdminLayout() {
+  const access = useAdminAccess();
+  return (
+    <AdminPluginsProvider enabled={access.loaded && access.can("manage_plugins")}>
+      <AdminLayoutContent />
+    </AdminPluginsProvider>
   );
 }

@@ -1,0 +1,198 @@
+.flow-chat-turn-actions {
+  margin-top: 9px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+.flow-chat-turn-actions button {
+  min-height: 32px;
+  text-transform: none;
+}
+
+.flow-chat-edit-form {
+  margin-top: 8px;
+  display: grid;
+  gap: 8px;
+}
+
+.flow-ai-templates {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.flow-ai-templates .flow-item-subtitle {
+  margin: 0 4px 0 0 !important;
+}
+
+.flow-ai-templates button {
+  min-height: 34px;
+  text-transform: none;
+}
+
+.flow-ai-details {
+  position: relative;
+  color: var(--flow-muted);
+  font-size: 12px;
+}
+
+.flow-ai-details summary {
+  min-height: 36px;
+  display: flex;
+  align-items: center;
+  cursor: pointer;
+  font-weight: 700;
+}
+
+.flow-ai-details summary:focus-visible {
+  outline: 2px solid var(--flow-brand);
+  outline-offset: 3px;
+  border-radius: 4px;
+}
+
+.flow-ai-details[open] {
+  width: min(100%, 320px);
+  padding: 0 12px 10px;
+  border: 1px solid var(--flow-border);
+  border-radius: 9px;
+  background: var(--flow-surface);
+}
+
+.flow-ai-details dl {
+  margin: 2px 0 0;
+  display: grid;
+  gap: 6px;
+}
+
+.flow-ai-details dl > div {
+  display: grid;
+  grid-template-columns: minmax(80px, .45fr) minmax(0, 1fr);
+  gap: 10px;
+}
+
+.flow-ai-details dt {
+  font-weight: 700;
+}
+
+.flow-ai-details dd {
+  margin: 0;
+  color: var(--flow-text);
+  overflow-wrap: anywhere;
+}
+
+.flow-ai-markdown {
+  white-space: normal;
+}
+
+.flow-ai-markdown > :first-child {
+  margin-top: 5px;
+}
+
+.flow-ai-markdown > :last-child {
+  margin-bottom: 0;
+}
+
+.flow-ai-markdown h3,
+.flow-ai-markdown h4,
+.flow-ai-markdown h5,
+.flow-ai-markdown h6 {
+  margin: 12px 0 6px;
+  line-height: 1.35;
+}
+
+.flow-ai-markdown h3 {
+  font-size: 17px;
+}
+
+.flow-ai-markdown h4 {
+  font-size: 15px;
+}
+
+.flow-ai-markdown h5,
+.flow-ai-markdown h6 {
+  font-size: 14px;
+}
+
+.flow-ai-markdown p,
+.flow-ai-markdown ul,
+.flow-ai-markdown ol,
+.flow-ai-markdown blockquote,
+.flow-ai-markdown table,
+.flow-ai-markdown pre {
+  margin: 8px 0;
+}
+
+.flow-ai-markdown ul,
+.flow-ai-markdown ol {
+  padding-left: 24px;
+}
+
+.flow-ai-markdown li + li {
+  margin-top: 3px;
+}
+
+.flow-ai-markdown blockquote {
+  padding-left: 12px;
+  border-left: 3px solid color-mix(in srgb, var(--flow-ai) 48%, var(--flow-border));
+  color: var(--flow-muted);
+}
+
+.flow-ai-markdown a {
+  color: var(--flow-brand-strong);
+  text-decoration-thickness: 1px;
+  text-underline-offset: 2px;
+}
+
+.flow-ai-markdown table {
+  width: max-content;
+  min-width: 100%;
+  display: block;
+  overflow-x: auto;
+  border-collapse: collapse;
+}
+
+.flow-ai-markdown th,
+.flow-ai-markdown td {
+  padding: 7px 9px;
+  border: 1px solid var(--flow-border);
+  text-align: left;
+}
+
+.flow-ai-markdown th {
+  background: color-mix(in srgb, var(--flow-page-bg) 72%, var(--flow-surface));
+  font-weight: 700;
+}
+
+.flow-ai-code-block {
+  max-width: 100%;
+  padding: 12px;
+  overflow: auto;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--flow-page-bg) 82%, var(--flow-surface));
+  color: var(--flow-text);
+}
+
+.flow-ai-code,
+.flow-ai-code-inline {
+  font: 12px/1.55 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+.flow-ai-code-inline {
+  padding: 1px 4px;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--flow-page-bg) 82%, var(--flow-surface));
+}
+
+@media (max-width: 640px) {
+  .flow-chat-turn-actions button,
+  .flow-ai-templates button {
+    min-height: 44px;
+  }
+
+  .flow-ai-details {
+    width: 100%;
+  }
+}

@@ -3,14 +3,17 @@ import { api, publicMoyroApi, type SystemInfo } from "@/api/client";
 
 const FALLBACK_INFO: SystemInfo = {
   name: "moyro",
-  version: "0.2.0",
+  version: "0.2.1",
   build_hash: "",
   build_date: "",
   oidc_enabled: false,
   oidc_provider_name: "Keycloak",
   approval_enabled: false,
   local_signup_enabled: false,
-  capabilities: { email_digest: { configured: false, enabled: false } },
+  capabilities: {
+    email_digest: { configured: false, enabled: false },
+    drafts: { storage_mode: "local", retention_days: 7, clear_on_logout: true },
+  },
 };
 
 type SystemInfoContextValue = SystemInfo & { loaded: boolean; refresh: () => Promise<void> };
@@ -50,6 +53,7 @@ export function SystemInfoProvider({ children }: { children: React.ReactNode }) 
           configured: emailDigestConfigured,
           enabled: emailDigestEnabled,
         },
+        drafts: native?.capabilities?.drafts ?? FALLBACK_INFO.capabilities?.drafts,
       },
       loaded: true,
     });

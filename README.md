@@ -29,26 +29,34 @@ Product site: <https://hkjang.github.io/moyro/>
 - Posts, threads, edits, deletes, pins, reactions, markdown, mentions
 - File upload/download, thumbnails, custom emoji, image lightbox
 - WebSocket events with reconnect reconciliation and unread counters
-- Moyro Flow navigation with Today, channel-level unified inbox, My Work for
-  saved/scheduled/reminder data, team-scoped search, and a scoped approval center
+- Moyro Flow navigation with Today, a durable per-user activity inbox, My Work
+  for tasks, decisions, saved/scheduled/reminder data, team-scoped search, and
+  a scoped approval center
 - A workspace context panel for threads, user-triggered AI summary of currently
   loaded messages, files from those messages, and channel information
 - Search, saved posts, public channel discovery, and a link-preview foundation
-  (outbound previews are disabled by the offline-safe v0.2.0 runtime)
+  (outbound previews are disabled by the offline-safe v0.2.1 runtime)
 - Incoming/outgoing webhooks, slash commands, bots, personal access tokens
 - OAuth compatibility hooks, limited-use invite links, audit logs, and metrics
 - Scheduled messages with PostgreSQL leases and duplicate-post prevention, plus post reminders
 - Versioned, checksummed PostgreSQL migrations with upgrade/restart validation
 - Hashed session lookup identifiers, SMTP capability reporting, and durable
   outgoing-webhook delivery with retry/dead-letter state
+- Administrator-controlled browser draft policy: seven-day local retention by
+  default, session-only storage, or disabled storage, with optional logout cleanup
 - Dual server-plugin runtime for Moyro SDK plugins and tested Mattermost v1
   archives, with admin tar.gz install, enable/disable/delete, encrypted config,
   PostgreSQL KV, plugin HTTP, restart recovery, and audit events; all native
   plugins remain fully trusted and unsandboxed
 - Authenticated web-plugin discovery and a reactive Mattermost-style registry
 - A permission-aware SSE AI assistant. Conversation state is browser-session
-  only; v0.2.0 does not claim RAG, durable AI history, Task/Decision records,
-  or AI-triggered actions
+  only; v0.2.1 does not claim RAG, durable AI history, or AI-triggered actions
+- Conversation-derived tasks and decisions with source-message links, current
+  channel-membership enforcement, cursor pagination, idempotent creation, audit
+  events, and real-time refresh
+- Evidence-backed administrator operations state for PostgreSQL pool and
+  migrations, durable queues, webhook retry/DLQ, and the selected file-storage
+  backend; unobservable worker/dispatcher runtime remains explicitly unknown
 
 ## Quick Start
 
@@ -101,7 +109,7 @@ variables. See the [Offline Deployment Guide](docs/offline-deployment.md) for
 the complete load, run, backup, and upgrade procedure. A redacted four-key
 template is available at [`deploy/docker/moyro.env.example`](deploy/docker/moyro.env.example).
 
-The supported v0.2.0 topology is one moyro application container connected to
+The supported v0.2.1 topology is one moyro application container connected to
 external PostgreSQL, with uploads on the local `/var/lib/moyro` volume. The
 four-variable production contract does not expose SMTP configuration, so email
 is reported unavailable and no digest worker records false delivery success.
@@ -158,12 +166,14 @@ powershell -ExecutionPolicy Bypass -File scripts\audit-mattermost-api.ps1 -Outpu
 - [Development Guide](docs/development.md)
 - [Plugin System](docs/plugin-system.md)
 - [Mattermost API Compatibility](docs/mattermost-api-compatibility.md)
+- [Mattermost-compatible OpenAPI](docs/openapi-v4.yaml) — `/api/v4`
+- [Moyro Native OpenAPI](docs/openapi-moyro.yaml) — `/api/moyro/v1`
 - [Roadmap](docs/roadmap.md)
 - [Offline Deployment](docs/offline-deployment.md)
 - [User Guide](docs/guides/user-guide.html)
 - [Administrator Guide](docs/guides/admin-guide.html)
-- [Product Screens](docs/screens.html) — 41 browser-captured v0.2.0 views,
-  including the 16 Moyro Flow/context views and three tested plugin
+- [Product Screens](docs/screens.html) — 46 browser-captured v0.2.1 views,
+  including the 16 Moyro Flow/context views and four tested plugin
   compatibility states
 - [Brand Assets](docs/assets/brand/README.md) — canonical SVG mark and wordmark,
   favicon, PWA icons, and the social sharing card

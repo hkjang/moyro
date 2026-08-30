@@ -552,15 +552,18 @@ type RoutedPage = {
 
 const routedPages: readonly RoutedPage[] = [
   { path: () => "/today", file: "today.jpg", marker: "오늘의 흐름" },
+  { path: () => "/inbox/updates", file: "inbox-updates.jpg", marker: "통합 알림함" },
   { path: () => "/inbox/conversations", file: "inbox-conversations.jpg", marker: "통합 알림함" },
   { path: () => "/inbox/approvals", file: "inbox-approvals.jpg", marker: "통합 알림함" },
+  { path: () => "/my-work/tasks", file: "my-work-tasks.jpg", marker: "내 업무" },
+  { path: () => "/my-work/decisions", file: "my-work-decisions.jpg", marker: "내 업무" },
   { path: () => "/my-work/saved", file: "my-work-saved.jpg", marker: "내 업무" },
   { path: () => "/my-work/scheduled", file: "my-work-scheduled.jpg", marker: "내 업무" },
   { path: () => "/my-work/reminders", file: "my-work-reminders.jpg", marker: "내 업무" },
   { path: () => "/approvals/mine", file: "approvals-mine.jpg", marker: "승인 센터" },
   { path: () => "/approvals/review", file: "approvals-review.jpg", marker: "승인 센터" },
-  { path: () => "/assistant", file: "ai-assistant.jpg", marker: "AI 도우미" },
-  { path: () => "/search", file: "global-search.jpg", marker: "통합 검색" },
+  { path: () => "/assistant", file: "ai-assistant.jpg", marker: "AI 대화" },
+  { path: () => "/search", file: "global-search.jpg", marker: "메시지 검색" },
   { path: () => `/workspace/${seed.teamId}/channel/${seed.channelId}`, file: "workspace-channel.jpg", marker: "moyro 릴리스" },
   { path: () => "/settings/profile", file: "settings-profile.jpg", marker: "프로필" },
   { path: () => "/settings/appearance", file: "settings-appearance.jpg", marker: "화면" },
@@ -606,9 +609,9 @@ test("the authenticated root and ProductShell navigation use the Flow routes", a
   await expect.poll(() => new URL(page.url()).pathname).toBe("/today");
 
   for (const destination of [
-    { label: "알림함", path: "/inbox" },
+    { label: "알림함", path: "/inbox/updates" },
     { label: "대화", path: "/workspace", prefix: true },
-    { label: "내 업무", path: "/my-work/saved" },
+    { label: "내 업무", path: "/my-work/tasks" },
     { label: "검색", path: "/search" },
     { label: "승인", path: "/approvals/mine" },
     { label: "AI", path: "/assistant" },
@@ -625,6 +628,54 @@ test("the authenticated root and ProductShell navigation use the Flow routes", a
   assertNoRuntimeIssues(issues, "authenticated root and ProductShell navigation");
 });
 
+test("Today uses one shared Flow read model and keeps it across Flow navigation", async ({ page }) => {
+  await installAuthenticatedSession(page, auth);
+  const flowRequests: string[] = [];
+  const todayDataPaths = new Set([
+    "/api/moyro/v1/me/flow-summary",
+    "/api/v4/users/me/saved_posts",
+    "/api/v4/users/me/scheduled_posts",
+    "/api/v4/users/me/reminders",
+    "/api/moyro/v1/me/approval-requests",
+    "/api/moyro/v1/reviews/approval-requests",
+  ]);
+  page.on("request", (request) => {
+    const pathName = new URL(request.url()).pathname;
+    if (todayDataPaths.has(pathName)) flowRequests.push(pathName);
+  });
+
+  await page.goto("/today");
+  await expect(page.getByRole("heading", { name: /오늘의 흐름/ })).toBeVisible();
+  await expect(page.getByRole("button", { name: "새로고침" })).toBeEnabled();
+
+  expect(flowRequests).toHaveLength(6);
+  expect(flowRequests.filter((pathName) => pathName === "/api/moyro/v1/me/flow-summary")).toHaveLength(1);
+
+  await page.getByRole("navigation", { name: "주요 기능" })
+    .getByRole("button", { name: "알림함", exact: true })
+    .click();
+  await expect(page.getByRole("heading", { name: "통합 알림함" })).toBeVisible();
+  expect(flowRequests.filter((pathName) => pathName === "/api/moyro/v1/me/flow-summary")).toHaveLength(1);
+});
+
+test("message search restores its query, team and page from a shareable URL", async ({ page }) => {
+  await installAuthenticatedSession(page, auth);
+  const issues = collectRuntimeIssues(page);
+  const target = `/search?q=moyro&team=${encodeURIComponent(seed.teamId)}&page=0`;
+  await page.goto(target);
+  await expect(page.getByRole("heading", { name: "메시지 검색" })).toBeVisible();
+  await expect(page.getByRole("textbox", { name: "메시지 검색어" })).toHaveValue("moyro");
+  const results = page.locator('section[aria-labelledby="global-search-results"]');
+  await expect(results).toContainText("moyro 릴리스");
+  await expect.poll(() => new URL(page.url()).searchParams.get("team")).toBe(seed.teamId);
+
+  await page.reload();
+  await expect(page.getByRole("textbox", { name: "메시지 검색어" })).toHaveValue("moyro");
+  await expect(results).toContainText("moyro 릴리스");
+  await expect.poll(() => new URL(page.url()).search).toBe(`?q=moyro&team=${encodeURIComponent(seed.teamId)}&page=0`);
+  assertNoRuntimeIssues(issues, "shareable message search");
+});
+
 test("legacy and invalid Flow URLs replace redirect to canonical routes", async ({ page }) => {
   await installAuthenticatedSession(page, auth);
   const redirects = [
@@ -632,8 +683,8 @@ test("legacy and invalid Flow URLs replace redirect to canonical routes", async 
     { legacy: `/workspace/${seed.teamId}/scheduled`, target: "/my-work/scheduled" },
     { legacy: "/settings/approvals/mine", target: "/approvals/mine" },
     { legacy: "/settings/approvals/review", target: "/approvals/review" },
-    { legacy: "/inbox/not-a-tab", target: "/inbox/conversations" },
-    { legacy: "/my-work/not-a-tab", target: "/my-work/saved" },
+    { legacy: "/inbox/not-a-tab", target: "/inbox/updates" },
+    { legacy: "/my-work/not-a-tab", target: "/my-work/tasks" },
     { legacy: "/approvals/not-a-tab", target: "/approvals/mine" },
   ] as const;
 
@@ -660,14 +711,14 @@ test("Flow tabs own labelled panels and settings layouts expose one main landmar
       tablist: "알림함 분류",
       prefix: "inbox",
       active: "conversations",
-      values: ["conversations", "approvals", "reminders"],
+      values: ["updates", "conversations", "approvals", "reminders"],
     },
     {
       path: "/my-work/saved",
       tablist: "내 업무 분류",
       prefix: "my-work",
       active: "saved",
-      values: ["saved", "scheduled", "reminders"],
+      values: ["tasks", "decisions", "saved", "scheduled", "reminders"],
     },
     {
       path: "/approvals/mine",
@@ -875,7 +926,7 @@ test("long Flow pages own vertical scrolling and expose their final section", as
   const issues = collectRuntimeIssues(page);
   await page.goto("/today");
   const flowPage = page.locator(".flow-page");
-  const finalSection = page.locator("#today-prepared");
+  const finalSection = page.locator("#today-work");
   await expect(flowPage).toBeVisible();
 
   const before = await flowPage.evaluate((element) => ({
@@ -972,6 +1023,37 @@ test("workspace drafts stay destination-scoped and survive a failed send", async
   await primaryNavigation.getByRole("button", { name: "오늘", exact: true }).click();
   await page.goto(`/workspace/${seed.teamId}/channel/${seed.channelId}`);
   await expect(composer).toHaveValue("");
+});
+
+test("Korean IME confirmation Enter never submits the workspace composer", async ({ page }) => {
+  await installAuthenticatedSession(page, auth);
+  let postCreates = 0;
+  page.on("request", (request) => {
+    if (request.method() === "POST" && new URL(request.url()).pathname === "/api/v4/posts") {
+      postCreates += 1;
+    }
+  });
+  await page.goto(`/workspace/${seed.teamId}/channel/${seed.channelId}`);
+  const composer = page.getByRole("textbox", { name: "메시지 입력" });
+  await composer.fill("한글 조합 확인");
+
+  await composer.evaluate((element) => {
+    element.dispatchEvent(new CompositionEvent("compositionstart", { bubbles: true, data: "인" }));
+    const enter = new KeyboardEvent("keydown", {
+      key: "Enter",
+      code: "Enter",
+      bubbles: true,
+      cancelable: true,
+    });
+    Object.defineProperty(enter, "isComposing", { configurable: true, value: true });
+    element.dispatchEvent(enter);
+  });
+
+  await expect(composer).toHaveValue("한글 조합 확인");
+  await expect.poll(() => postCreates).toBe(0);
+  await composer.evaluate((element) => {
+    element.dispatchEvent(new CompositionEvent("compositionend", { bubbles: true, data: "입력" }));
+  });
 });
 
 test("workspace AI rewrite previews changes before applying them", async ({ page }) => {
@@ -1080,7 +1162,7 @@ test("workspace context info supports tabs, keyboard close and focus return", as
   const panel = page.getByRole("complementary", { name: "컨텍스트 패널" });
   const tabs = panel.getByRole("tablist", { name: "채널 컨텍스트" });
   const infoTab = tabs.getByRole("tab", { name: "정보", exact: true });
-  const filesTab = tabs.getByRole("tab", { name: "파일", exact: true });
+  const filesTab = tabs.getByRole("tab", { name: "최근 파일", exact: true });
   await expect(panel).toBeVisible();
   await expect(tabs.getByRole("tab")).toHaveCount(4);
   await expect(infoTab).toHaveAttribute("aria-selected", "true");
@@ -1195,6 +1277,40 @@ test("profile context menu shows version, admin and optional approval entries", 
   assertNoRuntimeIssues(issues, "profile context menu");
 });
 
+test("mobile messages expose a persistent, keyboard-safe action menu", async ({ page }) => {
+  await page.setViewportSize({ width: 430, height: 932 });
+  await installAuthenticatedSession(page, auth);
+  const issues = collectRuntimeIssues(page);
+  await page.goto(`/workspace/${seed.teamId}/channel/${seed.channelId}`);
+
+  const message = page.locator(".workspace-message-item")
+    .filter({ hasText: "moyro 릴리스" })
+    .first();
+  await expect(message).toBeVisible();
+  const trigger = message.getByRole("button", { name: "메시지 작업 더보기" });
+  await expect(trigger).toBeVisible();
+  const hitTarget = await trigger.evaluate((element) => {
+    const rect = element.getBoundingClientRect();
+    return { width: rect.width, height: rect.height };
+  });
+  expect(hitTarget.width).toBeGreaterThanOrEqual(44);
+  expect(hitTarget.height).toBeGreaterThanOrEqual(44);
+  await expect(message.locator(".message-action-primary").first()).toBeHidden();
+
+  await trigger.click();
+  const menu = page.getByRole("menu", { name: "메시지 작업 더보기" });
+  await expect(menu).toBeVisible();
+  for (const label of ["리액션 추가", "스레드 열기", "저장", "나중에 알림"]) {
+    await expect(menu.getByRole("menuitem", { name: label })).toBeVisible();
+  }
+  await settle(page);
+  await capture(page, "mobile-message-actions.jpg");
+  await page.keyboard.press("Escape");
+  await expect(menu).toBeHidden();
+  await expect(trigger).toBeFocused();
+  assertNoRuntimeIssues(issues, "mobile message action menu");
+});
+
 test("representative pages remain usable at a mobile viewport", async ({ page }) => {
   await page.setViewportSize({ width: 430, height: 932 });
   const publicIssues = collectRuntimeIssues(page);
@@ -1210,8 +1326,8 @@ test("representative pages remain usable at a mobile viewport", async ({ page })
   for (const [target, file, marker] of [
     [`/workspace/${seed.teamId}/channel/${seed.channelId}`, "mobile-workspace.jpg", "moyro 릴리스"],
     ["/today", "mobile-today.jpg", "오늘의 흐름"],
-    ["/inbox/conversations", "mobile-inbox.jpg", "통합 알림함"],
-    ["/my-work/saved", "mobile-my-work.jpg", "내 업무"],
+    ["/inbox/updates", "mobile-inbox.jpg", "통합 알림함"],
+    ["/my-work/tasks", "mobile-my-work.jpg", "내 업무"],
     ["/approvals/mine", "mobile-approvals.jpg", "승인 센터"],
     ["/settings/profile", "mobile-settings-profile.jpg", "프로필"],
     ["/admin/site", "mobile-admin-site.jpg", "사이트 설정"],
@@ -1381,6 +1497,36 @@ async function seedProductData(context: APIRequestContext, session: AuthSession)
     }
   }
   if (!seededPost) throw new Error("product seed did not produce a source message");
+
+  for (const workItem of [
+    {
+      kind: "task",
+      title: "오프라인 배포 점검 결과 확인",
+      description: "릴리스 이미지 검증 결과를 확인하고 상태를 갱신합니다.",
+      assignee_id: session.user.id,
+      due_at: Date.now() + 2 * 24 * 60 * 60 * 1000,
+      idempotency_key: "release-capture-task",
+    },
+    {
+      kind: "decision",
+      title: "v0.2.1은 검증된 단일 오프라인 자산으로 배포",
+      description: "PostgreSQL, 브라우저, 플러그인 호환과 재시작 검증을 모두 통과한 자산만 배포합니다.",
+      assignee_id: "",
+      due_at: 0,
+      idempotency_key: "release-capture-decision",
+    },
+  ] as const) {
+    const page = await json<{ items: Array<{ title: string }> }>(
+      "GET",
+      `/api/moyro/v1/me/work-items?kind=${workItem.kind}&per_page=100`,
+    );
+    if (!page.items.some((item) => item.title === workItem.title)) {
+      await json("POST", "/api/moyro/v1/me/work-items", {
+        ...workItem,
+        source_post_id: seededPost.id,
+      });
+    }
+  }
 
   const scheduled = await json<Array<{ message: string }>>("GET", "/api/v4/users/me/scheduled_posts");
   if (!scheduled.some((item) => item.message.includes("오프라인 운영 점검"))) {

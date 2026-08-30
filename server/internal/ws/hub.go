@@ -45,7 +45,7 @@ type Publisher interface {
 
 // AudienceResolver returns the users allowed to receive a channel- or
 // team-scoped event. Scoped events fail closed when membership cannot be
-// resolved. User-targeted and global events bypass this lookup.
+// resolved. A user target narrows this audience; it never bypasses it.
 type AudienceResolver func(context.Context, Broadcast) (map[string]struct{}, error)
 
 type Hub struct {
@@ -217,7 +217,8 @@ func (h *Hub) fanout(ctx context.Context, ev Event, raw []byte) {
 	h.mu.RUnlock()
 
 	var audience map[string]struct{}
-	if ev.Broadcast.UserID == "" && (ev.Broadcast.ChannelID != "" || ev.Broadcast.TeamID != "") {
+	scoped := ev.Broadcast.ChannelID != "" || ev.Broadcast.TeamID != ""
+	if scoped {
 		if audienceResolver == nil {
 			return
 		}
@@ -237,6 +238,11 @@ func (h *Hub) fanout(ctx context.Context, ev Event, raw []byte) {
 	}
 
 	if ev.Broadcast.UserID != "" {
+		if scoped {
+			if _, allowed := audience[ev.Broadcast.UserID]; !allowed {
+				return
+			}
+		}
 		for c := range h.byUser[ev.Broadcast.UserID] {
 			trySend(c, raw)
 		}
@@ -246,7 +252,7 @@ func (h *Hub) fanout(ctx context.Context, ev Event, raw []byte) {
 		if _, skip := omit[c.UserID]; skip {
 			continue
 		}
-		if audience != nil {
+		if scoped {
 			if _, allowed := audience[c.UserID]; !allowed {
 				continue
 			}

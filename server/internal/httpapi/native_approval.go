@@ -42,6 +42,65 @@ var supportedApprovalActions = map[string]struct{}{
 	"mcp.reply_to_thread": {},
 }
 
+// Keep the native handler name as an alias while sharing the exact safe DTO
+// with MCP responses. approval.RequestView deliberately has no Payload field.
+type approvalRequestView = approval.RequestView
+
+type approvalResultView struct {
+	ApprovalRequired bool                 `json:"approval_required"`
+	Request          *approvalRequestView `json:"request,omitempty"`
+}
+
+func makeApprovalRequestView(request *approval.Request, targetDisplayName string) approvalRequestView {
+	view := approval.ToRequestView(request, targetDisplayName)
+	if view == nil {
+		return approvalRequestView{}
+	}
+	return *view
+}
+
+func (h *handlers) approvalTargetDisplayName(ctx context.Context, request *approval.Request) string {
+	if h == nil || h.channels == nil || request == nil || request.ResourceType != "channel" {
+		return ""
+	}
+	channel, err := h.channels.Get(ctx, request.ResourceID)
+	if err != nil || channel == nil {
+		return ""
+	}
+	if name := strings.TrimSpace(channel.DisplayName); name != "" {
+		return name
+	}
+	return strings.TrimSpace(channel.Name)
+}
+
+func (h *handlers) makeApprovalRequestView(ctx context.Context, request *approval.Request) approvalRequestView {
+	return makeApprovalRequestView(request, h.approvalTargetDisplayName(ctx, request))
+}
+
+func (h *handlers) makeApprovalRequestViews(ctx context.Context, requests []approval.Request) []approvalRequestView {
+	views := make([]approvalRequestView, 0, len(requests))
+	targetNames := make(map[string]string)
+	for i := range requests {
+		request := &requests[i]
+		targetName, known := targetNames[request.ResourceID]
+		if !known {
+			targetName = h.approvalTargetDisplayName(ctx, request)
+			targetNames[request.ResourceID] = targetName
+		}
+		views = append(views, makeApprovalRequestView(request, targetName))
+	}
+	return views
+}
+
+func (h *handlers) makeApprovalResultView(ctx context.Context, result *approval.Result) approvalResultView {
+	view := approvalResultView{ApprovalRequired: result != nil && result.ApprovalRequired}
+	if result != nil && result.Request != nil {
+		request := h.makeApprovalRequestView(ctx, result.Request)
+		view.Request = &request
+	}
+	return view
+}
+
 func configuredReviewerRoles(raw json.RawMessage) ([]string, error) {
 	if len(raw) == 0 {
 		return nil, nil
@@ -223,7 +282,7 @@ func (h *handlers) submitNativeApproval(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusBadRequest, "api.moyro.approval.submit", err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, result)
+	writeJSON(w, http.StatusOK, h.makeApprovalResultView(r.Context(), result))
 }
 
 func (h *handlers) listMyApprovalRequests(w http.ResponseWriter, r *http.Request) {
@@ -232,7 +291,7 @@ func (h *handlers) listMyApprovalRequests(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusInternalServerError, "api.moyro.approval.list", err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, requests)
+	writeJSON(w, http.StatusOK, h.makeApprovalRequestViews(r.Context(), requests))
 }
 
 func (h *handlers) listReviewApprovalRequests(w http.ResponseWriter, r *http.Request) {
@@ -261,7 +320,7 @@ func (h *handlers) listReviewApprovalRequests(w http.ResponseWriter, r *http.Req
 			visible = append(visible, requests[i])
 		}
 	}
-	writeJSON(w, http.StatusOK, visible)
+	writeJSON(w, http.StatusOK, h.makeApprovalRequestViews(r.Context(), visible))
 }
 
 func (h *handlers) decideNativeApproval(w http.ResponseWriter, r *http.Request) {
@@ -305,7 +364,7 @@ func (h *handlers) decideNativeApproval(w http.ResponseWriter, r *http.Request) 
 	if h.audit != nil {
 		h.audit.LogAsync(userID(r), "approval.request."+input.Decision, request.ID, map[string]any{"status": request.Status})
 	}
-	writeJSON(w, http.StatusOK, request)
+	writeJSON(w, http.StatusOK, h.makeApprovalRequestView(r.Context(), request))
 }
 
 func (h *handlers) approvalRequestScope(ctx context.Context, request *approval.Request) (rbac.Scope, bool) {

@@ -9,8 +9,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
 	"github.com/hkjang/moyro/server/internal/store"
+	"github.com/jackc/pgx/v5"
 )
 
 type Channel struct {
@@ -754,6 +754,38 @@ func (s *Service) ListForUserWithCounts(ctx context.Context, userID, teamID stri
 		  AND (c.team_id = $2 OR ($2 = '' AND c.team_id IS NULL) OR c.type = 'D')
 	`
 	rows, err := s.db.Pool.Query(ctx, q, userID, teamID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []MemberWithCounts{}
+	for rows.Next() {
+		var m MemberWithCounts
+		var propsRaw []byte
+		if err := rows.Scan(&m.ChannelID, &m.UserID, &m.Roles, &m.LastViewedAt, &m.MsgCount, &m.MentionCount, &propsRaw); err != nil {
+			return nil, err
+		}
+		m.NotifyProps = map[string]any{}
+		if len(propsRaw) > 0 {
+			_ = json.Unmarshal(propsRaw, &m.NotifyProps)
+		}
+		out = append(out, m)
+	}
+	return out, rows.Err()
+}
+
+// ListAllForUserWithCounts returns every active channel_members row owned by
+// the user across all teams in one query. Moyro Flow uses this read model to
+// avoid issuing one membership request per team when rendering global badges.
+func (s *Service) ListAllForUserWithCounts(ctx context.Context, userID string) ([]MemberWithCounts, error) {
+	rows, err := s.db.Pool.Query(ctx, `
+		SELECT m.channel_id, m.user_id, m.roles, m.last_viewed_at,
+		       m.msg_count, m.mention_count, m.notify_props
+		FROM channel_members m
+		JOIN channels c ON c.id = m.channel_id
+		WHERE m.user_id = $1 AND c.delete_at = 0
+		ORDER BY COALESCE(c.team_id, ''), c.create_at ASC
+	`, userID)
 	if err != nil {
 		return nil, err
 	}

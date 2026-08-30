@@ -20,13 +20,15 @@ import {
   FlowError,
   FlowLoading,
   FlowPage,
-  FlowPrepared,
   FlowSection,
   FlowStatusBadge,
   FlowTabPanel,
   FlowTabs,
 } from "./FlowPage";
-import { errorMessage, formatDateTime, useFlowWorkspaceIndex } from "./flow-data";
+import { ApprovalRequestPreview } from "./ApprovalRequestPreview";
+import { buildApprovalPreview } from "./approval-preview";
+import { errorMessage, formatDateTime } from "./flow-data";
+import { useFlowWorkspaceIndex } from "./FlowDataProvider";
 
 export type ApprovalCenterTab = "mine" | "review";
 
@@ -55,37 +57,6 @@ function approvalStatus(request: ApprovalRequest): {
   }
 }
 
-function actionLabel(action: string): string {
-  if (action === "create_post") return "메시지 작성";
-  if (action === "reply_to_thread") return "스레드 답글";
-  return action;
-}
-
-const SENSITIVE_PAYLOAD_KEY = /secret|password|authorization|access[_-]?token|refresh[_-]?token|api[_-]?key|credential/i;
-
-function redactPayload(value: unknown, depth = 0): unknown {
-  if (depth > 8) return "[중첩 데이터 생략]";
-  if (Array.isArray(value)) return value.map((item) => redactPayload(item, depth + 1));
-  if (!value || typeof value !== "object") return value;
-  return Object.fromEntries(
-    Object.entries(value as Record<string, unknown>).map(([key, item]) => [
-      key,
-      SENSITIVE_PAYLOAD_KEY.test(key) ? "[보호된 값]" : redactPayload(item, depth + 1),
-    ]),
-  );
-}
-
-function safePayload(value: unknown): string {
-  if (value === undefined || value === null) return "";
-  try {
-    const visible = redactPayload(value);
-    if (visible && typeof visible === "object" && !Array.isArray(visible) && Object.keys(visible).length === 0) return "";
-    return JSON.stringify(visible, null, 2);
-  } catch {
-    return "[요청 데이터를 안전하게 표시할 수 없습니다.]";
-  }
-}
-
 function ApprovalCard({
   request,
   requester,
@@ -100,23 +71,31 @@ function ApprovalCard({
   children?: ReactNode;
 }) {
   const status = approvalStatus(request);
-  const payload = safePayload(request.payload);
+  const preview = buildApprovalPreview(request);
+  const requesterLabel = requester ? `@${requester.username}` : "요청자 정보를 확인할 수 없음";
+  const teamLabel = teamName || (request.team_id ? "팀 정보를 확인할 수 없음" : undefined);
+  const targetLabel = resourceName
+    || (request.resource_type === "channel"
+      ? "채널 정보를 확인할 수 없음"
+      : request.resource_type
+        ? "대상 정보를 확인할 수 없음"
+        : undefined);
   return (
     <FlowCard>
       <div className="flow-toolbar">
         <div className="flow-badges">
-          <Typography component="h3" className="flow-item-title">{actionLabel(request.action_type)}</Typography>
+          <Typography component="h3" className="flow-item-title">{preview.title}</Typography>
           <FlowStatusBadge label={status.label} tone={status.tone} />
         </div>
         <Typography className="flow-item-subtitle">요청 {formatDateTime(request.create_at)}</Typography>
       </div>
-      <Typography className="flow-item-subtitle">
-        요청자 {requester ? `@${requester.username}` : request.requester_id.slice(0, 12)}
-        {teamName ? ` · ${teamName}` : request.team_id ? ` · 팀 ${request.team_id.slice(0, 12)}` : ""}
-        {resourceName ? ` · ${resourceName}` : request.resource_type ? ` · ${request.resource_type} ${request.resource_id.slice(0, 12)}` : ""}
-      </Typography>
       {request.expires_at > 0 && request.status === "pending" && <Typography className="flow-item-subtitle">검토 기한 {formatDateTime(request.expires_at)}</Typography>}
-      {payload && <pre className="flow-preformatted" aria-label="승인 요청 데이터">{payload}</pre>}
+      <ApprovalRequestPreview
+        preview={preview}
+        requesterLabel={requesterLabel}
+        teamLabel={teamLabel}
+        targetLabel={targetLabel}
+      />
       {children}
     </FlowCard>
   );
@@ -128,7 +107,7 @@ export function ApprovalCenterPage({ initialTab = "mine" }: { initialTab?: Appro
   const tab = validTab(params.tab) ? params.tab : initialTab;
   const token = useSelector((state: RootState) => state.auth.token);
   const systemInfo = useSystemInfo();
-  const workspace = useFlowWorkspaceIndex(token);
+  const workspace = useFlowWorkspaceIndex();
   const [mine, setMine] = useState<ApprovalRequest[]>([]);
   const [review, setReview] = useState<ApprovalRequest[]>([]);
   const [users, setUsers] = useState<Record<string, User>>({});
@@ -189,7 +168,7 @@ export function ApprovalCenterPage({ initialTab = "mine" }: { initialTab?: Appro
       if (active) setLoading(false);
     })();
     return () => { active = false; };
-  }, [revision, token]);
+  }, [revision, token, workspace.activityRevision]);
 
   const teamById = useMemo(() => Object.fromEntries(workspace.teams.map((team) => [team.id, team])), [workspace.teams]);
 
@@ -241,7 +220,7 @@ export function ApprovalCenterPage({ initialTab = "mine" }: { initialTab?: Appro
     <FlowPage
       eyebrow="안전한 자동화"
       title="승인 센터"
-      description="승인이 필요한 작업의 요청 맥락을 확인하고, 서버가 허용한 검토 범위 안에서 결정합니다."
+      description="승인이 필요한 작업의 요청 맥락을 확인하고, 부여된 검토 권한 안에서 결정합니다."
       actions={<Button startIcon={<RefreshRounded />} onClick={refreshAll} disabled={loading}>새로고침</Button>}
     >
       <FlowTabs
@@ -269,13 +248,13 @@ export function ApprovalCenterPage({ initialTab = "mine" }: { initialTab?: Appro
           {tab === panelTab && (
             <FlowSection
               title={tab === "mine" ? "내 승인 요청" : "내가 검토할 요청"}
-              description={tab === "mine" ? "요청 상태와 실행 여부를 확인합니다." : "이 목록은 review API가 계산한 팀별 검토 권한 범위입니다."}
-              id="approval-list"
+              description={tab === "mine" ? "요청 상태와 실행 여부를 확인합니다." : "내가 검토할 수 있는 대기 요청입니다."}
+              id={`approval-list-${panelTab}`}
             >
               {loading ? <FlowLoading label="승인 요청을 불러오는 중…" /> : activeRows.length === 0 ? (
                 <FlowEmpty
                   title={tab === "mine" ? "승인 요청 이력이 없습니다" : "검토할 요청이 없습니다"}
-                  description={tab === "mine" ? "승인이 필요한 MCP 작업을 요청하면 상태가 여기에 표시됩니다." : "현재 계정의 팀별 검토 범위에 대기 요청이 없습니다."}
+                  description={tab === "mine" ? "승인이 필요한 MCP 작업을 요청하면 상태가 여기에 표시됩니다." : "현재 검토할 수 있는 대기 요청이 없습니다."}
                 />
               ) : (
                 <div className="flow-stack">
@@ -318,7 +297,7 @@ export function ApprovalCenterPage({ initialTab = "mine" }: { initialTab?: Appro
                           </div>
                         )}
                         {tab === "review" && request.status === "pending" && !isActionableApproval(request) && (
-                          <Alert severity="warning">검토 기한이 지나 승인·반려할 수 없습니다. 서버의 만료 처리가 완료되면 목록에서 제거됩니다.</Alert>
+                          <Alert severity="warning">검토 기한이 지나 승인·반려할 수 없습니다. 만료 상태가 반영되면 대기 목록에서 제거됩니다.</Alert>
                         )}
                       </ApprovalCard>
                     );
@@ -330,12 +309,6 @@ export function ApprovalCenterPage({ initialTab = "mine" }: { initialTab?: Appro
         </FlowTabPanel>
       ))}
 
-      <FlowSection title="정책 설명 범위" id="approval-prepared">
-        <div className="flow-card-grid">
-          <FlowPrepared title="위험도·변경 전후 Diff" description="현재 승인 응답에는 계산된 위험도나 외부 시스템 Preview 계약이 없어 추정값을 표시하지 않습니다." />
-          <FlowPrepared title="검토자별 결정 타임라인" description="결정 상세 조회 API가 준비되면 검토자, 사유, 실행 결과를 시간순으로 연결합니다." />
-        </div>
-      </FlowSection>
     </FlowPage>
   );
 }

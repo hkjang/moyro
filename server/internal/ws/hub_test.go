@@ -45,6 +45,9 @@ func TestFanoutFailsClosedForScopedEvent(t *testing.T) {
 		resolver AudienceResolver
 	}{
 		{name: "missing resolver"},
+		{name: "nil audience", resolver: func(context.Context, Broadcast) (map[string]struct{}, error) {
+			return nil, nil
+		}},
 		{name: "resolver error", resolver: func(context.Context, Broadcast) (map[string]struct{}, error) {
 			return nil, errors.New("database unavailable")
 		}},
@@ -90,5 +93,74 @@ func TestFanoutKeepsUserTargetedAndGlobalSemantics(t *testing.T) {
 	}
 	if got := <-second.Send; string(got) != "global" {
 		t.Fatalf("second global payload = %q", got)
+	}
+}
+
+func TestFanoutIntersectsUserTargetWithLiveAudience(t *testing.T) {
+	h := NewHub()
+	target := testClient("target", 2)
+	other := testClient("other", 2)
+	attachTestClient(h, target)
+	attachTestClient(h, other)
+
+	member := true
+	h.SetAudienceResolver(func(_ context.Context, scope Broadcast) (map[string]struct{}, error) {
+		if scope.UserID != "target" || scope.ChannelID != "channel" || scope.TeamID != "team" {
+			t.Fatalf("resolver scope = %#v", scope)
+		}
+		if member {
+			return map[string]struct{}{"target": {}, "other": {}}, nil
+		}
+		return map[string]struct{}{}, nil
+	})
+
+	scoped := Event{Broadcast: Broadcast{UserID: "target", ChannelID: "channel", TeamID: "team"}}
+	h.fanout(context.Background(), scoped, []byte("before-revocation"))
+	if got := <-target.Send; string(got) != "before-revocation" {
+		t.Fatalf("target payload = %q", got)
+	}
+	select {
+	case <-other.Send:
+		t.Fatal("non-target audience member received user-targeted event")
+	default:
+	}
+
+	member = false
+	h.fanout(context.Background(), scoped, []byte("after-revocation"))
+	select {
+	case got := <-target.Send:
+		t.Fatalf("revoked target received scoped event %q", got)
+	default:
+	}
+}
+
+func TestFanoutFailsClosedForScopedUserTarget(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		resolver AudienceResolver
+	}{
+		{name: "missing resolver"},
+		{name: "nil audience", resolver: func(context.Context, Broadcast) (map[string]struct{}, error) {
+			return nil, nil
+		}},
+		{name: "resolver error", resolver: func(context.Context, Broadcast) (map[string]struct{}, error) {
+			return nil, errors.New("database unavailable")
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := NewHub()
+			target := testClient("target", 1)
+			attachTestClient(h, target)
+			if tc.resolver != nil {
+				h.SetAudienceResolver(tc.resolver)
+			}
+
+			h.fanout(context.Background(), Event{Broadcast: Broadcast{UserID: "target", ChannelID: "channel"}}, []byte("event"))
+			select {
+			case <-target.Send:
+				t.Fatal("scoped user event was delivered without a valid audience")
+			default:
+			}
+		})
 	}
 }

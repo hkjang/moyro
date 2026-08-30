@@ -9,8 +9,11 @@ const screenshots = join(docs, "assets", "screenshots");
 const expectedScreenshots = [
   "login.jpg",
   "today.jpg",
+  "inbox-updates.jpg",
   "inbox-conversations.jpg",
   "inbox-approvals.jpg",
+  "my-work-tasks.jpg",
+  "my-work-decisions.jpg",
   "my-work-saved.jpg",
   "my-work-scheduled.jpg",
   "my-work-reminders.jpg",
@@ -37,10 +40,12 @@ const expectedScreenshots = [
   "admin-mcp.jpg",
   "admin-plugins.jpg",
   "admin-plugins-compatible.jpg",
+  "admin-plugin-echosummary.jpg",
   "admin-approval.jpg",
   "admin-operations.jpg",
   "mobile-login.jpg",
   "mobile-workspace.jpg",
+  "mobile-message-actions.jpg",
   "mobile-workspace-context.jpg",
   "mobile-today.jpg",
   "mobile-inbox.jpg",
@@ -258,7 +263,7 @@ for (const releasePage of [
   join(docs, "guides", "offline-deployment.html"),
 ]) {
   const html = htmlByFile.get(releasePage) ?? "";
-  if (!html.includes("v0.2.0")) failures.push(`v0.2.0 release marker is missing in ${relative(root, releasePage)}`);
+  if (!html.includes("v0.2.1")) failures.push(`v0.2.1 release marker is missing in ${relative(root, releasePage)}`);
   if (/v0\.1\.[01]/.test(html)) failures.push(`stale v0.1.x release marker remains in ${relative(root, releasePage)}`);
   if (!html.includes('"dateModified": "2026-08-30"')) {
     failures.push(`2026-08-30 dateModified is missing in ${relative(root, releasePage)}`);

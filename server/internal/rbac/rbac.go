@@ -60,6 +60,46 @@ type Principal struct {
 
 func UserPrincipal(userID string) Principal { return Principal{UserID: userID} }
 
+// ResourceConstraints is the immutable, deterministic projection of a
+// credential's optional team/channel allow-lists. It is intentionally stricter
+// than permission checks with an empty Scope: once a resource dimension is
+// constrained, a resource without that identifier is outside the credential.
+type ResourceConstraints struct {
+	Restricted bool
+	TeamIDs    []string
+	ChannelIDs []string
+}
+
+func ResourceConstraintsFor(principal Principal) ResourceConstraints {
+	constraints := ResourceConstraints{Restricted: principal.Restricted}
+	if !principal.Restricted {
+		return constraints
+	}
+	constraints.TeamIDs = make([]string, 0, len(principal.AllowedTeamIDs))
+	for id := range principal.AllowedTeamIDs {
+		constraints.TeamIDs = append(constraints.TeamIDs, id)
+	}
+	constraints.ChannelIDs = make([]string, 0, len(principal.AllowedChannelIDs))
+	for id := range principal.AllowedChannelIDs {
+		constraints.ChannelIDs = append(constraints.ChannelIDs, id)
+	}
+	sort.Strings(constraints.TeamIDs)
+	sort.Strings(constraints.ChannelIDs)
+	return constraints
+}
+
+func (constraints ResourceConstraints) AllowsTeam(teamID string) bool {
+	return !constraints.Restricted || len(constraints.TeamIDs) == 0 || contains(constraints.TeamIDs, teamID)
+}
+
+func (constraints ResourceConstraints) AllowsChannel(channelID string) bool {
+	return !constraints.Restricted || len(constraints.ChannelIDs) == 0 || contains(constraints.ChannelIDs, channelID)
+}
+
+func (constraints ResourceConstraints) Allows(teamID, channelID string) bool {
+	return constraints.AllowsTeam(teamID) && constraints.AllowsChannel(channelID)
+}
+
 type Permission struct {
 	Name         string `json:"name"`
 	Description  string `json:"description"`

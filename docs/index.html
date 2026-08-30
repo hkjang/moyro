@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>moyro | 오프라인망을 위한 자체 운영형 협업 플랫폼</title>
-    <meta name="description" content="moyro v0.2.0은 Mattermost 호환 경계 위에서 대화를 읽고·결정하고·실행하도록 오늘, 알림함, 내 업무, AI·MCP·승인·감사와 Trusted Native 플러그인 관리를 연결합니다.">
+    <meta name="description" content="moyro v0.2.1은 Mattermost 호환 경계 위에서 내구성 있는 알림함, 메시지 기반 작업·결정, 초안 정책, AI·MCP·승인·감사와 Trusted Native 플러그인 관리를 연결합니다.">
     <meta name="author" content="moyro contributors">
     <meta name="robots" content="index,follow,max-image-preview:large,max-snippet:-1">
     <meta name="theme-color" content="#101a3b">
@@ -22,7 +22,7 @@
     <meta property="og:locale" content="ko_KR">
     <meta property="og:site_name" content="moyro">
     <meta property="og:title" content="moyro | 오프라인망을 위한 자체 운영형 협업 플랫폼">
-    <meta property="og:description" content="오늘, 통합 알림함, 채널 컨텍스트, 내 업무와 실제 AI·MCP·승인을 하나의 오프라인 배포 이미지로 운영하세요.">
+    <meta property="og:description" content="오늘, 내구성 있는 알림함, 메시지 기반 작업·결정, 초안 정책과 실제 AI·MCP·승인을 하나의 오프라인 배포 이미지로 운영하세요.">
     <meta property="og:url" content="https://hkjang.github.io/moyro/">
     <meta property="og:image" content="https://hkjang.github.io/moyro/assets/brand/moyro-social-card.png">
     <meta property="og:image:secure_url" content="https://hkjang.github.io/moyro/assets/brand/moyro-social-card.png">
@@ -32,7 +32,7 @@
     <meta property="og:image:alt" content="moyro 로고와 팀의 대화와 업무 흐름을 조직 안에 문구">
     <meta name="twitter:card" content="summary_large_image">
     <meta name="twitter:title" content="moyro | 자체 운영형 팀 협업 플랫폼">
-    <meta name="twitter:description" content="폐쇄망 운영과 검증 가능한 업그레이드, 내구성 있는 내부 연동을 중심으로 설계한 협업 플랫폼입니다.">
+    <meta name="twitter:description" content="폐쇄망 운영, 내구성 있는 활동 알림함과 메시지 기반 작업·결정을 연결한 협업 플랫폼입니다.">
     <meta name="twitter:image" content="https://hkjang.github.io/moyro/assets/brand/moyro-social-card.png">
     <meta name="twitter:image:alt" content="moyro 로고와 팀의 대화와 업무 흐름을 조직 안에 문구">
     <script type="application/ld+json">
@@ -61,7 +61,7 @@
             "@type": "SoftwareApplication",
             "@id": "https://hkjang.github.io/moyro/#software",
             "name": "moyro",
-            "softwareVersion": "0.2.0",
+            "softwareVersion": "0.2.1",
             "applicationCategory": "BusinessApplication",
             "operatingSystem": "Linux with Docker",
             "description": "Mattermost 호환 경계 위에서 대화를 읽고, 결정하고, 실행하는 Moyro Flow와 AI, MCP, 승인, 감사를 함께 운영하는 폐쇄망 엔터프라이즈 협업 플랫폼입니다.",
@@ -74,10 +74,11 @@
             "featureList": [
               "팀·채널 메시지와 스레드",
               "글로벌 레일과 오늘 업무 요약",
-              "채널 단위 통합 알림함",
-              "저장·예약·리마인더를 모은 내 업무",
+              "PostgreSQL에 보존되는 개인 활동 알림함",
+              "저장·예약·리마인더와 메시지 기반 작업·결정을 모은 내 업무",
+              "관리자 초안 저장·만료·로그아웃 삭제 정책",
               "스레드·AI 요약·파일·정보 컨텍스트 패널",
-              "팀 범위 PostgreSQL 통합 검색",
+              "접근 가능한 팀 범위 메시지 검색",
               "Keycloak OIDC 로그인",
               "권한 기반 OpenAI 호환 AI 스트리밍",
               "개인 API·MCP 키와 회전",
@@ -97,7 +98,7 @@
               {
                 "@type": "Question",
                 "name": "moyro는 인터넷이 없는 환경에서 운영할 수 있나요?",
-                "acceptedAnswer": {"@type": "Answer", "text": "네. v0.2.0 릴리스가 게시된 뒤 moyro-v0.2.0.tar.gz와 SHA-256을 확인해 내부망으로 반입하고, 내부 PostgreSQL과 네 가지 환경변수로 실행합니다."}
+                "acceptedAnswer": {"@type": "Answer", "text": "네. v0.2.1 릴리스가 게시된 뒤 moyro-v0.2.1.tar.gz와 SHA-256을 확인해 내부망으로 반입하고, 내부 PostgreSQL과 네 가지 환경변수로 실행합니다."}
               },
               {
                 "@type": "Question",
@@ -117,7 +118,7 @@
               {
                 "@type": "Question",
                 "name": "SMTP를 설정하지 않아도 이메일 발송 완료로 기록되나요?",
-                "acceptedAnswer": {"@type": "Answer", "text": "아닙니다. v0.2.0의 지원 설정에서 SMTP host가 없으면 이메일 capability가 비활성으로 표시되고 digest worker도 시작하지 않습니다. SMTP 관리 설정과 테스트 메일은 아직 지원하지 않습니다."}
+                "acceptedAnswer": {"@type": "Answer", "text": "아닙니다. v0.2.1의 지원 설정에서 SMTP host가 없으면 이메일 capability가 비활성으로 표시되고 digest worker도 시작하지 않습니다. SMTP 관리 설정과 테스트 메일은 아직 지원하지 않습니다."}
               },
               {
                 "@type": "Question",
@@ -126,13 +127,13 @@
               },
               {
                 "@type": "Question",
-                "name": "moyro v0.2.0을 여러 애플리케이션 replica로 운영할 수 있나요?",
-                "acceptedAnswer": {"@type": "Answer", "text": "아닙니다. v0.2.0의 지원 토폴로지는 외부 PostgreSQL에 연결된 moyro 애플리케이션 컨테이너 한 개입니다. Redis fan-out과 multi-replica 설정 전파는 지원하지 않습니다."}
+                "name": "moyro v0.2.1을 여러 애플리케이션 replica로 운영할 수 있나요?",
+                "acceptedAnswer": {"@type": "Answer", "text": "아닙니다. v0.2.1의 지원 토폴로지는 외부 PostgreSQL에 연결된 moyro 애플리케이션 컨테이너 한 개입니다. Redis fan-out과 multi-replica 설정 전파는 지원하지 않습니다."}
               },
               {
                 "@type": "Question",
                 "name": "moyro native plugin은 sandbox에서 실행되나요?",
-                "acceptedAnswer": {"@type": "Answer", "text": "아닙니다. v0.2.0의 runtime 업로드와 lifecycle 관리는 지원하지만 native plugin은 서명 미검증 Trusted Native 코드로 서비스 UID, 컨테이너 namespace, volume과 network를 공유합니다. 검토하고 승인한 archive만 설치해야 합니다."}
+                "acceptedAnswer": {"@type": "Answer", "text": "아닙니다. v0.2.1의 runtime 업로드와 lifecycle 관리는 지원하지만 native plugin은 서명 미검증 Trusted Native 코드로 서비스 UID, 컨테이너 namespace, volume과 network를 공유합니다. 검토하고 승인한 archive만 설치해야 합니다."}
               }
             ]
           }
@@ -148,7 +149,7 @@
         <nav class="desktop-nav" aria-label="주요 메뉴">
           <a href="#capabilities">기능</a><a href="#deployment">배포</a><a href="#faq">FAQ</a><a href="screens.html">화면</a><a href="guides/user-guide.html">사용자 가이드</a><a href="guides/admin-guide.html">관리자 가이드</a>
         </nav>
-        <a class="button button-small" href="https://github.com/hkjang/moyro/releases">v0.2.0 release</a>
+        <a class="button button-small" href="https://github.com/hkjang/moyro/releases">v0.2.1 release</a>
       </div>
     </header>
 
@@ -158,14 +159,14 @@
           <div class="hero-copy">
             <p class="eyebrow"><span></span> Moyro Flow · self-hosted</p>
             <h1>대화를 읽고,<br><em>결정하고, 실행합니다.</em></h1>
-            <p class="hero-lead">글로벌 레일의 오늘, 통합 알림함, 채널 컨텍스트, 내 업무와 승인 센터가 대화의 다음 행동을 연결합니다. Mattermost 호환 API·플러그인 경계와 실제 SSE AI·MCP·감사는 하나의 권한 구조 안에서 운영됩니다.</p>
+            <p class="hero-lead">글로벌 레일의 오늘, 내구성 있는 알림함, 채널 컨텍스트, 작업·결정을 포함한 내 업무와 승인 센터가 대화의 다음 행동을 연결합니다. Mattermost 호환 API·플러그인 경계와 실제 SSE AI·MCP·감사는 하나의 권한 구조 안에서 운영됩니다.</p>
             <div class="hero-actions"><a class="button" href="guides/offline-deployment.html">오프라인 배포하기</a><a class="text-link" href="screens.html">실제 화면 보기 <span aria-hidden="true">→</span></a></div>
             <ul class="hero-facts" aria-label="핵심 기술"><li><strong>Go</strong><span>서버</span></li><li><strong>React</strong><span>웹 UI</span></li><li><strong>PostgreSQL</strong><span>데이터</span></li></ul>
           </div>
           <figure class="product-frame">
             <div class="window-bar" aria-hidden="true"><span></span><span></span><span></span><b>moyro · today</b></div>
             <picture><img src="assets/screenshots/today.jpg" width="1440" height="1000" alt="읽지 않음과 개인 업무를 요약한 moyro 오늘 화면" fetchpriority="high" decoding="async"></picture>
-            <figcaption class="capture-note">v0.2.0 제품 화면 · 오늘</figcaption>
+            <figcaption class="capture-note">v0.2.1 제품 화면 · 오늘</figcaption>
           </figure>
         </div>
       </section>
@@ -174,30 +175,30 @@
 
       <section class="section" id="capabilities">
         <div class="shell">
-          <div class="section-heading"><p class="eyebrow"><span></span> What v0.2.0 includes</p><h2>대화의 맥락에서<br>업무의 다음 단계로.</h2><p>아래 내용은 v0.2.0의 검증된 구현 범위이며, API가 없는 Task·Decision·RAG나 운영 지표 또는 명시된 네 plugin workflow 밖의 호환을 제공한다고 표현하지 않습니다.</p></div>
+          <div class="section-heading"><p class="eyebrow"><span></span> What v0.2.1 includes</p><h2>대화의 맥락에서<br>업무의 다음 단계로.</h2><p>아래 내용은 v0.2.1의 검증된 구현 범위입니다. 작업·결정은 원본 메시지와 연결되며, RAG·운영 지표 또는 명시된 네 plugin workflow 밖의 호환을 제공한다고 표현하지 않습니다.</p></div>
           <div class="card-grid">
-            <article class="feature-card accent-blue"><span class="feature-index">01</span><h3>Moyro Flow</h3><p>글로벌 레일에서 오늘, 채널 단위 알림함, 대화, 내 업무, 검색과 승인을 독립 URL로 오갑니다.</p><ul><li>실제 unread·mention과 승인·리마인더 요약</li><li>저장·예약·리마인더의 실제 해제·취소</li><li>41개 실제 화면의 route·상태·plugin workflow 계약</li></ul></article>
-            <article class="feature-card accent-violet"><span class="feature-index">02</span><h3>대화 맥락과 실제 AI</h3><p>채널의 스레드·요약·파일·정보를 한 패널에서 보고, 권한과 개인 설정을 적용한 OpenAI 호환 SSE를 직접 사용합니다.</p><ul><li>사용자가 실행하는 최근 메시지 요약</li><li>세션 한정 전역 AI 도우미</li><li>팀 범위 PostgreSQL 메시지 검색</li></ul></article>
-            <article class="feature-card accent-mint"><span class="feature-index">03</span><h3>승인과 운영 경계</h3><p>승인 센터는 서버가 허용한 검토 scope를 따르고, 운영 현황은 조회 가능한 capability와 설정 경고만 표시합니다.</p><ul><li>MCP 보호 작업의 내 요청·검토 대기</li><li>앱·OIDC·AI·MCP·승인·이메일 상태</li><li>검토된 Trusted Native tar.gz 관리와 네 archive의 제한된 기능 E2E</li></ul></article>
+            <article class="feature-card accent-blue"><span class="feature-index">01</span><h3>Moyro Flow</h3><p>글로벌 레일에서 오늘, 내구성 있는 활동 알림함, 대화, 내 업무, 검색과 승인을 독립 URL로 오갑니다.</p><ul><li>멘션·DM·답글·승인·리마인더·작업 활동을 PostgreSQL에 보존</li><li>메시지에서 담당 작업과 근거가 남는 결정을 생성</li><li>저장·예약·리마인더·작업·결정을 내 업무에서 관리</li><li>46개 실제 화면의 route·상태·plugin workflow 계약</li></ul></article>
+            <article class="feature-card accent-violet"><span class="feature-index">02</span><h3>대화 맥락과 실제 AI</h3><p>채널의 스레드·요약·파일·정보를 한 패널에서 보고, 권한과 개인 설정을 적용한 실시간 AI 응답을 사용합니다.</p><ul><li>사용자가 실행하는 최근 메시지 요약</li><li>안전한 Markdown과 재생성·편집을 제공하는 세션 한정 AI 대화</li><li>접근 가능한 팀 범위 메시지 검색</li></ul></article>
+            <article class="feature-card accent-mint"><span class="feature-index">03</span><h3>승인과 운영 경계</h3><p>승인 센터는 비밀값과 원시 실행 payload를 제외한 안전한 미리보기를 제공하고, 운영 현황은 PostgreSQL·Migration·큐·Webhook·저장소의 확인 가능한 근거만 표시합니다.</p><ul><li>MCP 보호 작업의 내 요청·검토 대기와 구조화된 영향 정보</li><li>로컬·세션·비활성 초안 저장 정책과 만료·로그아웃 삭제</li><li>검토된 Trusted Native tar.gz 관리와 네 archive의 제한된 기능 E2E</li></ul></article>
           </div>
         </div>
       </section>
 
       <section class="section section-ink" aria-labelledby="architecture-heading">
         <div class="shell architecture-grid">
-          <div><p class="eyebrow eyebrow-light"><span></span> Predictable boundaries</p><h2 id="architecture-heading">외부 계약은 익숙하게,<br>내부 구조는 작게.</h2><p class="ink-copy">Mattermost 화면의 픽셀 복제가 아니라 REST API v4, WebSocket, 인증, 봇·웹훅과 검증된 범위의 플러그인 ABI 호환을 지향합니다. v0.2.0의 REST·MCP·예약·Incoming Webhook·Slash 게시 경로는 공통 command를 사용하며, 예약 worker는 lease와 결과 post 고유 키로 중복 게시를 방지합니다.</p><a class="text-link light" href="https://github.com/hkjang/moyro/blob/main/docs/architecture.md">아키텍처 원문 <span aria-hidden="true">→</span></a></div>
+          <div><p class="eyebrow eyebrow-light"><span></span> Predictable boundaries</p><h2 id="architecture-heading">외부 계약은 익숙하게,<br>내부 구조는 작게.</h2><p class="ink-copy">Mattermost 화면의 픽셀 복제가 아니라 REST API v4, WebSocket, 인증, 봇·웹훅과 검증된 범위의 플러그인 ABI 호환을 지향합니다. v0.2.1의 REST·MCP·예약·Incoming Webhook·Slash 게시 경로는 공통 command를 사용하며, 예약 worker는 lease와 결과 post 고유 키로 중복 게시를 방지합니다.</p><p><a class="text-link light" href="openapi-v4.yaml">Mattermost 호환 OpenAPI</a> · <a class="text-link light" href="openapi-moyro.yaml">Moyro Native OpenAPI</a></p><a class="text-link light" href="https://github.com/hkjang/moyro/blob/main/docs/architecture.md">아키텍처 원문 <span aria-hidden="true">→</span></a></div>
           <div class="architecture-map" role="img" aria-label="React 웹과 자동화가 REST API, WebSocket, 인증 경계를 통해 Go 서비스와 PostgreSQL에 연결되는 구조"><div class="map-row"><span>React Web</span><span>Bot · Webhook</span><span>MCP Client</span></div><div class="map-connector"><i></i><i></i><i></i></div><div class="map-core">REST /api/v4 <b>·</b> WebSocket <b>·</b> Auth</div><div class="map-connector single"><i></i></div><div class="map-row bottom"><span>Go service</span><span>PostgreSQL</span><span>Local files</span></div></div>
         </div>
       </section>
 
       <section class="section deployment-section" id="deployment">
         <div class="shell deployment-grid">
-          <div class="terminal" aria-label="moyro v0.2.0 오프라인 설치 명령 예시"><div class="terminal-top" aria-hidden="true"><span></span><span></span><span></span><b>offline host</b></div><pre><code><span>$</span> docker load --input moyro-v0.2.0.tar.gz
-Loaded image: moyro:v0.2.0
+          <div class="terminal" aria-label="moyro v0.2.1 오프라인 설치 명령 예시"><div class="terminal-top" aria-hidden="true"><span></span><span></span><span></span><b>offline host</b></div><pre><code><span>$</span> docker load --input moyro-v0.2.1.tar.gz
+Loaded image: moyro:v0.2.1
 
 <span>$</span> docker run --env-file moyro.env \
     --mount source=moyro-data,target=/var/lib/moyro \
-    -p 8065:8065 moyro:v0.2.0
+    -p 8065:8065 moyro:v0.2.1
 
 <span>$</span> curl http://127.0.0.1:8065/healthz
 ok</code></pre></div>
@@ -207,27 +208,27 @@ ok</code></pre></div>
 
       <section class="section screenshot-section" aria-labelledby="screens-heading">
         <div class="shell">
-          <div class="section-heading compact"><p class="eyebrow"><span></span> Release product views</p><h2 id="screens-heading">한 서비스 안에서<br>흐름과 운영을 함께.</h2><p>v0.2.0 화면 카탈로그는 browser release scenario가 캡처한 41개 실제 화면이며, 네 archive의 관리자 상태, Langflow RHS와 EchoSummary 사용자 설정을 포함합니다.</p></div>
+          <div class="section-heading compact"><p class="eyebrow"><span></span> Release product views</p><h2 id="screens-heading">한 서비스 안에서<br>흐름과 운영을 함께.</h2><p>v0.2.1 화면 카탈로그는 browser release scenario가 캡처한 46개 실제 화면이며, 네 archive의 관리자 상태와 전용 설정, Langflow RHS 및 EchoSummary 사용자 설정을 포함합니다.</p></div>
           <div class="screenshot-grid">
             <figure class="shot-card featured"><a href="assets/screenshots/today.jpg"><picture><img src="assets/screenshots/today.jpg" width="1440" height="1000" loading="lazy" decoding="async" alt="moyro 오늘 업무 흐름 화면"></picture></a><figcaption><strong>오늘</strong><span>대화와 개인 업무의 시작점</span></figcaption></figure>
             <figure class="shot-card"><a href="assets/screenshots/workspace-channel.jpg"><picture><img src="assets/screenshots/workspace-channel.jpg" width="1440" height="1000" loading="lazy" decoding="async" alt="채널과 통합 컨텍스트 패널이 열린 moyro 작업 공간"></picture></a><figcaption><strong>채널 작업 공간</strong><span>메시지와 스레드·요약·파일·정보</span></figcaption></figure>
-            <figure class="shot-card"><a href="assets/screenshots/admin-overview.jpg"><picture><img src="assets/screenshots/admin-overview.jpg" width="1440" height="1000" loading="lazy" decoding="async" alt="moyro 서비스 운영 현황 화면"></picture></a><figcaption><strong>운영 현황</strong><span>실제 capability와 설정 경고</span></figcaption></figure>
+            <figure class="shot-card"><a href="assets/screenshots/admin-overview.jpg"><picture><img src="assets/screenshots/admin-overview.jpg" width="1440" height="1000" loading="lazy" decoding="async" alt="moyro 서비스 운영 현황 화면"></picture></a><figcaption><strong>운영 현황</strong><span>DB·queue·Webhook·storage 근거</span></figcaption></figure>
           </div>
-          <p style="margin-top: 30px"><a class="button button-dark" href="screens.html">전체 41개 제품 화면 보기</a></p>
+          <p style="margin-top: 30px"><a class="button button-dark" href="screens.html">전체 46개 제품 화면 보기</a></p>
         </div>
       </section>
 
       <section class="section faq-section" id="faq">
         <div class="shell faq-grid">
-          <div class="section-heading compact"><p class="eyebrow"><span></span> Answers first</p><h2>자주 묻는 질문</h2><p>v0.2.0 릴리스의 배포와 연동 범위를 기준으로 답합니다.</p></div>
+          <div class="section-heading compact"><p class="eyebrow"><span></span> Answers first</p><h2>자주 묻는 질문</h2><p>v0.2.1 릴리스의 배포와 연동 범위를 기준으로 답합니다.</p></div>
           <div class="faq-list">
-            <details open><summary>moyro는 인터넷이 없는 환경에서 운영할 수 있나요?</summary><p>네. v0.2.0 릴리스가 게시된 뒤 <code>moyro-v0.2.0.tar.gz</code>와 SHA-256을 확인해 내부망으로 반입하고, 내부 PostgreSQL과 네 가지 환경변수로 실행합니다.</p></details>
+            <details open><summary>moyro는 인터넷이 없는 환경에서 운영할 수 있나요?</summary><p>네. v0.2.1 릴리스가 게시된 뒤 <code>moyro-v0.2.1.tar.gz</code>와 SHA-256을 확인해 내부망으로 반입하고, 내부 PostgreSQL과 네 가지 환경변수로 실행합니다.</p></details>
             <details><summary>Mattermost와 완전히 같은 제품인가요?</summary><p>아닙니다. 화면을 그대로 복제하지 않고 REST API v4와 WebSocket 등 공개 호환 경계 및 익숙한 채널 흐름을 지향하는 독립 구현입니다.</p></details>
             <details><summary>Keycloak과 사내 AI는 인터넷 없이 연결할 수 있나요?</summary><p>네. 먼저 canonical Site URL을 저장한 뒤 내부 Keycloak issuer와 OpenAI 호환 AI endpoint를 설정합니다. 컨테이너에서 해당 내부 endpoint에 접근할 수 있어야 하며, 두 기능은 활성화하기 전까지 사용되지 않습니다.</p></details>
             <details><summary>검토와 승인 절차는 항상 표시되나요?</summary><p>승인 센터는 과거 요청 이력을 위해 유지됩니다. 새 MCP 보호 요청은 관리자가 승인 정책을 활성화하고 해당 작업이 정책에 일치할 때만 생성됩니다.</p></details>
-            <details><summary>SMTP를 설정하지 않아도 이메일 발송 완료로 기록되나요?</summary><p>아닙니다. v0.2.0의 지원 설정에서 SMTP host가 없으면 이메일 capability가 비활성으로 표시되고 digest worker도 시작하지 않습니다. SMTP 관리 설정과 테스트 메일은 아직 지원하지 않습니다.</p></details>
+            <details><summary>SMTP를 설정하지 않아도 이메일 발송 완료로 기록되나요?</summary><p>아닙니다. v0.2.1의 지원 설정에서 SMTP host가 없으면 이메일 capability가 비활성으로 표시되고 digest worker도 시작하지 않습니다. SMTP 관리 설정과 테스트 메일은 아직 지원하지 않습니다.</p></details>
             <details><summary>Outgoing webhook은 프로세스 재시작 뒤에도 재시도되나요?</summary><p>네. callback 작업과 시도 이력은 PostgreSQL에 저장되며 lease, backoff와 dead 상태를 사용합니다. 다만 post 저장과 queue 등록은 아직 하나의 DB transaction이 아니므로 완전한 domain-event outbox 원자성은 다음 단계입니다.</p></details>
-            <details><summary>moyro v0.2.0을 여러 애플리케이션 replica로 운영할 수 있나요?</summary><p>아닙니다. v0.2.0의 지원 토폴로지는 외부 PostgreSQL에 연결된 moyro 애플리케이션 컨테이너 한 개입니다. Redis fan-out과 multi-replica 설정 전파는 지원하지 않습니다.</p></details>
+            <details><summary>moyro v0.2.1을 여러 애플리케이션 replica로 운영할 수 있나요?</summary><p>아닙니다. v0.2.1의 지원 토폴로지는 외부 PostgreSQL에 연결된 moyro 애플리케이션 컨테이너 한 개입니다. Redis fan-out과 multi-replica 설정 전파는 지원하지 않습니다.</p></details>
             <details><summary>moyro native plugin은 sandbox에서 실행되나요?</summary><p>아닙니다. runtime 업로드와 lifecycle 관리는 지원하지만 native plugin은 서명 미검증 Trusted Native 코드로 서비스 UID, 컨테이너 namespace, volume과 network를 공유합니다. 검토하고 승인한 archive만 설치해야 합니다.</p></details>
           </div>
         </div>
@@ -237,8 +238,8 @@ ok</code></pre></div>
     </main>
 
     <footer class="site-footer">
-      <div class="shell footer-grid"><div><a class="brand footer-brand" href="./" aria-label="moyro 홈"><img class="brand-logo" src="assets/brand/moyro-mark.svg" width="36" height="36" alt=""><span>moyro</span></a><p>Self-hosted collaboration, kept close.</p></div><nav aria-label="가이드"><strong>Guides</strong><a href="guides/user-guide.html">사용자 가이드</a><a href="guides/admin-guide.html">관리자 가이드</a><a href="guides/offline-deployment.html">오프라인 배포</a></nav><nav aria-label="프로젝트"><strong>Project</strong><a href="screens.html">제품 화면</a><a href="https://github.com/hkjang/moyro">GitHub</a><a href="https://github.com/hkjang/moyro/releases">Releases</a></nav></div>
-      <div class="shell footer-bottom"><span>© 2026 moyro contributors</span><span>v0.2.0 release · Go · React · PostgreSQL</span></div>
+      <div class="shell footer-grid"><div><a class="brand footer-brand" href="./" aria-label="moyro 홈"><img class="brand-logo" src="assets/brand/moyro-mark.svg" width="36" height="36" alt=""><span>moyro</span></a><p>Self-hosted collaboration, kept close.</p></div><nav aria-label="가이드"><strong>Guides</strong><a href="guides/user-guide.html">사용자 가이드</a><a href="guides/admin-guide.html">관리자 가이드</a><a href="guides/offline-deployment.html">오프라인 배포</a></nav><nav aria-label="API 문서"><strong>API</strong><a href="openapi-v4.yaml">Mattermost 호환</a><a href="openapi-moyro.yaml">Moyro Native</a></nav><nav aria-label="프로젝트"><strong>Project</strong><a href="screens.html">제품 화면</a><a href="https://github.com/hkjang/moyro">GitHub</a><a href="https://github.com/hkjang/moyro/releases">Releases</a></nav></div>
+      <div class="shell footer-bottom"><span>© 2026 moyro contributors</span><span>v0.2.1 release · Go · React · PostgreSQL</span></div>
     </footer>
   </body>
 </html>

@@ -59,10 +59,16 @@ type siteSettingsView struct {
 	PublicBaseURL        string   `json:"public_base_url"`
 	AllowedOutgoingHosts []string `json:"allowed_outgoing_hosts"`
 	LocalSignupEnabled   bool     `json:"local_signup_enabled"`
+	DraftStorageMode     string   `json:"draft_storage_mode"`
+	DraftRetentionDays   int      `json:"draft_retention_days"`
+	DraftClearOnLogout   bool     `json:"draft_clear_on_logout"`
 }
 
 func defaultSiteSettings() siteSettingsView {
-	return siteSettingsView{SiteName: "moyro", AllowedOutgoingHosts: []string{}}
+	return siteSettingsView{
+		SiteName: "moyro", AllowedOutgoingHosts: []string{},
+		DraftStorageMode: "local", DraftRetentionDays: 7, DraftClearOnLogout: true,
+	}
 }
 
 func (n *nativeServices) currentSiteSettings() siteSettingsView {
@@ -163,13 +169,27 @@ func (h *handlers) nativeSystemInfo(w http.ResponseWriter, r *http.Request) {
 		},
 	}
 	if h.native != nil {
-		view["local_signup_enabled"] = h.native.currentSiteSettings().LocalSignupEnabled
+		site := h.native.currentSiteSettings()
+		view["local_signup_enabled"] = site.LocalSignupEnabled
+		view["capabilities"].(map[string]any)["drafts"] = map[string]any{
+			"storage_mode":    site.DraftStorageMode,
+			"retention_days":  site.DraftRetentionDays,
+			"clear_on_logout": site.DraftClearOnLogout,
+		}
 		if public, ok := h.native.oidc.PublicConfig(); ok {
 			view["oidc_enabled"] = true
 			view["oidc_provider_name"] = public.DisplayName
 		}
 		if enabled, err := h.native.approval.AnyEnabled(r.Context()); err == nil {
 			view["approval_enabled"] = enabled
+		}
+	}
+	if h.native == nil {
+		site := defaultSiteSettings()
+		view["capabilities"].(map[string]any)["drafts"] = map[string]any{
+			"storage_mode":    site.DraftStorageMode,
+			"retention_days":  site.DraftRetentionDays,
+			"clear_on_logout": site.DraftClearOnLogout,
 		}
 	}
 	writeJSON(w, http.StatusOK, view)
@@ -316,6 +336,19 @@ func validateSiteSettings(value *siteSettingsView) error {
 		return errors.New("site name must contain between 1 and 80 visible characters")
 	}
 	value.PublicBaseURL = strings.TrimSpace(value.PublicBaseURL)
+	value.DraftStorageMode = strings.ToLower(strings.TrimSpace(value.DraftStorageMode))
+	if value.DraftStorageMode == "" {
+		value.DraftStorageMode = "local"
+	}
+	if !slices.Contains([]string{"local", "session", "disabled"}, value.DraftStorageMode) {
+		return errors.New("draft storage mode must be local, session, or disabled")
+	}
+	if value.DraftRetentionDays == 0 {
+		value.DraftRetentionDays = 7
+	}
+	if value.DraftRetentionDays < 1 || value.DraftRetentionDays > 30 {
+		return errors.New("draft retention days must be between 1 and 30")
+	}
 	if value.PublicBaseURL != "" {
 		parsed, err := url.Parse(value.PublicBaseURL)
 		if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" || parsed.Hostname() == "" || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" || (parsed.Path != "" && parsed.Path != "/") {

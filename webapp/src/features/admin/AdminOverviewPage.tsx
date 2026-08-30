@@ -3,14 +3,18 @@ import CloudDoneRounded from "@mui/icons-material/CloudDoneRounded";
 import EmailRounded from "@mui/icons-material/EmailRounded";
 import ExtensionRounded from "@mui/icons-material/ExtensionRounded";
 import FactCheckRounded from "@mui/icons-material/FactCheckRounded";
+import FolderRounded from "@mui/icons-material/FolderRounded";
 import HubRounded from "@mui/icons-material/HubRounded";
 import KeyRounded from "@mui/icons-material/KeyRounded";
 import LanguageRounded from "@mui/icons-material/LanguageRounded";
+import PrecisionManufacturingRounded from "@mui/icons-material/PrecisionManufacturingRounded";
 import PsychologyRounded from "@mui/icons-material/PsychologyRounded";
 import RefreshRounded from "@mui/icons-material/RefreshRounded";
 import RuleRounded from "@mui/icons-material/RuleRounded";
 import SecurityRounded from "@mui/icons-material/SecurityRounded";
+import StorageRounded from "@mui/icons-material/StorageRounded";
 import WarningAmberRounded from "@mui/icons-material/WarningAmberRounded";
+import WebhookRounded from "@mui/icons-material/WebhookRounded";
 import {
   Alert,
   Box,
@@ -37,6 +41,11 @@ import {
   type MCPSettings,
   type OIDCProviderSettings,
 } from "@/api/client";
+import {
+  adminOperationsApi,
+  type AdminOperationsSnapshot,
+  type OperationalState,
+} from "@/api/admin-operations";
 import { SettingsPage } from "@/components/settings/SettingsPrimitives";
 import { useAdminAccess } from "@/features/admin/AdminAccessContext";
 import { displayVersion, useSystemInfo } from "@/features/system/SystemInfoContext";
@@ -50,6 +59,7 @@ type DashboardSnapshot = {
   mcp: MCPSettings | null;
   policies: ApprovalPolicy[] | null;
   pendingApprovals: number | null;
+  operations: OperationsQueryState;
 };
 
 type ProviderQueryState<T> =
@@ -58,7 +68,13 @@ type ProviderQueryState<T> =
   | { state: "loaded"; providers: T[] }
   | { state: "error"; message: string };
 
-type ProviderOperationalState = "loading" | "not_authorized" | "ready" | "error" | "unknown";
+export type OperationsQueryState =
+  | { state: "loading" }
+  | { state: "not_authorized" }
+  | { state: "loaded"; value: AdminOperationsSnapshot }
+  | { state: "error"; message: string };
+
+type ProviderOperationalState = "loading" | "not_authorized" | "ready" | "warning" | "error" | "unknown";
 
 type ProviderCardSummary = {
   state: ProviderOperationalState;
@@ -75,6 +91,7 @@ const EMPTY_SNAPSHOT: DashboardSnapshot = {
   mcp: null,
   policies: null,
   pendingApprovals: null,
+  operations: { state: "loading" },
 };
 
 type StatusTone = "success" | "warning" | "error" | "default" | "info";
@@ -93,6 +110,24 @@ function formatTestedAt(value: number): string {
     dateStyle: "short",
     timeStyle: "short",
   }).format(value);
+}
+
+function formatBytes(value: number): string {
+  if (!Number.isFinite(value) || value <= 0) return "0 B";
+  const units = ["B", "KiB", "MiB", "GiB", "TiB"];
+  const index = Math.min(Math.floor(Math.log(value) / Math.log(1024)), units.length - 1);
+  return `${(value / (1024 ** index)).toFixed(index === 0 ? 0 : 1)} ${units[index]}`;
+}
+
+function statePresentation(state: OperationalState): { value: string; tone: StatusTone } {
+  switch (state) {
+    case "ready":
+      return { value: "확인됨", tone: "success" };
+    case "warning":
+      return { value: "확인 필요", tone: "warning" };
+    default:
+      return { value: "미확인", tone: "default" };
+  }
 }
 
 function providerSummary<T extends { enabled: boolean; last_tested_at?: number }>(
@@ -218,6 +253,73 @@ function StatusCard({ title, value, detail, icon, tone = "default", state, lastT
   );
 }
 
+export function OperationsStatusCards({ query }: { query: OperationsQueryState }) {
+  const operations = query.state === "loaded" ? query.value : null;
+  const unavailable = query.state === "not_authorized"
+    ? "manage_system 권한이 있어야 상세 운영 지표를 볼 수 있습니다."
+    : query.state === "error"
+      ? query.message
+      : "운영 지표를 확인하고 있습니다.";
+  const fallback = query.state === "not_authorized"
+    ? { value: "권한 범위 외", tone: "default" as StatusTone, state: "not_authorized" as ProviderOperationalState }
+    : query.state === "error"
+      ? { value: "조회 실패", tone: "error" as StatusTone, state: "error" as ProviderOperationalState }
+      : { value: "확인 중", tone: "default" as StatusTone, state: "loading" as ProviderOperationalState };
+
+  return (
+    <>
+      <Grid size={{ xs: 12, sm: 6, lg: 4 }}>
+        <StatusCard
+          title="PostgreSQL"
+          value={operations ? statePresentation(operations.database.state).value : fallback.value}
+          detail={operations
+            ? `Migration ${operations.database.migration.applied_version}/${operations.database.migration.target_version} · Pool ${operations.database.pool.acquired}/${operations.database.pool.max} · ${operations.database.message}`
+            : unavailable}
+          icon={<StorageRounded />}
+          tone={operations ? statePresentation(operations.database.state).tone : fallback.tone}
+          state={operations?.database.state ?? fallback.state}
+        />
+      </Grid>
+      <Grid size={{ xs: 12, sm: 6, lg: 4 }}>
+        <StatusCard
+          title="Worker"
+          value={operations ? statePresentation(operations.workers.state).value : fallback.value}
+          detail={operations
+            ? `예약 대기 ${operations.workers.scheduled.pending} · 재시도 ${operations.workers.scheduled.retry} · Dead ${operations.workers.scheduled.dead} · 리마인더 대기 ${operations.workers.reminders.pending} · 승인 실패 ${operations.workers.approvals.failed} · ${operations.workers.message}`
+            : unavailable}
+          icon={<PrecisionManufacturingRounded />}
+          tone={operations ? statePresentation(operations.workers.state).tone : fallback.tone}
+          state={operations?.workers.state ?? fallback.state}
+        />
+      </Grid>
+      <Grid size={{ xs: 12, sm: 6, lg: 4 }}>
+        <StatusCard
+          title="Webhook 전달"
+          value={operations ? statePresentation(operations.webhooks.state).value : fallback.value}
+          detail={operations
+            ? `대기 ${operations.webhooks.pending} · 처리 ${operations.webhooks.processing} · 재시도 ${operations.webhooks.retry} · DLQ ${operations.webhooks.dead} · ${operations.webhooks.message}`
+            : unavailable}
+          icon={<WebhookRounded />}
+          tone={operations ? statePresentation(operations.webhooks.state).tone : fallback.tone}
+          state={operations?.webhooks.state ?? fallback.state}
+        />
+      </Grid>
+      <Grid size={{ xs: 12, sm: 6, lg: 4 }}>
+        <StatusCard
+          title="파일 저장소"
+          value={operations ? statePresentation(operations.storage.state).value : fallback.value}
+          detail={operations
+            ? `${operations.storage.active_backend.toUpperCase()} · 파일 ${operations.storage.file_count}개 · ${formatBytes(operations.storage.bytes)}${operations.storage.fallback ? " · 대체 저장소 사용 중" : ""} · ${operations.storage.message}`
+            : unavailable}
+          icon={<FolderRounded />}
+          tone={operations ? statePresentation(operations.storage.state).tone : fallback.tone}
+          state={operations?.storage.state ?? fallback.state}
+        />
+      </Grid>
+    </>
+  );
+}
+
 const destinations = [
   { to: "/admin/site", title: "사이트와 공개 URL", description: "서비스 이름, 공개 URL과 outbound host 정책", icon: <LanguageRounded />, anyOf: ["manage_settings"] },
   { to: "/admin/auth/keycloak", title: "인증과 Keycloak", description: "OIDC 연결, 가입 정책과 내부 CA", icon: <SecurityRounded />, anyOf: ["manage_oidc"] },
@@ -243,10 +345,12 @@ export function AdminOverviewPage() {
     setLoading(true);
     const canManageAI = access.can("manage_ai");
     const canManageOIDC = access.can("manage_oidc");
+    const canManageSystem = access.can("manage_system");
     setSnapshot((current) => ({
       ...current,
       aiProviders: canManageAI ? { state: "loading" } : { state: "not_authorized" },
       oidcProviders: canManageOIDC ? { state: "loading" } : { state: "not_authorized" },
+      operations: canManageSystem ? { state: "loading" } : { state: "not_authorized" },
     }));
     const pingPromise = api.ping();
     const aiPromise = canManageAI
@@ -265,14 +369,18 @@ export function AdminOverviewPage() {
       .then((items) => items.filter((item) => (
         item.status === "pending" && (item.expires_at <= 0 || item.expires_at > Date.now())
       )).length);
+    const operationsPromise = canManageSystem
+      ? adminOperationsApi.getSnapshot(token)
+      : Promise.resolve<AdminOperationsSnapshot | null>(null);
 
-    const [ping, ai, oidc, mcp, policies, pending] = await Promise.allSettled([
+    const [ping, ai, oidc, mcp, policies, pending, operations] = await Promise.allSettled([
       pingPromise,
       aiPromise,
       oidcPromise,
       mcpPromise,
       policiesPromise,
       pendingPromise,
+      operationsPromise,
     ]);
     setSnapshot({
       ping: ping.status === "fulfilled" && ping.value.status === "OK" ? "ready" : "error",
@@ -289,6 +397,14 @@ export function AdminOverviewPage() {
       mcp: mcp.status === "fulfilled" ? mcp.value : null,
       policies: policies.status === "fulfilled" ? policies.value : null,
       pendingApprovals: pending.status === "fulfilled" ? pending.value : null,
+      operations: !canManageSystem
+        ? { state: "not_authorized" }
+        : operations.status === "fulfilled" && operations.value !== null
+          ? { state: "loaded", value: operations.value }
+          : { state: "error", message: errorMessage(
+            operations.status === "rejected" ? operations.reason : undefined,
+            "운영 진단 상태를 불러오지 못했습니다.",
+          ) },
     });
     const failedLabels = [
       ping.status === "rejected" ? "애플리케이션" : "",
@@ -297,6 +413,7 @@ export function AdminOverviewPage() {
       access.can("manage_settings") && mcp.status === "rejected" ? "MCP" : "",
       access.can("manage_approval_policies") && policies.status === "rejected" ? "승인 정책" : "",
       pending.status === "rejected" ? "승인 대기 목록" : "",
+      canManageSystem && operations.status === "rejected" ? "운영 진단" : "",
     ].filter(Boolean);
     setError(failedLabels.length > 0 ? `다음 상태를 불러오지 못했습니다: ${failedLabels.join(", ")}` : "");
     setCheckedAt(Date.now());
@@ -320,6 +437,7 @@ export function AdminOverviewPage() {
       : "manage_oidc 권한이 없어 공급자 설정과 연결 상태를 조회하지 않았습니다.",
   );
   const activePolicies = snapshot.policies?.filter((policy) => policy.enabled).length ?? null;
+  const operations = snapshot.operations.state === "loaded" ? snapshot.operations.value : null;
   const visibleDestinations = destinations.filter((item) => access.canAny(item.anyOf));
   const notices = useMemo(() => {
     const result: string[] = [];
@@ -338,8 +456,12 @@ export function AdminOverviewPage() {
     if (snapshot.mcp && !snapshot.mcp.enabled) result.push("MCP transport가 비활성화되어 있습니다.");
     if (activePolicies === 0) result.push("활성 승인 정책이 없습니다. 과거 승인 이력은 계속 조회할 수 있습니다.");
     if (!systemInfo.capabilities?.email_digest?.enabled) result.push("이메일 Digest worker가 비활성 상태입니다.");
+    if (operations?.database.state === "warning") result.push(operations.database.message);
+    if (operations?.workers.state === "warning") result.push(operations.workers.message);
+    if (operations?.webhooks.state === "warning") result.push(operations.webhooks.message);
+    if (operations?.storage.state === "warning") result.push(operations.storage.message);
     return result;
-  }, [activePolicies, aiSummary.state, oidcSummary.state, snapshot.aiProviders, snapshot.mcp, snapshot.oidcProviders, snapshot.ping, systemInfo.capabilities?.email_digest?.enabled]);
+  }, [activePolicies, aiSummary.state, oidcSummary.state, operations, snapshot.aiProviders, snapshot.mcp, snapshot.oidcProviders, snapshot.ping, systemInfo.capabilities?.email_digest?.enabled]);
 
   return (
     <SettingsPage
@@ -360,6 +482,7 @@ export function AdminOverviewPage() {
             tone={snapshot.ping === "ready" ? "success" : snapshot.ping === "error" ? "error" : "default"}
           />
         </Grid>
+        <OperationsStatusCards query={snapshot.operations} />
         <Grid size={{ xs: 12, sm: 6, lg: 4 }}>
           <StatusCard
             title="인증"

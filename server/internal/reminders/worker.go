@@ -3,8 +3,11 @@ package reminders
 import (
 	"context"
 	"log/slog"
+	"strings"
 	"time"
+	"unicode/utf8"
 
+	"github.com/hkjang/moyro/server/internal/activityevents"
 	"github.com/hkjang/moyro/server/internal/posts"
 	"github.com/hkjang/moyro/server/internal/ws"
 )
@@ -23,8 +26,15 @@ type Worker struct {
 	posts      PostResolver
 	hub        *ws.Hub
 	logger     *slog.Logger
+	activity   activityevents.Emitter
 	tickEvery  time.Duration
 	batchLimit int
+}
+
+// SetActivityEmitter enables the durable integrated inbox without changing
+// the long-standing worker constructor used by tests and embedders.
+func (w *Worker) SetActivityEmitter(emitter activityevents.Emitter) {
+	w.activity = emitter
 }
 
 func NewWorker(svc *Service, resolver PostResolver, hub *ws.Hub, logger *slog.Logger) *Worker {
@@ -87,12 +97,36 @@ func (w *Worker) fire(ctx context.Context, r *Reminder) {
 	} else {
 		channelID = p.ChannelID
 		excerpt = p.Message
-		if len(excerpt) > 140 {
-			excerpt = excerpt[:140] + "…"
+		excerpt = reminderExcerpt(excerpt, 140)
+	}
+
+	if w.activity != nil {
+		if _, err := w.activity.Emit(fireCtx, activityevents.EmitInput{
+			UserID: r.UserID, Type: activityevents.TypeReminderFired, DedupeKey: r.ID,
+			ChannelID: channelID, PostID: r.PostID,
+			ResourceType: "reminder", ResourceID: r.ID,
+			Title: "메시지 리마인더가 도착했습니다", Summary: excerpt,
+		}); err != nil {
+			w.logger.Warn("reminder activity event", "id", r.ID, "err", err)
 		}
 	}
 
-	w.hub.Broadcast(ws.Event{
+	w.hub.Broadcast(reminderFiredEvent(r, channelID, excerpt))
+
+	if err := w.svc.MarkDelivered(fireCtx, r.ID, time.Now().UnixMilli()); err != nil {
+		w.logger.Warn("reminder mark delivered", "id", r.ID, "err", err)
+	}
+}
+
+func reminderFiredEvent(r *Reminder, channelID, excerpt string) ws.Event {
+	broadcast := ws.Broadcast{UserID: r.UserID}
+	if channelID != "" {
+		// A resolved post makes this channel-scoped data. Hub fanout intersects
+		// the owner target with current membership and fails closed on lookup
+		// errors, so a revoked member cannot receive the reminder payload.
+		broadcast.ChannelID = channelID
+	}
+	return ws.Event{
 		Event: "reminder_fired",
 		Data: map[string]any{
 			"reminder_id": r.ID,
@@ -101,10 +135,15 @@ func (w *Worker) fire(ctx context.Context, r *Reminder) {
 			"excerpt":     excerpt,
 			"remind_at":   r.RemindAt,
 		},
-		Broadcast: ws.Broadcast{UserID: r.UserID},
-	})
-
-	if err := w.svc.MarkDelivered(fireCtx, r.ID, time.Now().UnixMilli()); err != nil {
-		w.logger.Warn("reminder mark delivered", "id", r.ID, "err", err)
+		Broadcast: broadcast,
 	}
+}
+
+func reminderExcerpt(value string, limit int) string {
+	value = strings.Join(strings.Fields(strings.TrimSpace(value)), " ")
+	if limit <= 0 || utf8.RuneCountInString(value) <= limit {
+		return value
+	}
+	runes := []rune(value)
+	return strings.TrimSpace(string(runes[:limit])) + "…"
 }

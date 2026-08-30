@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/hkjang/moyro/server/internal/activityevents"
 	"github.com/hkjang/moyro/server/internal/store"
 	"github.com/jackc/pgx/v5"
 )
@@ -88,6 +89,13 @@ type ReviewAuthorizer func(context.Context, string, *Policy, *Request) (bool, er
 type Service struct {
 	db        *store.DB
 	canReview ReviewAuthorizer
+	activity  activityevents.Emitter
+}
+
+// SetActivityEmitter enables durable, user-scoped approval inbox events while
+// preserving the established constructor used by tests and other adapters.
+func (s *Service) SetActivityEmitter(emitter activityevents.Emitter) {
+	s.activity = emitter
 }
 
 func New(db *store.DB, canReview ReviewAuthorizer) *Service {
@@ -96,6 +104,37 @@ func New(db *store.DB, canReview ReviewAuthorizer) *Service {
 		service.canReview = service.defaultCanReview
 	}
 	return service
+}
+
+// CanReviewRequest exposes the same policy/RBAC decision used by Decide and
+// reviewer request lists. Activity inbox reads use it to make a previously
+// emitted approval_review row disappear as soon as reviewer authority is
+// revoked. Missing or malformed references fail closed without disclosing
+// whether the request once existed.
+func (s *Service) CanReviewRequest(ctx context.Context, reviewerID, requestID string) (bool, error) {
+	reviewerID = strings.TrimSpace(reviewerID)
+	requestID = strings.TrimSpace(requestID)
+	if reviewerID == "" || requestID == "" {
+		return false, nil
+	}
+	request, err := s.Get(ctx, requestID)
+	if errors.Is(err, ErrNotFound) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	policy, err := s.policyByID(ctx, request.PolicyID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	if policy.ForbidSelfApproval && request.RequesterID == reviewerID {
+		return false, nil
+	}
+	return s.canReview(ctx, reviewerID, policy, request)
 }
 
 func (s *Service) AnyEnabled(ctx context.Context) (bool, error) {
@@ -170,6 +209,7 @@ func (s *Service) Submit(ctx context.Context, input Submission) (*Result, error)
 		}
 		return nil, err
 	}
+	s.emitSubmitted(ctx, policy, request)
 	return &Result{ApprovalRequired: true, Request: request}, nil
 }
 
@@ -201,6 +241,7 @@ func (s *Service) Decide(ctx context.Context, requestID, reviewerID, decision, r
 			return nil, err
 		}
 		request.Status, request.UpdateAt, request.DecidedAt = "expired", now, now
+		s.emitDecided(ctx, request, reviewerID)
 		return request, ErrAlreadyDecided
 	}
 	if policy.ForbidSelfApproval && request.RequesterID == reviewerID {
@@ -271,7 +312,129 @@ func (s *Service) Decide(ctx context.Context, requestID, reviewerID, decision, r
 		return nil, err
 	}
 	request.Status, request.UpdateAt, request.DecidedAt = status, now, decidedAt
+	if status != "pending" {
+		s.emitDecided(ctx, request, reviewerID)
+	}
 	return request, nil
+}
+
+func (s *Service) emitSubmitted(ctx context.Context, policy *Policy, request *Request) {
+	if s.activity == nil || policy == nil || request == nil {
+		return
+	}
+	preview := ToRequestView(request, "").Preview
+	summary := preview.Title
+	if len(preview.Changes) > 0 {
+		summary = preview.Changes[0].After
+	}
+	_, _ = s.activity.Emit(ctx, activityevents.EmitInput{
+		UserID: request.RequesterID, Type: activityevents.TypeApprovalRequested,
+		DedupeKey: request.ID, ActorID: request.RequesterID, TeamID: request.TeamID,
+		ChannelID:    approvalActivityChannelID(request),
+		ResourceType: "approval", ResourceID: request.ID,
+		Title: "승인 요청이 접수되었습니다", Summary: summary,
+	})
+
+	reviewers, err := s.reviewCandidates(ctx, policy, request)
+	if err != nil {
+		return
+	}
+	for _, reviewerID := range reviewers {
+		if reviewerID == request.RequesterID {
+			continue
+		}
+		_, _ = s.activity.Emit(ctx, activityevents.EmitInput{
+			UserID: reviewerID, Type: activityevents.TypeApprovalRequested,
+			DedupeKey: request.ID, ActorID: request.RequesterID, TeamID: request.TeamID,
+			ChannelID:    approvalActivityChannelID(request),
+			ResourceType: "approval_review", ResourceID: request.ID,
+			Title: "검토할 승인 요청: " + preview.Title, Summary: summary,
+		})
+	}
+}
+
+func (s *Service) emitDecided(ctx context.Context, request *Request, reviewerID string) {
+	if s.activity == nil || request == nil {
+		return
+	}
+	statusLabel := map[string]string{
+		"approved": "승인", "rejected": "반려", "expired": "만료",
+	}[request.Status]
+	if statusLabel == "" {
+		statusLabel = "처리"
+	}
+	preview := ToRequestView(request, "").Preview
+	_, _ = s.activity.Emit(ctx, activityevents.EmitInput{
+		UserID: request.RequesterID, Type: activityevents.TypeDecided,
+		DedupeKey: request.ID, ActorID: reviewerID, TeamID: request.TeamID,
+		ChannelID:    approvalActivityChannelID(request),
+		ResourceType: "approval", ResourceID: request.ID,
+		Title: "승인 요청이 " + statusLabel + "되었습니다", Summary: preview.Title,
+	})
+}
+
+func approvalActivityChannelID(request *Request) string {
+	if request == nil || strings.TrimSpace(request.ResourceType) != "channel" {
+		return ""
+	}
+	return strings.TrimSpace(request.ResourceID)
+}
+
+// reviewCandidates narrows the scan to users with a role that grants either
+// the policy permission or manage_system, then applies the canonical
+// canReview function (including configured reviewer-role constraints).
+func (s *Service) reviewCandidates(ctx context.Context, policy *Policy, request *Request) ([]string, error) {
+	rows, err := s.db.Pool.Query(ctx, `
+		WITH permitted_roles AS (
+			SELECT DISTINCT r.name
+			FROM roles r
+			JOIN role_permissions rp ON rp.role_id=r.id
+			WHERE rp.permission_name=$1 OR rp.permission_name='manage_system'
+		), candidates AS (
+			SELECT u.id
+			FROM users u, permitted_roles pr
+			WHERE u.delete_at=0
+			  AND pr.name = ANY(regexp_split_to_array(BTRIM(COALESCE(u.roles,'')), E'\\s+'))
+			UNION
+			SELECT tm.user_id
+			FROM team_members tm, permitted_roles pr
+			WHERE $2<>'' AND tm.team_id=$2
+			  AND pr.name = ANY(regexp_split_to_array(BTRIM(COALESCE(tm.roles,'')), E'\\s+'))
+		)
+		SELECT DISTINCT id FROM candidates ORDER BY id
+	`, policy.ReviewerPermission, request.TeamID)
+	if err != nil {
+		return nil, err
+	}
+	candidates := []string{}
+	for rows.Next() {
+		var userID string
+		if err := rows.Scan(&userID); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		candidates = append(candidates, userID)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return nil, err
+	}
+	rows.Close()
+
+	result := make([]string, 0, len(candidates))
+	for _, userID := range candidates {
+		if policy.ForbidSelfApproval && userID == request.RequesterID {
+			continue
+		}
+		allowed, err := s.canReview(ctx, userID, policy, request)
+		if err != nil {
+			return nil, err
+		}
+		if allowed {
+			result = append(result, userID)
+		}
+	}
+	return result, nil
 }
 
 func (s *Service) List(ctx context.Context, actorID string, reviewer bool, status string, limit int) ([]Request, error) {

@@ -6,7 +6,7 @@ export type WorkspaceContextTab = "thread" | "summary" | "files" | "info";
 const CONTEXT_TABS: readonly { id: WorkspaceContextTab; label: string }[] = [
   { id: "thread", label: "스레드" },
   { id: "summary", label: "요약" },
-  { id: "files", label: "파일" },
+  { id: "files", label: "최근 파일" },
   { id: "info", label: "정보" },
 ];
 

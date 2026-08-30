@@ -29,7 +29,7 @@ check_max_bytes() {
 # split so CI prevents the large-file concentration from returning.
 check_max_bytes "server/internal/httpapi/handlers.go" 180000
 check_max_bytes "server/internal/httpapi/compat_wave_handlers.go" 190000
-check_max_bytes "webapp/src/components/ChatView.tsx" 150000
+check_max_bytes "webapp/src/components/ChatView.tsx" 80000
 check_max_bytes "webapp/src/index.css" 98000
 check_max_bytes "webapp/src/components/IntegrationsPanel.tsx" 84000
 check_max_bytes "webapp/src/api/client.ts" 64000

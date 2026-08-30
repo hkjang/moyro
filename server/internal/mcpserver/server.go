@@ -202,9 +202,9 @@ func (p approvedPostPayload) input() createPostInput {
 }
 
 type createPostOutput struct {
-	ApprovalRequired bool              `json:"approval_required"`
-	ApprovalRequest  *approval.Request `json:"approval_request,omitempty"`
-	Post             *posts.Post       `json:"post,omitempty"`
+	ApprovalRequired bool                  `json:"approval_required"`
+	ApprovalRequest  *approval.RequestView `json:"approval_request,omitempty"`
+	Post             *posts.Post           `json:"post,omitempty"`
 }
 
 type listApprovalsInput struct {
@@ -213,7 +213,7 @@ type listApprovalsInput struct {
 }
 
 type listApprovalsOutput struct {
-	Requests []approval.Request `json:"requests"`
+	Requests []approval.RequestView `json:"requests"`
 }
 
 type decideApprovalInput struct {
@@ -222,7 +222,7 @@ type decideApprovalInput struct {
 }
 
 type decideApprovalOutput struct {
-	Request *approval.Request `json:"request"`
+	Request *approval.RequestView `json:"request"`
 }
 
 func (s *Service) registerTools() {
@@ -448,7 +448,11 @@ func (s *Service) createPostCommon(ctx context.Context, tool string, input creat
 		}
 		if result.ApprovalRequired {
 			s.audit(ctx, uid, tool, "approval_request", result.Request.ID, nil)
-			return nil, createPostOutput{ApprovalRequired: true, ApprovalRequest: result.Request}, nil
+			targetName := strings.TrimSpace(channel.DisplayName)
+			if targetName == "" {
+				targetName = strings.TrimSpace(channel.Name)
+			}
+			return nil, createPostOutput{ApprovalRequired: true, ApprovalRequest: approval.ToRequestView(result.Request, targetName)}, nil
 		}
 	}
 	post, err := s.executePostCommand(ctx, uid, input, "")
@@ -473,7 +477,7 @@ func (s *Service) listPendingApprovals(ctx context.Context, _ *mcp.CallToolReque
 		list, err = s.filterAuthorizedApprovals(ctx, list)
 	}
 	s.audit(ctx, uid, "list_pending_approvals", "", "", err)
-	return nil, listApprovalsOutput{Requests: list}, err
+	return nil, listApprovalsOutput{Requests: approval.ToRequestViews(list)}, err
 }
 
 func (s *Service) filterAuthorizedApprovals(ctx context.Context, requests []approval.Request) ([]approval.Request, error) {
@@ -514,7 +518,7 @@ func (s *Service) decide(ctx context.Context, decision string, input decideAppro
 		_, request, err = s.ExecuteApproved(ctx, request)
 	}
 	s.audit(ctx, uid, decision+"_request", "approval_request", input.RequestID, err)
-	return nil, decideApprovalOutput{Request: request}, err
+	return nil, decideApprovalOutput{Request: approval.ToRequestView(request, "")}, err
 }
 
 // ExecuteApproved applies the side effect represented by an approved MCP

@@ -20,6 +20,8 @@ import {
   type ApprovalRequest,
 } from "@/api/client";
 import { SettingsPage } from "@/components/settings/SettingsPrimitives";
+import { ApprovalRequestPreview } from "@/features/flow/ApprovalRequestPreview";
+import { buildApprovalPreview } from "@/features/flow/approval-preview";
 import type { RootState } from "@/store";
 
 const dateTime = (value: number) => value
@@ -48,37 +50,27 @@ function RequestCard({
   actions?: React.ReactNode;
 }) {
   const status = requestStatus(request);
-  const payload = request.payload && Object.keys(request.payload as Record<string, unknown>).length > 0
-    ? JSON.stringify(request.payload, null, 2)
-    : "";
+  const preview = buildApprovalPreview(request);
   return (
     <Card variant="outlined">
       <CardContent>
         <Stack spacing={1.5}>
           <Stack direction={{ xs: "column", sm: "row" }} sx={{ gap: 1, justifyContent: "space-between", alignItems: { sm: "center" } }}>
             <Stack direction="row" sx={{ gap: 1, alignItems: "center", flexWrap: "wrap" }}>
-              <Typography component="h2" variant="h5">{request.action_type}</Typography>
+              <Typography component="h2" variant="h5">{preview.title}</Typography>
               <Chip size="small" label={status.label} color={status.color} />
             </Stack>
             <Typography variant="caption" color="text.secondary">요청 {dateTime(request.create_at)}</Typography>
           </Stack>
-          <Typography variant="body2" color="text.secondary">
-            요청자 {request.requester_id.slice(0, 12)}
-            {request.team_id ? ` · 팀 ${request.team_id.slice(0, 12)}` : ""}
-            {request.resource_type ? ` · ${request.resource_type} ${request.resource_id.slice(0, 12)}` : ""}
-          </Typography>
           {request.expires_at > 0 && request.status === "pending" && (
             <Typography variant="caption" color="warning.main">검토 기한 {dateTime(request.expires_at)}</Typography>
           )}
-          {payload && (
-            <Typography
-              component="pre"
-              variant="body2"
-              sx={{ m: 0, p: 1.5, borderRadius: 1, bgcolor: "action.hover", overflow: "auto", whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}
-            >
-              {payload}
-            </Typography>
-          )}
+          <ApprovalRequestPreview
+            preview={preview}
+            requesterLabel="승인을 요청한 사용자"
+            teamLabel={request.team_id ? "요청 대상 팀" : undefined}
+            targetLabel={request.resource_type === "channel" ? "요청 대상 채널" : request.resource_type ? "보호된 작업 대상" : undefined}
+          />
           {actions}
         </Stack>
       </CardContent>

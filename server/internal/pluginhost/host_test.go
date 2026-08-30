@@ -6,10 +6,14 @@ import (
 	"io"
 	"log/slog"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/hkjang/moyro/server/internal/activityevents"
 	"github.com/hkjang/moyro/server/internal/rpcbridge"
+	"github.com/hkjang/moyro/server/internal/ws"
+	mmmodel "github.com/mattermost/mattermost/server/public/model"
 	mmplugin "github.com/mattermost/mattermost/server/public/plugin"
 )
 
@@ -23,6 +27,17 @@ type fakePluginClient struct {
 	deactivate  func(context.Context) error
 	closeClient func() error
 }
+
+type pluginActivityRecorder struct{ inputs []activityevents.EmitInput }
+
+func (r *pluginActivityRecorder) Emit(_ context.Context, input activityevents.EmitInput) (*activityevents.Event, error) {
+	r.inputs = append(r.inputs, input)
+	return &activityevents.Event{ID: "activity-1", Type: input.Type, Title: input.Title}, nil
+}
+
+type pluginWebSocketRecorder struct{ events []ws.Event }
+
+func (r *pluginWebSocketRecorder) Broadcast(event ws.Event) { r.events = append(r.events, event) }
 
 func (f *fakePluginClient) record(name string) {
 	if f.calls != nil {
@@ -407,5 +422,46 @@ func TestMattermostAPIAdmissionLifecycle(t *testing.T) {
 	plugin.openDispatchAdmission()
 	if got := api.GetServerVersion(); got == "" {
 		t.Fatal("rollback/reactivation did not reopen API admission")
+	}
+}
+
+func TestMattermostUserScopedWebSocketEventAlsoCreatesSafeDurableActivity(t *testing.T) {
+	host := New(t.TempDir(), slog.Default())
+	plugin := &Plugin{
+		Manifest: &Manifest{ID: "com.example.alerts", Version: "1.0.0"},
+		Runtime:  RuntimeMattermostV1, State: "running", Enabled: true,
+	}
+	host.register(plugin)
+	websocketEvents := &pluginWebSocketRecorder{}
+	activity := &pluginActivityRecorder{}
+	host.events = websocketEvents
+	host.BindActivityEmitter(activity)
+	api := &mattermostAPI{host: host, pluginID: plugin.Manifest.ID, generation: plugin, logger: slog.Default()}
+
+	api.PublishWebSocketEvent("job_finished", map[string]any{"secret": "must-not-be-persisted"}, &mmmodel.WebsocketBroadcast{UserId: "user-1"})
+
+	if len(websocketEvents.events) != 1 || websocketEvents.events[0].Broadcast.UserID != "user-1" {
+		t.Fatalf("websocket events = %#v", websocketEvents.events)
+	}
+	if len(activity.inputs) != 1 {
+		t.Fatalf("activity inputs = %#v", activity.inputs)
+	}
+	input := activity.inputs[0]
+	if input.UserID != "user-1" || input.Type != activityevents.TypePluginEvent || input.ResourceID != plugin.Manifest.ID {
+		t.Fatalf("activity input = %#v", input)
+	}
+	if input.Summary != "" || strings.Contains(input.Title, "must-not-be-persisted") {
+		t.Fatalf("plugin payload leaked into durable activity: %#v", input)
+	}
+}
+
+func TestPluginActivityTitleIsBoundedAndRemovesControls(t *testing.T) {
+	t.Parallel()
+	title := pluginActivityTitle("  job\x00finished  " + strings.Repeat("가", 400))
+	if strings.ContainsRune(title, '\x00') || len([]rune(title)) != 256 || !strings.HasSuffix(title, "…") {
+		t.Fatalf("plugin activity title = %q (%d runes)", title, len([]rune(title)))
+	}
+	if got := pluginActivityTitle("\x00\n\t"); got != "플러그인 알림: 업데이트" {
+		t.Fatalf("empty plugin activity title = %q", got)
 	}
 }

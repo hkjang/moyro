@@ -1,16 +1,16 @@
 # moyro Offline Deployment Guide
 
-This guide describes how to install the v0.2.0 moyro service image in a network
+This guide describes how to install the v0.2.1 moyro service image in a network
 with no internet access after its release archive is published. The
 archive contains the application and web UI. It does not contain PostgreSQL; a
 reachable PostgreSQL service must already exist inside the target network.
 
 ## Release artifact contract
 
-For the `v0.2.0` release tag:
+For the `v0.2.1` release tag:
 
-- Docker image: `moyro:v0.2.0`
-- Downloaded file: `moyro-v0.2.0.tar.gz`
+- Docker image: `moyro:v0.2.1`
+- Downloaded file: `moyro-v0.2.1.tar.gz`
 - Supported platform for the initial release: `linux/amd64`
 
 After publication, transfer the archive through the organization's approved
@@ -18,14 +18,14 @@ media and integrity process. Compare it with the SHA-256 in the release notes
 before loading the image:
 
 ```bash
-sha256sum moyro-v0.2.0.tar.gz
+sha256sum moyro-v0.2.1.tar.gz
 ```
 
 Load it without contacting a registry:
 
 ```bash
-docker load --input moyro-v0.2.0.tar.gz
-docker image inspect moyro:v0.2.0
+docker load --input moyro-v0.2.1.tar.gz
+docker image inspect moyro:v0.2.1
 ```
 
 ## PostgreSQL preparation
@@ -89,7 +89,7 @@ docker run -d \
   --env-file /etc/moyro/moyro.env \
   --mount type=volume,src=moyro-data,dst=/var/lib/moyro \
   --publish 8065:8065 \
-  moyro:v0.2.0
+  moyro:v0.2.1
 ```
 
 Check startup and open `http://<server>:8065/`:
@@ -101,10 +101,12 @@ docker logs --tail 100 moyro
 
 Terminate TLS at an approved internal reverse proxy. After the first local
 login, configure the canonical site URL, Keycloak OIDC, AI provider, approval,
-key, and MCP policy in the service administrator page. Those values are stored
+key, MCP, and browser-draft policy in the service administrator page. Drafts
+can use bounded local retention, session-only storage, or no browser storage;
+logout cleanup is controlled by the same site policy. Those values are stored
 in PostgreSQL; provider secrets are encrypted before storage.
 
-v0.2.0 deliberately does not trust `X-Forwarded-For`, `X-Real-IP`, or
+v0.2.1 deliberately does not trust `X-Forwarded-For`, `X-Real-IP`, or
 `True-Client-IP`. Rate limiting and audit addresses use the direct TCP peer, so
 users behind one reverse proxy share that proxy's login/OIDC rate bucket and
 audit address. Configure the proxy to remove client-supplied forwarded headers,
@@ -118,7 +120,7 @@ port, or path in the allow-list entry.
 The Mattermost-compatible `GET /api/v4/config` endpoint is an operational
 snapshot, not a second configuration store. Its legacy `PUT /config`,
 `PUT /config/patch`, and `POST /config/reload` mutations return a 501
-Mattermost AppError in v0.2.0. SMTP, S3, Redis, and link-preview toggles
+Mattermost AppError in v0.2.1. SMTP, S3, Redis, and link-preview toggles
 therefore cannot appear to save successfully. Runtime plugin lifecycle is a
 separate supported native workflow: an administrator with `manage_plugins`
 can upload, replace, enable, disable, configure, and delete reviewed
@@ -128,7 +130,11 @@ approval, key, MCP, and plugin settings that this release supports.
 The application uses local file storage, no Redis fan-out, no SMTP delivery,
 and no outbound link-preview fetching by default.
 
-Run exactly one moyro application container in v0.2.0. PostgreSQL may be
+The native product API contract is published separately from compatibility
+routes: [`openapi-moyro.yaml`](openapi-moyro.yaml) covers `/api/moyro/v1`, while
+[`openapi-v4.yaml`](openapi-v4.yaml) covers the Mattermost-compatible `/api/v4`.
+
+Run exactly one moyro application container in v0.2.1. PostgreSQL may be
 managed separately, but multi-replica application deployment and cross-node
 live-setting propagation are not supported until the HA/Redis work is
 completed.
@@ -178,9 +184,10 @@ file volume can retain message metadata while losing attachments.
 3. Stop the existing container.
 4. Start the new tag with the same environment file and volume.
 5. Verify `/healthz`, the login page version, administrator login, file access,
-   WebSocket delivery, and Keycloak login.
+   WebSocket delivery, durable activity state, task/decision source links, and
+   Keycloak login.
 
-Do not mix an earlier pre-moyro development build with a v0.2.0 node. Upgrade
+Do not mix an earlier pre-moyro development build with a v0.2.1 node. Upgrade
 the service as one coordinated operation and verify the matching database
 backup before discarding the prior container.
 
@@ -194,7 +201,7 @@ On a connected staging host, preload `postgres:16-alpine` and run the same
 offline check used by the release workflow:
 
 ```bash
-bash scripts/verify-release.sh moyro:v0.2.0 moyro-v0.2.0.tar.gz
+bash scripts/verify-release.sh moyro:v0.2.1 moyro-v0.2.1.tar.gz
 ```
 
 The script loads the archive, creates an internal-only Docker network, starts
@@ -212,8 +219,14 @@ logs in again. Temporary containers, network, and volume are removed on exit.
 - Only the four documented moyro application variables are present.
 - Keycloak and AI remain inactive until an administrator configures them;
   outgoing webhook callbacks are denied while the host allow-list is empty.
+- Site policy changes are reflected by the public draft capability, and local,
+  session-only, disabled, expiry, and logout-cleanup behavior match that policy.
+- Mention/DM/thread, approval, reminder, task-assignment, and supported plugin
+  activity survives restart with owner and current-channel scope intact.
+- Conversation-derived tasks and decisions survive restart, retain source links,
+  and do not become visible outside creator/assignee/channel membership rules.
 - SMTP delivery, S3 storage, Redis fan-out, and outbound link previews remain
-  explicitly unsupported in v0.2.0 rather than reporting a false successful
+  explicitly unsupported in v0.2.1 rather than reporting a false successful
   save. Runtime plugin upload and lifecycle management are supported only for
   reviewed Trusted Native archives through the native plugin page/API.
 - Network controls independently restrict container egress to approved internal

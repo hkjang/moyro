@@ -168,6 +168,13 @@ type AuditSink interface {
 	LogAsync(actorID, action, target string, payload map[string]any)
 }
 
+// ActivitySink receives a post only after it has been committed. The sink is
+// deliberately transport-neutral: it derives user-scoped inbox events from
+// the live channel/thread memberships and treats persistence as best effort.
+type ActivitySink interface {
+	PostCreated(ctx context.Context, post *posts.Post, mentionedUserIDs []string)
+}
+
 type Dependencies struct {
 	Channels           ChannelService
 	Posts              PostStore
@@ -179,6 +186,7 @@ type Dependencies struct {
 	Outgoing           OutgoingDispatcher
 	LinkPreviews       LinkPreviewer
 	Audit              AuditSink
+	Activity           ActivitySink
 	AuthorizeCreate    func(ctx context.Context, actorID, channelID string) (bool, error)
 	Logger             *slog.Logger
 	IncrementPostCount func()
@@ -195,6 +203,7 @@ type Service struct {
 	outgoing           OutgoingDispatcher
 	linkPreviews       LinkPreviewer
 	audit              AuditSink
+	activity           ActivitySink
 	authorizeCreate    func(ctx context.Context, actorID, channelID string) (bool, error)
 	logger             *slog.Logger
 	incrementPostCount func()
@@ -213,6 +222,7 @@ func New(deps Dependencies) *Service {
 		channels: deps.Channels, posts: deps.Posts, files: deps.Files,
 		users: deps.Users, bots: deps.Bots, plugins: deps.Plugins,
 		events: deps.Events, outgoing: deps.Outgoing, linkPreviews: deps.LinkPreviews, audit: deps.Audit,
+		activity:        deps.Activity,
 		authorizeCreate: deps.AuthorizeCreate,
 		logger:          logger, incrementPostCount: increment,
 	}
@@ -292,8 +302,11 @@ func (s *Service) Execute(ctx context.Context, command Command) (*posts.Post, er
 	s.auditCreated(command, post)
 
 	s.associateFiles(ctx, command, post)
-	mentionIDs := s.resolveMentions(ctx, post.Message)
+	mentionIDs := s.resolveMentions(ctx, post.ChannelID, post.Message)
 	raw := s.broadcastCreated(ctx, command, post, mentionIDs)
+	if s.activity != nil {
+		s.activity.PostCreated(ctx, post, mentionIDs)
+	}
 	s.notifyPlugins(raw)
 	s.dispatchOutgoing(ctx, post)
 	s.fetchLinkPreviews(post)
@@ -356,7 +369,7 @@ func (s *Service) associateFiles(ctx context.Context, command Command, post *pos
 	}
 }
 
-func (s *Service) resolveMentions(ctx context.Context, message string) []string {
+func (s *Service) resolveMentions(ctx context.Context, channelID, message string) []string {
 	mentionIDs := []string{}
 	if s.users == nil {
 		return mentionIDs
@@ -374,6 +387,31 @@ func (s *Service) resolveMentions(ctx context.Context, message string) []string 
 		if id, ok := resolved[name]; ok {
 			mentionIDs = append(mentionIDs, id)
 		}
+	}
+	// A username may be valid globally while the user has no access to this
+	// channel. Production channels.Service implements this optional filter;
+	// keeping it capability-based preserves lightweight adapter tests while
+	// ensuring private-channel metadata never escapes through mention events.
+	type memberFilter interface {
+		MembersByChannel(context.Context, string, []string) ([]channels.Member, error)
+	}
+	if filter, ok := s.channels.(memberFilter); ok && len(mentionIDs) > 0 {
+		members, err := filter.MembersByChannel(ctx, channelID, mentionIDs)
+		if err != nil {
+			s.logger.Warn("mention membership filter", "channel", channelID, "err", err)
+			return nil
+		}
+		allowed := make(map[string]struct{}, len(members))
+		for _, member := range members {
+			allowed[member.UserID] = struct{}{}
+		}
+		filtered := mentionIDs[:0]
+		for _, id := range mentionIDs {
+			if _, ok := allowed[id]; ok {
+				filtered = append(filtered, id)
+			}
+		}
+		mentionIDs = filtered
 	}
 	return mentionIDs
 }

@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"context"
+	"net/http"
 
 	"github.com/hkjang/moyro/server/internal/rbac"
 )
@@ -29,4 +30,13 @@ func ensureUserPrincipal(ctx context.Context, userID string) context.Context {
 		return ctx
 	}
 	return setPrincipalOnContext(ctx, rbac.UserPrincipal(userID))
+}
+
+// requestPrincipal keeps legacy tests and PAT middleware unrestricted while
+// preserving the credential constraints installed by Moyro API-key auth.
+func requestPrincipal(r *http.Request) rbac.Principal {
+	if principal, ok := PrincipalFromContext(r.Context()); ok {
+		return principal
+	}
+	return rbac.UserPrincipal(userID(r))
 }

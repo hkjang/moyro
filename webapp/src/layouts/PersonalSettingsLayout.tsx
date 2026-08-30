@@ -14,6 +14,7 @@ import {
   Drawer,
   IconButton,
   List,
+  ListItem,
   ListItemButton,
   ListItemIcon,
   ListItemText,
@@ -68,16 +69,17 @@ function PersonalNavigation({
         {items.map((item) => {
           const active = routeIsActive(pathname, item.to);
           return (
-            <ListItemButton
-              key={item.to}
-              selected={active}
-              aria-current={active ? "page" : undefined}
-              onClick={() => onNavigate(item.to)}
-              className="personal-navigation-item"
-            >
-              <ListItemIcon>{item.icon}</ListItemIcon>
-              <ListItemText primary={item.label} />
-            </ListItemButton>
+            <ListItem key={item.to} disablePadding>
+              <ListItemButton
+                selected={active}
+                aria-current={active ? "page" : undefined}
+                onClick={() => onNavigate(item.to)}
+                className="personal-navigation-item"
+              >
+                <ListItemIcon>{item.icon}</ListItemIcon>
+                <ListItemText primary={item.label} />
+              </ListItemButton>
+            </ListItem>
           );
         })}
       </List>

@@ -107,6 +107,7 @@ func newNativeServices(ctx context.Context, cfg *config.Config, db *store.DB, h 
 		`, reviewerID, teamID, reviewerRoles).Scan(&roleAssigned)
 		return roleAssigned, err
 	})
+	approvalService.SetActivityEmitter(h.activityEmit)
 	oidcManager := oidcauth.NewManager(nil)
 	flowStore, err := oidcauth.NewFlowStore(db, secretManager)
 	if err != nil {

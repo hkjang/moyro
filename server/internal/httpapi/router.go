@@ -6,10 +6,12 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
+	"github.com/hkjang/moyro/server/internal/activityevents"
 	"github.com/hkjang/moyro/server/internal/application/postcommand"
 	"github.com/hkjang/moyro/server/internal/audit"
 	"github.com/hkjang/moyro/server/internal/auth"
@@ -47,6 +49,7 @@ import (
 	"github.com/hkjang/moyro/server/internal/userstatus"
 	"github.com/hkjang/moyro/server/internal/webhooks"
 	"github.com/hkjang/moyro/server/internal/webui"
+	"github.com/hkjang/moyro/server/internal/workitems"
 	"github.com/hkjang/moyro/server/internal/ws"
 	"github.com/jackc/pgx/v5"
 )
@@ -95,11 +98,19 @@ func New(cfg *config.Config, db *store.DB, hub *ws.Hub, host *pluginhost.Host, l
 	// dial failure falls back to FS with a warning — the plan explicitly
 	// calls fail-open for infra hiccups so the server still boots.
 	var fileStorage files.Storage = files.NewFSStorage(cfg.FileStorageRoot)
-	if cfg.FileBackend == "s3" {
+	configuredFileBackend := strings.ToLower(strings.TrimSpace(cfg.FileBackend))
+	if configuredFileBackend == "" {
+		configuredFileBackend = "fs"
+	}
+	activeFileBackend := "fs"
+	fileBackendFallback := configuredFileBackend != "fs" && configuredFileBackend != "s3"
+	if configuredFileBackend == "s3" {
 		if s3st, err := files.NewS3Storage(context.Background(), cfg.S3Bucket, cfg.S3Region, cfg.S3Endpoint); err != nil {
+			fileBackendFallback = true
 			logger.Warn("s3 storage disabled; falling back to fs", "err", err)
 		} else {
 			fileStorage = s3st
+			activeFileBackend = "s3"
 			logger.Info("s3 storage active", "bucket", cfg.S3Bucket, "endpoint", cfg.S3Endpoint)
 		}
 	}
@@ -119,6 +130,9 @@ func New(cfg *config.Config, db *store.DB, hub *ws.Hub, host *pluginhost.Host, l
 	// the process, not with the HTTP router.
 	scheduledSvc := scheduled.New(db)
 	reminderSvc := reminders.New(db)
+	workItemSvc := workitems.New(db)
+	activitySvc := activityevents.New(db)
+	activityEmitter := &realtimeActivityEmitter{next: activitySvc, events: hub}
 	// Phase 21: Mattermost-shaped preferences. Pure DB CRUD; no worker.
 	prefsSvc := preferences.New(db)
 	// Phase 22: channel sidebar categories. Auto-bootstraps three defaults
@@ -159,6 +173,9 @@ func New(cfg *config.Config, db *store.DB, hub *ws.Hub, host *pluginhost.Host, l
 		return ch.TeamID, nil
 	}
 	outDispatcher := webhooks.NewDispatcher(outgoingSvc, postSvc, teamOf, logger, 16, cfg.AllowedOutgoingHosts)
+	postActivitySink := &postActivityEmitter{
+		channels: channelSvc, posts: postSvc, events: activityEmitter, logger: logger,
+	}
 	postCommandSvc := postcommand.New(postcommand.Dependencies{
 		Channels:     channelSvc,
 		Posts:        postSvc,
@@ -170,6 +187,7 @@ func New(cfg *config.Config, db *store.DB, hub *ws.Hub, host *pluginhost.Host, l
 		Outgoing:     outDispatcher,
 		LinkPreviews: linkSvc,
 		Audit:        auditSvc,
+		Activity:     postActivitySink,
 		AuthorizeCreate: func(ctx context.Context, actorID, channelID string) (bool, error) {
 			if rbacServiceErr != nil {
 				return false, rbacServiceErr
@@ -204,6 +222,7 @@ func New(cfg *config.Config, db *store.DB, hub *ws.Hub, host *pluginhost.Host, l
 	// free of HTTP construction concerns while ensuring SourcePlugin posts get
 	// common authorization, hooks, unread updates, and provenance.
 	host.BindApplicationServices(postCommandSvc, fileSvc, hub, auditSvc)
+	host.BindActivityEmitter(activityEmitter)
 	slashSvc := slashcmd.New(postCommandSvc, channelSvc, statusSvc, &pluginCommandAdapter{host: host})
 	incomingSvc := webhooks.NewIncoming(db, postCommandSvc)
 
@@ -243,17 +262,26 @@ func New(cfg *config.Config, db *store.DB, hub *ws.Hub, host *pluginhost.Host, l
 		links:        linkSvc,
 		scheduled:    scheduledSvc,
 		reminders:    reminderSvc,
-		prefs:        prefsSvc,
-		sidebar:      sidebarSvc,
-		commands:     commandSvc,
-		threads:      threadSvc,
-		bookmarks:    bookmarkSvc,
-		customProf:   customProfileSvc,
-		postacks:     postacksSvc,
-		tos:          tosSvc,
-		hub:          hub,
-		host:         host,
-		logger:       logger,
+		workItems:    workItemSvc,
+		activity:     activitySvc,
+		activityEmit: activityEmitter,
+		operations: newPostgresOperationsReader(db, fileStorageRuntime{
+			ConfiguredBackend: configuredFileBackend,
+			ActiveBackend:     activeFileBackend,
+			Fallback:          fileBackendFallback,
+			FilesystemRoot:    cfg.FileStorageRoot,
+		}),
+		prefs:      prefsSvc,
+		sidebar:    sidebarSvc,
+		commands:   commandSvc,
+		threads:    threadSvc,
+		bookmarks:  bookmarkSvc,
+		customProf: customProfileSvc,
+		postacks:   postacksSvc,
+		tos:        tosSvc,
+		hub:        hub,
+		host:       host,
+		logger:     logger,
 	}
 	nativeCtx, nativeCancel := context.WithTimeout(context.Background(), 15*time.Second)
 	if secretManagerErr != nil {
@@ -264,6 +292,7 @@ func New(cfg *config.Config, db *store.DB, hub *ws.Hub, host *pluginhost.Host, l
 		logger.Warn("moyro management services unavailable", "err", err)
 	} else {
 		h.native = native
+		activitySvc.SetApprovalReviewAuthorizer(native.approval.CanReviewRequest)
 	}
 	nativeCancel()
 
@@ -1407,6 +1436,14 @@ func New(cfg *config.Config, db *store.DB, hub *ws.Hub, host *pluginhost.Host, l
 
 			r.With(middleware.Timeout(30 * time.Second)).Group(func(r chi.Router) {
 				r.Get("/me/permissions", h.getNativeEffectivePermissions)
+				r.Get("/me/flow-summary", h.getNativeFlowSummary)
+				r.Get("/me/work-items", h.listNativeWorkItems)
+				r.Post("/me/work-items", h.createNativeWorkItem)
+				r.Patch("/me/work-items/{workItemID}", h.patchNativeWorkItem)
+				r.Delete("/me/work-items/{workItemID}", h.deleteNativeWorkItem)
+				r.Get("/me/activity-events", h.listNativeActivityEvents)
+				r.Patch("/me/activity-events/{eventID}", h.patchNativeActivityEvent)
+				r.Post("/me/activity-events/mark-read", h.markNativeActivityEventsRead)
 				r.With(h.nativeRequire("manage_own_api_keys")).Get("/me/api-keys", h.listPersonalAPIKeys)
 				r.With(h.nativeRequire("manage_own_api_keys")).Post("/me/api-keys", h.createPersonalAPIKey)
 				r.With(h.nativeRequire("manage_own_api_keys")).Patch("/me/api-keys/{keyID}", h.patchPersonalAPIKey)
@@ -1440,6 +1477,7 @@ func New(cfg *config.Config, db *store.DB, hub *ws.Hub, host *pluginhost.Host, l
 				r.With(h.nativeRequire("manage_roles")).Patch("/admin/roles/{roleID}", h.patchNativeRole)
 				r.With(h.nativeRequire("manage_api_keys")).Get("/admin/api-keys", h.listAdminAPIKeys)
 				r.With(h.nativeRequire("manage_api_keys")).Delete("/admin/api-keys/{keyID}", h.revokeAdminAPIKey)
+				r.With(h.nativeRequire(rbac.PermissionManageSystem)).Get("/admin/operations", h.getNativeAdminOperations)
 			})
 		})
 	})
@@ -1461,6 +1499,7 @@ func New(cfg *config.Config, db *store.DB, hub *ws.Hub, host *pluginhost.Host, l
 
 	scheduledWorker := scheduled.NewWorker(scheduledSvc, postSvc, postCommandSvc, fileSvc, hub, logger)
 	remindersWorker := reminders.NewWorker(reminderSvc, postSvc, hub, logger)
+	remindersWorker.SetActivityEmitter(activityEmitter)
 
 	return &Backend{Router: r, Scheduled: scheduledWorker, Reminders: remindersWorker, Approvals: newApprovalExecutor(h.native, logger)}
 }

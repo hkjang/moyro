@@ -3,9 +3,11 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { Provider } from "react-redux";
 import { configureStore } from "@reduxjs/toolkit";
+import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { adminApi } from "@/api/client";
+import { AdminPluginsProvider } from "./AdminPluginsContext";
 import { PluginManagementPage } from "./PluginManagementPage";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -29,9 +31,9 @@ describe("PluginManagementPage", () => {
   it("loads installed plugins with the Redux auth token and enables runtime controls", async () => {
     const listPlugins = vi.spyOn(adminApi, "listPlugins").mockResolvedValue([{
       id: "com.mattermost.botman",
-      name: "Botman",
       version: "1.0.0",
       state: "running",
+      manifest: { name: "Botman" },
     }]);
     vi.spyOn(adminApi, "listPluginStatuses").mockResolvedValue([
       { plugin_id: "com.mattermost.botman", state: "running" },
@@ -49,7 +51,11 @@ describe("PluginManagementPage", () => {
     await act(async () => {
       root.render(
         <Provider store={store}>
-          <PluginManagementPage />
+          <MemoryRouter>
+            <AdminPluginsProvider enabled>
+              <PluginManagementPage />
+            </AdminPluginsProvider>
+          </MemoryRouter>
         </Provider>,
       );
       await new Promise((resolve) => setTimeout(resolve, 0));

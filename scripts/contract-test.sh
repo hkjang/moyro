@@ -5,6 +5,7 @@ set -euo pipefail
 
 BASE="${BASE:-http://localhost:8065}"
 API="$BASE/api/v4"
+MOYRO_API="$BASE/api/moyro/v1"
 SUFFIX="$(date +%s)-$$"
 USER="tester_$SUFFIX"
 EMAIL="tester_$SUFFIX@example.com"
@@ -82,6 +83,14 @@ ok "channel id=$CH_ID"
 say "list channels for team"
 curl -fsS "$API/users/me/teams/$TEAM_ID/channels" -H "$hdr" | grep -q "$CH_ID" || fail "channel list"
 ok "channel list"
+
+say "load Flow summary read model"
+FLOW_SUMMARY=$(curl -fsS "$MOYRO_API/me/flow-summary" -H "$hdr")
+echo "$FLOW_SUMMARY" | grep -q '"updated_at"' || fail "Flow summary shape — missing updated_at"
+echo "$FLOW_SUMMARY" | grep -q '"memberships"' || fail "Flow summary shape — missing memberships"
+echo "$FLOW_SUMMARY" | grep -q "$TEAM_ID" || fail "Flow summary — missing joined team"
+echo "$FLOW_SUMMARY" | grep -q "$CH_ID" || fail "Flow summary — missing joined channel"
+ok "Flow summary read model"
 
 say "create post"
 POST=$(curl -fsS -X POST "$API/posts" -H "$hdr" -H "Content-Type: application/json" \

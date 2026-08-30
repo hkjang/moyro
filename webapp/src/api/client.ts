@@ -1,47 +1,9 @@
-const BASE = "/api/v4";
-const MOYRO_BASE = "/api/moyro/v1";
-
-type FetchOpts = Omit<RequestInit, "body"> & { body?: unknown };
-
-async function requestFrom<T>(
-  base: string,
-  token: string | null,
-  path: string,
-  opts: FetchOpts = {},
-): Promise<T> {
-  const headers = new Headers(opts.headers);
-  const hasBody = opts.body !== undefined;
-  if (hasBody && !(opts.body instanceof FormData)) {
-    headers.set("Content-Type", "application/json");
-  }
-  if (token) headers.set("Authorization", `Bearer ${token}`);
-
-  let body: BodyInit | undefined;
-  if (!hasBody) {
-    body = undefined;
-  } else if (opts.body instanceof FormData) {
-    body = opts.body;
-  } else {
-    body = JSON.stringify(opts.body);
-  }
-
-  const res = await fetch(`${base}${path}`, { ...opts, headers, body });
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({ message: res.statusText }));
-    throw new Error(err.message ?? `HTTP ${res.status}`);
-  }
-  if (res.status === 204) return undefined as T;
-  const text = await res.text();
-  return (text ? JSON.parse(text) : (undefined as unknown)) as T;
-}
-
-async function request<T>(token: string | null, path: string, opts: FetchOpts = {}): Promise<T> {
-  return requestFrom<T>(BASE, token, path, opts);
-}
-
-async function moyroRequest<T>(token: string | null, path: string, opts: FetchOpts = {}): Promise<T> {
-  return requestFrom<T>(MOYRO_BASE, token, path, opts);
-}
+import {
+  COMPAT_API_BASE as BASE,
+  MOYRO_API_BASE as MOYRO_BASE,
+  compatRequest as request,
+  moyroRequest,
+} from "./transport";
 
 // Media bytes are fetched with an Authorization header and converted to a
 // short-lived blob URL by the rendering component. Restrict callers to known
@@ -378,6 +340,11 @@ export type SystemInfo = {
       configured: boolean;
       enabled: boolean;
     };
+		drafts?: {
+			storage_mode: "local" | "session" | "disabled";
+			retention_days: number;
+			clear_on_logout: boolean;
+		};
   };
 };
 
@@ -1618,6 +1585,9 @@ export type SiteSettings = {
   public_base_url: string;
   allowed_outgoing_hosts: string[];
   local_signup_enabled: boolean;
+	draft_storage_mode: "local" | "session" | "disabled";
+	draft_retention_days: number;
+	draft_clear_on_logout: boolean;
 };
 
 export type RBACPermission = {
@@ -1664,6 +1634,16 @@ export type ApprovalPolicy = {
   expires_after_hours: number;
 };
 
+export type ApprovalRequestServerPreview = {
+  title: string;
+  risk_level: "low" | "medium" | "high" | "unknown";
+  actor: { type: string; display_name: string };
+  target: { type: string; display_name: string };
+  changes: Array<{ label: string; after: string }>;
+  policy: { name: string; reason: string };
+  secrets_redacted: boolean;
+};
+
 export type ApprovalRequest = {
   id: string;
   policy_id: string;
@@ -1672,6 +1652,9 @@ export type ApprovalRequest = {
   team_id: string;
   resource_type: string;
   resource_id: string;
+  preview?: ApprovalRequestServerPreview;
+  // Compatibility fallback for pre-preview Moyro servers. Current native
+  // browser APIs omit this field so execution credentials never reach the UI.
   payload?: unknown;
   status: string;
   idempotency_key?: string;

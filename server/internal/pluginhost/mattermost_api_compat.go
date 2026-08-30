@@ -9,11 +9,13 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	mmmodel "github.com/mattermost/mattermost/server/public/model"
 
+	"github.com/hkjang/moyro/server/internal/activityevents"
 	"github.com/hkjang/moyro/server/internal/application/postcommand"
 	"github.com/hkjang/moyro/server/internal/audit"
 	"github.com/hkjang/moyro/server/internal/channels"
@@ -659,6 +661,7 @@ func (a *mattermostAPI) PublishWebSocketEvent(event string, payload map[string]a
 	defer release()
 	a.host.mu.RLock()
 	events := a.host.events
+	activity := a.host.activity
 	a.host.mu.RUnlock()
 	if events == nil {
 		return
@@ -673,6 +676,40 @@ func (a *mattermostAPI) PublishWebSocketEvent(event string, payload map[string]a
 		}
 	}
 	events.Broadcast(ws.Event{Event: "custom_" + a.pluginID + "_" + strings.TrimSpace(event), Data: payload, Broadcast: audience})
+	if activity != nil && audience.UserID != "" {
+		omitted := false
+		if broadcast != nil {
+			omitted = broadcast.OmitUsers[audience.UserID]
+		}
+		if !omitted {
+			ctx, cancel := a.withContext()
+			defer cancel()
+			_, _ = activity.Emit(ctx, activityevents.EmitInput{
+				UserID: audience.UserID, Type: activityevents.TypePluginEvent,
+				DedupeKey: uuid.NewString(), ResourceType: "plugin", ResourceID: a.pluginID,
+				Title: pluginActivityTitle(event),
+			})
+		}
+	}
+}
+
+func pluginActivityTitle(event string) string {
+	label := strings.Map(func(char rune) rune {
+		if unicode.IsControl(char) {
+			return ' '
+		}
+		return char
+	}, event)
+	label = strings.Join(strings.Fields(label), " ")
+	if label == "" {
+		label = "업데이트"
+	}
+	title := []rune("플러그인 알림: " + label)
+	if len(title) > 256 {
+		title = title[:255]
+		title = append(title, '…')
+	}
+	return string(title)
 }
 
 func (a *mattermostAPI) HasPermissionToChannel(userID, channelID string, permission *mmmodel.Permission) bool {
