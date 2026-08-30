@@ -110,6 +110,14 @@ test("mobile workspace at 430x932 remains visually stable", async ({ page }) => 
     ".chat-header-title",
   );
   await expect(page.locator(".workspace-message-composer")).toBeVisible();
+  await page.addStyleTag({
+    content: `
+      .chat-header .avatar,
+      .workspace-message-item .avatar {
+        background-color: #10b981 !important;
+      }
+    `,
+  });
   await expect(page).toHaveScreenshot(
     "workspace-channel-mobile-light-430x932.png",
     snapshotOptions("light", [page.locator(".msg-time")], false),

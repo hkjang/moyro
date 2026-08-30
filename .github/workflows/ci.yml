@@ -126,11 +126,23 @@ jobs:
       - name: Fetch browser plugin fixtures
         run: bash scripts/fetch-plugin-test-fixtures.sh "${RUNNER_TEMP}/mattermost-plugin-fixtures"
       - name: Verify routed pages, refresh, mobile layout, and browser errors
+        id: product_ui
         env:
           MOYRO_E2E_PORT: "18065"
           MOYRO_PLUGIN_FIXTURE_DIR: ${{ runner.temp }}/mattermost-plugin-fixtures
         run: |
           docker pull postgres:16-alpine@sha256:cf78e76683b9ca8c5733cbbdce6c9262b45b6767934dd0a95e671f9a0fc20685
           bash scripts/verify-product-ui.sh moyro:ci "${RUNNER_TEMP}/moyro-screens"
+      - name: Upload browser failure artifacts
+        if: ${{ always() && steps.product_ui.outcome == 'failure' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: ci-browser-failure-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            webapp/test-results
+            ${{ runner.temp }}/moyro-screens
+          include-hidden-files: true
+          if-no-files-found: warn
+          retention-days: 7
       - name: Verify GitHub Pages assets and structured data
         run: node scripts/verify-pages.mjs
