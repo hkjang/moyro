@@ -3372,9 +3372,9 @@ func (h *handlers) oauthLogin(w http.ResponseWriter, r *http.Request) {
 }
 
 // oauthCallback validates the state cookie, exchanges the auth code for a
-// UserInfo, resolves/creates the local user, and redirects back to the
-// webapp with the JWT in a URL fragment. Using a fragment (rather than a
-// query string) keeps the token out of referer headers and server logs.
+// UserInfo, resolves/creates the local user, and redirects back with a
+// short-lived one-time handoff code. The reusable Moyro bearer credential is
+// created only when the webapp exchanges that code.
 func (h *handlers) oauthCallback(w http.ResponseWriter, r *http.Request) {
 	name := chi.URLParam(r, "provider")
 	p := h.oauthReg.Get(name)
@@ -3429,7 +3429,7 @@ func (h *handlers) oauthCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	u, tok, created, err := h.oauthIdent.ResolveOrCreate(r.Context(), name, info)
+	u, created, err := h.oauthIdent.ResolveOrCreateUser(r.Context(), name, info)
 	if err != nil {
 		if errors.Is(err, oauth.ErrUnverifiedLink) {
 			h.oauthRedirectError(w, r, "unverified_email")
@@ -3456,6 +3456,13 @@ func (h *handlers) oauthCallback(w http.ResponseWriter, r *http.Request) {
 			})
 		}
 	}
+	handoff, err := h.auth.CreateLoginHandoff(r.Context(), u.ID)
+	if err != nil {
+		h.logger.Error("oauth login handoff creation failed", "provider", name, "user", u.ID, "err", err)
+		h.oauthRedirectError(w, r, "session_failed")
+		return
+	}
+	setSSOHandoffCookie(w, handoff.Code, handoff.BrowserBinding, handoff.ExpiresAt, h.oauthSecureCookies(r))
 	if h.audit != nil {
 		h.audit.LogAsync(u.ID, audit.ActionUserLogin, u.Username, map[string]any{
 			"ip":             r.RemoteAddr,
@@ -3463,11 +3470,10 @@ func (h *handlers) oauthCallback(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
-	// The webapp serves at PublicBaseURL/. Use a fragment so the token
-	// never hits server-side logs or the Referer header when the webapp
-	// navigates onward after consuming it.
+	// The fragment is an opaque, single-use, five-minute code. It never reaches
+	// access logs or Referer headers and cannot authenticate an API directly.
 	base := h.effectivePublicBaseURL(r)
-	http.Redirect(w, r, base+"/#token="+url.QueryEscape(tok), http.StatusFound)
+	http.Redirect(w, r, base+"/#sso_code="+url.QueryEscape(handoff.Code), http.StatusFound)
 }
 
 // oauthRedirectError bounces the browser back to the webapp with an error

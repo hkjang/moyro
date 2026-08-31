@@ -376,6 +376,11 @@ export const api = {
       method: "POST",
       body: { login_id, password },
     }),
+  exchangeSSOCode: (code: string) =>
+    moyroRequest<{ token: string; user: User }>(null, "/auth/sso/session", {
+      method: "POST",
+      body: { code },
+    }),
   me: (token: string) => request<User>(token, "/users/me"),
   ping: () => request<SystemPing>(null, "/system/ping"),
   clientConfig: () => request<ClientConfig>(null, "/config/client"),

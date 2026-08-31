@@ -14,6 +14,7 @@ const OAUTH_ERROR_MESSAGES: Record<string, string> = {
   state_mismatch: "보안 상태값이 일치하지 않습니다. 다시 로그인해 주세요.",
   missing_params: "인증 콜백이 완전하지 않습니다.",
   exchange_failed: "소셜 로그인 제공자와 통신하지 못했습니다.",
+  session_failed: "SSO 로그인 세션을 완료하지 못했습니다. 다시 로그인해 주세요.",
   resolve_failed: "계정을 처리하지 못했습니다. 관리자에게 문의해 주세요.",
   unverified_email:
     "이메일이 확인되지 않아 기존 계정과 자동 연결할 수 없습니다. 기존 비밀번호로 먼저 로그인해 주세요.",
@@ -71,6 +72,9 @@ export function LoginView() {
       ? [systemInfo.oidc_provider_name === "Keycloak" ? "keycloak" : "oidc"]
       : [];
   const canRegister = Boolean(invite || systemInfo.local_signup_enabled);
+  const oidcLoginURL = `/api/moyro/v1/auth/oidc/login?return_to=${encodeURIComponent(
+    window.location.pathname + window.location.search,
+  )}`;
 
   useEffect(() => {
     if (systemInfo.loaded && !canRegister && mode === "register") {
@@ -340,7 +344,7 @@ export function LoginView() {
                   key={name}
                   className={`oauth-btn oauth-btn-${name}`}
                   href={name === "keycloak" || name === "oidc"
-                    ? "/api/moyro/v1/auth/oidc/login"
+                    ? oidcLoginURL
                     : `/api/v4/oauth/${encodeURIComponent(name)}/login`}
                 >
                   <span className={`oauth-icon oauth-icon-${name}`} aria-hidden />

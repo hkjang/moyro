@@ -4,6 +4,7 @@ import type { RootState } from "@/store";
 import { clearAuth, setAuth } from "@/store/authSlice";
 import { api } from "@/api/client";
 import { AppRouter } from "@/app/AppRouter";
+import { isSSOCallbackFragment, parseSSOCallbackFragment } from "@/auth/ssoCallback";
 import { useSystemInfo } from "@/features/system/SystemInfoContext";
 import { clearMoyroDraftsForUser } from "@/features/workspace/composer/useDraft";
 
@@ -14,43 +15,46 @@ export function App() {
   const dispatch = useDispatch();
   const initialTokenRef = useRef(token);
   const initialUserRef = useRef(user);
+  const initialSSOCallbackRef = useRef(isSSOCallbackFragment(window.location.hash));
   const clearDraftsOnLogoutRef = useRef(
     systemInfo.capabilities?.drafts?.clear_on_logout !== false,
   );
   clearDraftsOnLogoutRef.current = systemInfo.capabilities?.drafts?.clear_on_logout !== false;
-  // consumingHash flips true while we're resolving a `#token=...` redirect
-  // from an OAuth callback. Prevents the LoginView from flashing between
-  // "not logged in" and "logged in" when the fragment is present.
+  // Keep the login screen from flashing while an OAuth/OIDC callback is
+  // exchanged for the local user and session in one request.
   const [consumingHash, setConsumingHash] = useState<boolean>(
-    () => window.location.hash.startsWith("#token="),
+    () => initialSSOCallbackRef.current,
   );
   const [restoringSession, setRestoringSession] = useState<boolean>(
-    () => Boolean(initialTokenRef.current) && !window.location.hash.startsWith("#token="),
+    () => Boolean(initialTokenRef.current) && !initialSSOCallbackRef.current,
   );
 
-  // On mount, if the URL carries a #token= fragment, the OAuth callback
-  // has just bounced us home with a freshly-minted JWT. Exchange it for
-  // a full user record via /users/me, hand both to authSlice, then clear
-  // the hash so a reload doesn't re-trigger this path.
+  // New callbacks carry only a short-lived, one-time code. The public exchange
+  // returns user + local session atomically, removing the fragile /users/me
+  // probe and keeping the reusable bearer token out of browser history.
+  // Legacy #token callbacks remain accepted during a coordinated upgrade.
   useEffect(() => {
-    if (!window.location.hash.startsWith("#token=")) return;
-    const tok = decodeURIComponent(window.location.hash.slice("#token=".length));
+    const callback = parseSSOCallbackFragment(window.location.hash);
+    if (!callback) return;
     history.replaceState(null, "", window.location.pathname + window.location.search);
-    if (!tok) {
+    if (callback.kind === "invalid") {
+      history.replaceState(null, "", "/login#oauth_error=session_failed");
+      dispatch(clearAuth());
       setConsumingHash(false);
       return;
     }
-    api.me(tok).then(
-      (user) => {
-        dispatch(setAuth({ token: tok, user }));
+
+    const session = callback.kind === "code"
+      ? api.exchangeSSOCode(callback.value)
+      : api.me(callback.value).then((user) => ({ token: callback.value, user }));
+    session.then(
+      (result) => {
+        dispatch(setAuth(result));
         setConsumingHash(false);
       },
       () => {
-        // Token was bad or the server rejected it — bail back to the
-        // login page and let the user retry. The OAuth error panel on
-        // LoginView picks up `#oauth_error=` fragments so we can
-        // optionally route through that, but a silent failure is fine
-        // since a repeat of the flow will surface the underlying issue.
+        history.replaceState(null, "", "/login#oauth_error=session_failed");
+        dispatch(clearAuth());
         setConsumingHash(false);
       },
     );
@@ -58,7 +62,7 @@ export function App() {
 
   useEffect(() => {
     const storedToken = initialTokenRef.current;
-    if (!storedToken || window.location.hash.startsWith("#token=")) return;
+    if (!storedToken || initialSSOCallbackRef.current) return;
     api.me(storedToken).then(
       (user) => dispatch(setAuth({ token: storedToken, user })),
       () => {

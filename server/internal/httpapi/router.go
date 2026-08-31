@@ -1423,6 +1423,8 @@ func New(cfg *config.Config, db *store.DB, hub *ws.Hub, host *pluginhost.Host, l
 			Get("/auth/oidc/login", h.nativeOIDCLogin)
 		r.With(oauthIPLimiter.Middleware(ratelimit.ClientIP), middleware.Timeout(30*time.Second)).
 			Get("/auth/oidc/callback", h.nativeOIDCCallback)
+		r.With(oauthIPLimiter.Middleware(ratelimit.ClientIP), middleware.Timeout(30*time.Second)).
+			Post("/auth/sso/session", h.nativeSSOSessionExchange)
 
 		r.Group(func(r chi.Router) {
 			r.Use(nativeBearerOnly)

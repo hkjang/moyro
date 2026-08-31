@@ -3639,10 +3639,11 @@ func (h *handlers) loginCWS(w http.ResponseWriter, r *http.Request) {
 }
 
 // loginSSOCodeExchange — POST /users/login/sso/code-exchange
-// Stub: same posture as loginCWS — return 501 so the client fails
-// clean instead of trusting an empty 200.
+// Stub: Mattermost's deprecated mobile SSO transfer flow has a separate
+// login_code + PKCE/state contract. Moyro's browser flow uses the native
+// /api/moyro/v1/auth/sso/session endpoint instead of overloading this path.
 func (h *handlers) loginSSOCodeExchange(w http.ResponseWriter, r *http.Request) {
-	writeError(w, 501, "api.user.login.sso.not_implemented", "SSO code exchange not enabled")
+	writeError(w, http.StatusNotImplemented, "api.user.login.sso.not_implemented", "Mattermost mobile SSO code exchange is not enabled")
 }
 
 // adminVerifyMemberEmail — POST /users/{userID}/email/verify/member

@@ -1,22 +1,25 @@
 openapi: 3.1.0
 info:
   title: Moyro Native API
-  version: 0.2.3
+  version: 0.2.4
   description: |
     Moyro Flow, durable activity inbox, conversation-derived work items, safe
     approval previews, and service policy endpoints under `/api/moyro/v1`.
     This contract is intentionally separate from `openapi-v4.yaml`, which
     documents the Mattermost-compatible `/api/v4` boundary.
 
-    Except for `GET /system/info`, requests require an `Authorization: Bearer`
-    header containing a live session JWT, PAT, or Moyro API key accepted by the
-    endpoint. Protected native endpoints reject credentials supplied through
-    the `access_token` query parameter. Every resource operation documents the
-    current membership and endpoint-specific RBAC checks it applies.
+    Except for `GET /system/info` and the browser-only SSO session exchange,
+    requests require an `Authorization: Bearer` header containing a live
+    session JWT, PAT, or Moyro API key accepted by the endpoint. Protected
+    native endpoints reject credentials supplied through the `access_token`
+    query parameter. Every resource operation documents the current membership
+    and endpoint-specific RBAC checks it applies.
 servers:
   - url: /api/moyro/v1
     description: Native API on the current Moyro deployment origin
 tags:
+  - name: Authentication
+    description: Browser-bound completion of an external identity login.
   - name: System
     description: Public build metadata and client capabilities.
   - name: Settings
@@ -34,6 +37,42 @@ tags:
 security:
   - bearerAuth: []
 paths:
+  /auth/sso/session:
+    post:
+      operationId: exchangeBrowserSSOSession
+      tags: [Authentication]
+      security: []
+      summary: Exchange a browser-bound one-time SSO code for a local session
+      description: |
+        OAuth and OIDC callbacks place a five-minute opaque code in the browser
+        fragment and an independent binding in an HttpOnly, path-restricted
+        cookie. Both must match the same live PostgreSQL row. A successful
+        exchange atomically consumes the row and returns the local user and
+        session; no reusable bearer token appears in the callback URL.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [code]
+              properties:
+                code: { type: string, minLength: 43, maxLength: 43, pattern: "^[A-Za-z0-9_-]+$" }
+      responses:
+        "200":
+          description: Authenticated
+          headers:
+            Cache-Control:
+              schema: { type: string, const: no-store }
+            Token:
+              schema: { type: string }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/LoginSession" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "500": { $ref: "#/components/responses/InternalError" }
   /system/info:
     get:
       operationId: getSystemInfo
@@ -551,6 +590,27 @@ components:
         detailed_error: { type: string }
         request_id: { type: string }
         status_code: { type: integer, minimum: 400, maximum: 599 }
+    LoginUser:
+      type: object
+      additionalProperties: false
+      required: [id, username, email, roles, picture]
+      properties:
+        id: { type: string }
+        username: { type: string }
+        email: { type: string }
+        roles: { type: string }
+        picture: { type: string }
+        first_name: { type: string }
+        last_name: { type: string }
+        nickname: { type: string }
+        position: { type: string }
+    LoginSession:
+      type: object
+      additionalProperties: false
+      required: [token, user]
+      properties:
+        token: { type: string }
+        user: { $ref: "#/components/schemas/LoginUser" }
     SystemInfo:
       type: object
       required:

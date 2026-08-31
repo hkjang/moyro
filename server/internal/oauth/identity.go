@@ -68,15 +68,31 @@ func NormalizeEmail(value string) string {
 	return strings.ToLower(strings.TrimSpace(value))
 }
 
-// ResolveOrCreate takes a provider-normalised UserInfo and returns the
-// moyro-native user plus a freshly-minted session token, creating the
-// user and/or identity row as needed.
+// ResolveOrCreate takes provider-normalised UserInfo and returns the
+// Moyro-native user plus a freshly minted session token. Browser SSO
+// callbacks use ResolveOrCreateUser instead so a bearer token is created only
+// after the browser exchanges its short-lived handoff code.
+func (s *IdentityStore) ResolveOrCreate(ctx context.Context, provider string, info *UserInfo) (*auth.User, string, bool /*created*/, error) {
+	u, created, err := s.ResolveOrCreateUser(ctx, provider, info)
+	if err != nil {
+		return nil, "", false, err
+	}
+	token, err := s.auth.IssueSession(ctx, u.ID)
+	if err != nil {
+		return nil, "", false, err
+	}
+	return u, token, created, nil
+}
+
+// ResolveOrCreateUser resolves or creates only the local identity. Keeping
+// session issuance separate lets browser callbacks return an opaque one-time
+// code instead of leaking the long-lived bearer credential through the URL.
 //
-// Branch 1: (provider, subject) row exists → load user, return session.
+// Branch 1: (provider, subject) row exists → load user.
 // Branch 2: no identity row, but a user with matching email exists AND
 //
 //	the provider reports the email as verified → link (insert
-//	identity row) and return session. Unverified → refuse.
+//	identity row). Unverified → refuse.
 //
 // Branch 3: brand-new → create a user with a unique username derived from
 //
@@ -84,12 +100,11 @@ func NormalizeEmail(value string) string {
 //	identity row. System administrators are created only by the
 //	explicit bootstrap process.
 //
-// The caller is responsible for any post-login side effects (default
-// team/channel membership, audit logging) — keeping them out of here lets
-// the function be tested without an HTTP context.
-func (s *IdentityStore) ResolveOrCreate(ctx context.Context, provider string, info *UserInfo) (*auth.User, string, bool /*created*/, error) {
+// The caller is responsible for session creation and post-login side effects
+// (default team/channel membership, audit logging).
+func (s *IdentityStore) ResolveOrCreateUser(ctx context.Context, provider string, info *UserInfo) (*auth.User, bool /*created*/, error) {
 	if info == nil || info.Subject == "" {
-		return nil, "", false, errors.New("oauth: empty subject")
+		return nil, false, errors.New("oauth: empty subject")
 	}
 	// Work on a copy so normalization cannot unexpectedly mutate a structure
 	// retained by a provider implementation or by an audit caller.
@@ -105,16 +120,12 @@ func (s *IdentityStore) ResolveOrCreate(ctx context.Context, provider string, in
 	if err == nil {
 		u, err := s.auth.UserByID(ctx, userID)
 		if err != nil {
-			return nil, "", false, err
+			return nil, false, err
 		}
-		tok, err := s.auth.IssueSession(ctx, u.ID)
-		if err != nil {
-			return nil, "", false, err
-		}
-		return u, tok, false, nil
+		return u, false, nil
 	}
 	if !errors.Is(err, pgx.ErrNoRows) {
-		return nil, "", false, err
+		return nil, false, err
 	}
 
 	// --- Branch 2: link by matching email ---
@@ -129,30 +140,26 @@ func (s *IdentityStore) ResolveOrCreate(ctx context.Context, provider string, in
 				// "Connected accounts" flow later. Better to fail loud
 				// than silently hand account control to a provider
 				// that doesn't verify email ownership.
-				return nil, "", false, ErrUnverifiedLink
+				return nil, false, ErrUnverifiedLink
 			}
 			if err := linkExistingIdentity(ctx, s.begin, existingID, provider, info, time.Now().UnixMilli()); err != nil {
-				return nil, "", false, err
+				return nil, false, err
 			}
 			u, err := s.auth.UserByID(ctx, existingID)
 			if err != nil {
-				return nil, "", false, err
+				return nil, false, err
 			}
-			tok, err := s.auth.IssueSession(ctx, u.ID)
-			if err != nil {
-				return nil, "", false, err
-			}
-			return u, tok, false, nil
+			return u, false, nil
 		}
 		if !errors.Is(err, pgx.ErrNoRows) {
-			return nil, "", false, err
+			return nil, false, err
 		}
 	}
 
 	// --- Branch 3: brand-new user ---
 	username, err := s.pickUsername(ctx, info)
 	if err != nil {
-		return nil, "", false, err
+		return nil, false, err
 	}
 	newID := uuid.NewString()
 	now := time.Now().UnixMilli()
@@ -167,18 +174,14 @@ func (s *IdentityStore) ResolveOrCreate(ctx context.Context, provider string, in
 	// picture falls straight through: external URL from the provider, or
 	// empty when the provider didn't supply one.
 	if err := createIdentityAccount(ctx, s.begin, newID, username, email, provider, info, now); err != nil {
-		return nil, "", false, err
+		return nil, false, err
 	}
 
 	u, err := s.auth.UserByID(ctx, newID)
 	if err != nil {
-		return nil, "", false, err
+		return nil, false, err
 	}
-	tok, err := s.auth.IssueSession(ctx, u.ID)
-	if err != nil {
-		return nil, "", false, err
-	}
-	return u, tok, true, nil
+	return u, true, nil
 }
 
 // linkExistingIdentity serializes the identity insert, ownership check, and

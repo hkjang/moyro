@@ -141,7 +141,7 @@ func TestConsumeOIDCCallbackTransactionConsumesProviderErrorAndClearsCookie(t *t
 
 	store := &recordingOIDCFlowConsumer{flow: oidcauth.Flow{Nonce: "nonce", Verifier: "verifier"}}
 	r := httptest.NewRequest(http.MethodGet, oidcCallbackPath+"?state=state-value&error=access_denied", nil)
-	r.AddCookie(&http.Cookie{Name: oidcTransactionCookieName, Value: "state-value", Path: oidcCallbackPath})
+	r.AddCookie(&http.Cookie{Name: oidcTransactionCookieName("state-value"), Value: "state-value", Path: oidcCallbackPath})
 	w := httptest.NewRecorder()
 
 	_, code := consumeOIDCCallbackTransaction(w, r, store, true)
@@ -151,7 +151,7 @@ func TestConsumeOIDCCallbackTransactionConsumesProviderErrorAndClearsCookie(t *t
 	if len(store.states) != 1 || store.states[0] != "state-value" {
 		t.Fatalf("consumed states = %#v, want exactly the callback state", store.states)
 	}
-	assertOIDCCookieCleared(t, w.Result())
+	assertOIDCCookieCleared(t, w.Result(), "state-value")
 }
 
 func TestConsumeOIDCCallbackTransactionConsumesStateOnCookieMismatch(t *testing.T) {
@@ -159,7 +159,7 @@ func TestConsumeOIDCCallbackTransactionConsumesStateOnCookieMismatch(t *testing.
 
 	store := &recordingOIDCFlowConsumer{flow: oidcauth.Flow{Nonce: "nonce", Verifier: "verifier"}}
 	r := httptest.NewRequest(http.MethodGet, oidcCallbackPath+"?state=callback-state", nil)
-	r.AddCookie(&http.Cookie{Name: oidcTransactionCookieName, Value: "different-state", Path: oidcCallbackPath})
+	r.AddCookie(&http.Cookie{Name: oidcTransactionCookieName("callback-state"), Value: "different-state", Path: oidcCallbackPath})
 	w := httptest.NewRecorder()
 
 	_, code := consumeOIDCCallbackTransaction(w, r, store, false)
@@ -169,7 +169,7 @@ func TestConsumeOIDCCallbackTransactionConsumesStateOnCookieMismatch(t *testing.
 	if len(store.states) != 1 || store.states[0] != "callback-state" {
 		t.Fatalf("consumed states = %#v", store.states)
 	}
-	assertOIDCCookieCleared(t, w.Result())
+	assertOIDCCookieCleared(t, w.Result(), "callback-state")
 }
 
 func TestConsumeOIDCCallbackTransactionRejectsConsumedOrMissingState(t *testing.T) {
@@ -189,7 +189,7 @@ func TestConsumeOIDCCallbackTransactionRejectsConsumedOrMissingState(t *testing.
 			store := &recordingOIDCFlowConsumer{err: test.storeErr}
 			r := httptest.NewRequest(http.MethodGet, oidcCallbackPath+test.queryPart, nil)
 			if test.cookie != "" {
-				r.AddCookie(&http.Cookie{Name: oidcTransactionCookieName, Value: test.cookie})
+				r.AddCookie(&http.Cookie{Name: oidcTransactionCookieName(r.URL.Query().Get("state")), Value: test.cookie})
 			}
 			w := httptest.NewRecorder()
 			_, code := consumeOIDCCallbackTransaction(w, r, store, false)
@@ -209,7 +209,7 @@ func TestConsumeOIDCCallbackTransactionReturnsFlowOnBoundSuccess(t *testing.T) {
 	want := oidcauth.Flow{Nonce: "nonce", Verifier: "verifier", ReturnTo: "/workspace"}
 	store := &recordingOIDCFlowConsumer{flow: want}
 	r := httptest.NewRequest(http.MethodGet, oidcCallbackPath+"?state=state-value&code=code-value", nil)
-	r.AddCookie(&http.Cookie{Name: oidcTransactionCookieName, Value: "state-value"})
+	r.AddCookie(&http.Cookie{Name: oidcTransactionCookieName("state-value"), Value: "state-value"})
 	w := httptest.NewRecorder()
 
 	got, code := consumeOIDCCallbackTransaction(w, r, store, false)
@@ -220,6 +220,9 @@ func TestConsumeOIDCCallbackTransactionReturnsFlowOnBoundSuccess(t *testing.T) {
 
 func TestSetOIDCTransactionCookieSecurityAttributes(t *testing.T) {
 	t.Parallel()
+	if oidcTransactionCookieName("state-value") == oidcTransactionCookieName("another-state") {
+		t.Fatal("independent OIDC flows shared a transaction cookie name")
+	}
 
 	w := httptest.NewRecorder()
 	setOIDCTransactionCookie(w, "state-value", time.Now().Add(10*time.Minute).UnixMilli(), true)
@@ -228,7 +231,7 @@ func TestSetOIDCTransactionCookieSecurityAttributes(t *testing.T) {
 		t.Fatalf("cookies = %d, want 1", len(cookies))
 	}
 	cookie := cookies[0]
-	if cookie.Name != oidcTransactionCookieName || cookie.Value != "state-value" || cookie.Path != oidcCallbackPath {
+	if cookie.Name != oidcTransactionCookieName("state-value") || cookie.Value != "state-value" || cookie.Path != oidcCallbackPath {
 		t.Fatalf("unexpected transaction cookie: %+v", cookie)
 	}
 	if !cookie.HttpOnly || !cookie.Secure || cookie.SameSite != http.SameSiteLaxMode || cookie.MaxAge <= 0 {
@@ -236,15 +239,53 @@ func TestSetOIDCTransactionCookieSecurityAttributes(t *testing.T) {
 	}
 }
 
-func assertOIDCCookieCleared(t *testing.T, response *http.Response) {
+func TestSetSSOHandoffCookieSecurityAttributes(t *testing.T) {
+	t.Parallel()
+	if ssoHandoffCookieName("handoff-code") == ssoHandoffCookieName("another-code") {
+		t.Fatal("independent SSO flows shared a handoff cookie name")
+	}
+
+	w := httptest.NewRecorder()
+	setSSOHandoffCookie(w, "handoff-code", "browser-binding", time.Now().Add(5*time.Minute).UnixMilli(), true)
+	cookies := w.Result().Cookies()
+	if len(cookies) != 1 {
+		t.Fatalf("cookies = %d, want 1", len(cookies))
+	}
+	cookie := cookies[0]
+	if cookie.Name != ssoHandoffCookieName("handoff-code") || cookie.Value != "browser-binding" || cookie.Path != ssoSessionExchangePath {
+		t.Fatalf("unexpected SSO handoff cookie: %+v", cookie)
+	}
+	if !cookie.HttpOnly || !cookie.Secure || cookie.SameSite != http.SameSiteStrictMode || cookie.MaxAge <= 0 {
+		t.Fatalf("SSO handoff cookie lacks security attributes: %+v", cookie)
+	}
+
+	clearRecorder := httptest.NewRecorder()
+	clearSSOHandoffCookie(clearRecorder, "handoff-code", true)
+	assertSSOHandoffCookieCleared(t, clearRecorder.Result(), "handoff-code")
+}
+
+func assertOIDCCookieCleared(t *testing.T, response *http.Response, state string) {
 	t.Helper()
 	cookies := response.Cookies()
 	if len(cookies) != 1 {
 		t.Fatalf("clear cookies = %d, want 1", len(cookies))
 	}
 	cookie := cookies[0]
-	if cookie.Name != oidcTransactionCookieName || cookie.Path != oidcCallbackPath || cookie.MaxAge >= 0 || !cookie.HttpOnly || cookie.SameSite != http.SameSiteLaxMode {
+	if cookie.Name != oidcTransactionCookieName(state) || cookie.Path != oidcCallbackPath || cookie.MaxAge >= 0 || !cookie.HttpOnly || cookie.SameSite != http.SameSiteLaxMode {
 		t.Fatalf("transaction cookie was not securely cleared: %+v", cookie)
+	}
+}
+
+func assertSSOHandoffCookieCleared(t *testing.T, response *http.Response, code string) {
+	t.Helper()
+	cookies := response.Cookies()
+	if len(cookies) != 1 {
+		t.Fatalf("SSO clear cookies = %d, want 1", len(cookies))
+	}
+	cookie := cookies[0]
+	if cookie.Name != ssoHandoffCookieName(code) || cookie.Path != ssoSessionExchangePath || cookie.MaxAge >= 0 ||
+		!cookie.HttpOnly || cookie.SameSite != http.SameSiteStrictMode {
+		t.Fatalf("SSO handoff cookie was not securely cleared: %+v", cookie)
 	}
 }
 

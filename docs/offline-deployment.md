@@ -1,16 +1,16 @@
 # moyro Offline Deployment Guide
 
-This guide describes how to install the v0.2.3 moyro service image in a network
+This guide describes how to install the v0.2.4 moyro service image in a network
 with no internet access after its release archive is published. The
 archive contains the application and web UI. It does not contain PostgreSQL; a
 reachable PostgreSQL service must already exist inside the target network.
 
 ## Release artifact contract
 
-For the `v0.2.3` release tag:
+For the `v0.2.4` release tag:
 
-- Docker image: `moyro:v0.2.3`
-- Downloaded file: `moyro-v0.2.3.tar.gz`
+- Docker image: `moyro:v0.2.4`
+- Downloaded file: `moyro-v0.2.4.tar.gz`
 - Supported platform for the initial release: `linux/amd64`
 
 After publication, transfer the archive through the organization's approved
@@ -18,14 +18,14 @@ media and integrity process. Compare it with the SHA-256 in the release notes
 before loading the image:
 
 ```bash
-sha256sum moyro-v0.2.3.tar.gz
+sha256sum moyro-v0.2.4.tar.gz
 ```
 
 Load it without contacting a registry:
 
 ```bash
-docker load --input moyro-v0.2.3.tar.gz
-docker image inspect moyro:v0.2.3
+docker load --input moyro-v0.2.4.tar.gz
+docker image inspect moyro:v0.2.4
 ```
 
 ## PostgreSQL preparation
@@ -89,7 +89,7 @@ docker run -d \
   --env-file /etc/moyro/moyro.env \
   --mount type=volume,src=moyro-data,dst=/var/lib/moyro \
   --publish 8065:8065 \
-  moyro:v0.2.3
+  moyro:v0.2.4
 ```
 
 Check startup and open `http://<server>:8065/`:
@@ -106,7 +106,7 @@ can use bounded local retention, session-only storage, or no browser storage;
 logout cleanup is controlled by the same site policy. Those values are stored
 in PostgreSQL; provider secrets are encrypted before storage.
 
-v0.2.3 deliberately does not trust `X-Forwarded-For`, `X-Real-IP`, or
+v0.2.4 deliberately does not trust `X-Forwarded-For`, `X-Real-IP`, or
 `True-Client-IP`. Rate limiting and audit addresses use the direct TCP peer, so
 users behind one reverse proxy share that proxy's login/OIDC rate bucket and
 audit address. Configure the proxy to remove client-supplied forwarded headers,
@@ -120,7 +120,7 @@ port, or path in the allow-list entry.
 The Mattermost-compatible `GET /api/v4/config` endpoint is an operational
 snapshot, not a second configuration store. Its legacy `PUT /config`,
 `PUT /config/patch`, and `POST /config/reload` mutations return a 501
-Mattermost AppError in v0.2.3. SMTP, S3, Redis, and link-preview toggles
+Mattermost AppError in v0.2.4. SMTP, S3, Redis, and link-preview toggles
 therefore cannot appear to save successfully. Runtime plugin lifecycle is a
 separate supported native workflow: an administrator with `manage_plugins`
 can upload, replace, enable, disable, configure, and delete reviewed
@@ -134,7 +134,7 @@ The native product API contract is published separately from compatibility
 routes: [`openapi-moyro.yaml`](openapi-moyro.yaml) covers `/api/moyro/v1`, while
 [`openapi-v4.yaml`](openapi-v4.yaml) covers the Mattermost-compatible `/api/v4`.
 
-Run exactly one moyro application container in v0.2.3. PostgreSQL may be
+Run exactly one moyro application container in v0.2.4. PostgreSQL may be
 managed separately, but multi-replica application deployment and cross-node
 live-setting propagation are not supported until the HA/Redis work is
 completed.
@@ -172,6 +172,12 @@ moyro to the Keycloak client. If Keycloak uses a private certificate authority,
 install its CA through the supported administrator setting rather than
 modifying the container by hand.
 
+The provider callback returns a five-minute, browser-bound one-time code rather
+than a reusable Moyro session token. The web client exchanges it once for the
+local user and session, so a successful SSO callback does not depend on a
+follow-up `/api/v4/users/me` probe. If that exchange fails, the login page shows
+an explicit retry message instead of silently returning to the login form.
+
 OIDC validation depends on accurate clocks. Provide internal NTP to both
 Keycloak and the moyro host.
 
@@ -198,7 +204,12 @@ file volume can retain message metadata while losing attachments.
    WebSocket delivery, durable activity state, task/decision source links, and
    Keycloak login.
 
-Do not mix an earlier pre-moyro development build with a v0.2.3 node. Upgrade
+v0.2.4 adds migration `000011_login_handoffs`, which stores only SHA-256
+digests of short-lived SSO codes and browser bindings. Startup applies it in a
+transaction; keep the pre-upgrade database backup because an image-only
+rollback is not a supported way to remove an applied migration.
+
+Do not mix an earlier pre-moyro development build with a v0.2.4 node. Upgrade
 the service as one coordinated operation and verify the matching database
 backup before discarding the prior container.
 
@@ -212,7 +223,7 @@ On a connected staging host, preload `postgres:16-alpine` and run the same
 offline check used by the release workflow:
 
 ```bash
-bash scripts/verify-release.sh moyro:v0.2.3 moyro-v0.2.3.tar.gz
+bash scripts/verify-release.sh moyro:v0.2.4 moyro-v0.2.4.tar.gz
 ```
 
 The script loads the archive, creates an internal-only Docker network, starts
@@ -237,7 +248,7 @@ logs in again. Temporary containers, network, and volume are removed on exit.
 - Conversation-derived tasks and decisions survive restart, retain source links,
   and do not become visible outside creator/assignee/channel membership rules.
 - SMTP delivery, S3 storage, Redis fan-out, and outbound link previews remain
-  explicitly unsupported in v0.2.3 rather than reporting a false successful
+  explicitly unsupported in v0.2.4 rather than reporting a false successful
   save. Runtime plugin upload and lifecycle management are supported only for
   reviewed Trusted Native archives through the native plugin page/API.
 - Network controls independently restrict container egress to approved internal

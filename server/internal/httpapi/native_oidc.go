@@ -7,12 +7,14 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/url"
 	"strings"
 	"time"
 
 	"github.com/hkjang/moyro/server/internal/audit"
+	"github.com/hkjang/moyro/server/internal/auth"
 	"github.com/hkjang/moyro/server/internal/oauth"
 	"github.com/hkjang/moyro/server/internal/oidcauth"
 	"github.com/hkjang/moyro/server/internal/rbac"
@@ -24,9 +26,11 @@ const (
 	oidcSettingsKey     = "keycloak"
 	oidcSecretKey       = "keycloak-client-secret"
 
-	oidcTransactionCookieName = "moyro_oidc_transaction"
-	oidcCallbackPath          = "/api/moyro/v1/auth/oidc/callback"
-	maxReturnToLength         = 2048
+	oidcTransactionCookiePrefix = "moyro_oidc_transaction_"
+	oidcCallbackPath            = "/api/moyro/v1/auth/oidc/callback"
+	ssoHandoffCookiePrefix      = "moyro_sso_handoff_"
+	ssoSessionExchangePath      = "/api/moyro/v1/auth/sso/session"
+	maxReturnToLength           = 2048
 )
 
 type secretConfiguredView struct {
@@ -299,7 +303,7 @@ func (h *handlers) nativeOIDCLogin(w http.ResponseWriter, r *http.Request) {
 func (h *handlers) nativeOIDCCallback(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	if h.native == nil || h.native.oidcFlows == nil || h.native.oidc == nil {
-		clearOIDCTransactionCookie(w, r.TLS != nil)
+		clearOIDCTransactionCookie(w, r.URL.Query().Get("state"), r.TLS != nil)
 		h.nativeOIDCRedirectError(w, r, "provider_unavailable")
 		return
 	}
@@ -333,7 +337,7 @@ func (h *handlers) nativeOIDCCallback(w http.ResponseWriter, r *http.Request) {
 		Subject: identity.Subject, Username: identity.Username, Email: identity.Email,
 		EmailVerified: identity.EmailVerified, Name: identity.DisplayName, Picture: identity.Picture,
 	}
-	u, token, created, err := h.oauthIdent.ResolveOrCreate(r.Context(), providerKey, info)
+	u, created, err := h.oauthIdent.ResolveOrCreateUser(r.Context(), providerKey, info)
 	if err != nil {
 		if errors.Is(err, oauth.ErrUnverifiedLink) {
 			h.nativeOIDCRedirectError(w, r, "unverified_email")
@@ -351,6 +355,13 @@ func (h *handlers) nativeOIDCCallback(w http.ResponseWriter, r *http.Request) {
 			h.audit.LogAsync(u.ID, audit.ActionUserRegister, u.Username, map[string]any{"oauth_provider": "keycloak", "email": u.Email})
 		}
 	}
+	handoff, err := h.auth.CreateLoginHandoff(r.Context(), u.ID)
+	if err != nil {
+		h.logger.Error("Keycloak login handoff creation failed", "user", u.ID, "err", err)
+		h.nativeOIDCRedirectError(w, r, "session_failed")
+		return
+	}
+	setSSOHandoffCookie(w, handoff.Code, handoff.BrowserBinding, handoff.ExpiresAt, oidcCookieSecure(r, h.native.oidc))
 	if h.audit != nil {
 		h.audit.LogAsync(u.ID, audit.ActionUserLogin, u.Username, map[string]any{"oauth_provider": "keycloak", "ip": r.RemoteAddr})
 	}
@@ -358,7 +369,56 @@ func (h *handlers) nativeOIDCCallback(w http.ResponseWriter, r *http.Request) {
 	if destination == "" {
 		destination = "/"
 	}
-	http.Redirect(w, r, destination+"#token="+url.QueryEscape(token), http.StatusFound)
+	http.Redirect(w, r, destination+"#sso_code="+url.QueryEscape(handoff.Code), http.StatusFound)
+}
+
+type ssoSessionExchangeRequest struct {
+	Code string `json:"code"`
+}
+
+// nativeSSOSessionExchange completes a browser SSO redirect in one request.
+// The opaque code and independent HttpOnly browser binding must both match the
+// same live database row before a local session can be minted.
+func (h *handlers) nativeSSOSessionExchange(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
+	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4<<10))
+	decoder.DisallowUnknownFields()
+	var req ssoSessionExchangeRequest
+	if err := decoder.Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "api.moyro.sso.invalid_body", err.Error())
+		return
+	}
+	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+		writeError(w, http.StatusBadRequest, "api.moyro.sso.invalid_body", "request body must contain one JSON object")
+		return
+	}
+	req.Code = strings.TrimSpace(req.Code)
+	if req.Code == "" {
+		writeError(w, http.StatusBadRequest, "api.moyro.sso.missing_code", "code is required")
+		return
+	}
+	cookie, err := r.Cookie(ssoHandoffCookieName(req.Code))
+	if err != nil || strings.TrimSpace(cookie.Value) == "" {
+		writeError(w, http.StatusUnauthorized, "api.moyro.sso.invalid_code", "SSO login code is invalid or expired")
+		return
+	}
+
+	u, token, err := h.auth.ExchangeLoginHandoff(r.Context(), req.Code, cookie.Value)
+	if errors.Is(err, auth.ErrInvalidLoginHandoff) {
+		clearSSOHandoffCookie(w, req.Code, h.oauthSecureCookies(r))
+		writeError(w, http.StatusUnauthorized, "api.moyro.sso.invalid_code", "SSO login code is invalid or expired")
+		return
+	}
+	if err != nil {
+		if h.logger != nil {
+			h.logger.Error("SSO login code exchange failed", "err", err)
+		}
+		writeError(w, http.StatusInternalServerError, "api.moyro.sso.exchange", "could not create the SSO session")
+		return
+	}
+	clearSSOHandoffCookie(w, req.Code, h.oauthSecureCookies(r))
+	w.Header().Set("Token", token)
+	writeJSON(w, http.StatusOK, map[string]any{"token": token, "user": u})
 }
 
 func (h *handlers) nativeOIDCRedirectError(w http.ResponseWriter, r *http.Request, code string) {
@@ -469,8 +529,8 @@ type oidcFlowConsumer interface {
 // authorization transaction.
 func consumeOIDCCallbackTransaction(w http.ResponseWriter, r *http.Request, store oidcFlowConsumer, secure bool) (oidcauth.Flow, string) {
 	state := r.URL.Query().Get("state")
-	cookie, cookieErr := r.Cookie(oidcTransactionCookieName)
-	clearOIDCTransactionCookie(w, secure)
+	cookie, cookieErr := r.Cookie(oidcTransactionCookieName(state))
+	clearOIDCTransactionCookie(w, state, secure)
 
 	// Consume even when the cookie is absent or mismatched. An attacker who
 	// learns a state must not be able to probe it repeatedly or reuse it after
@@ -511,18 +571,49 @@ func setOIDCTransactionCookie(w http.ResponseWriter, state string, expiresAt int
 		maxAge = 1
 	}
 	http.SetCookie(w, &http.Cookie{
-		Name: oidcTransactionCookieName, Value: state, Path: oidcCallbackPath,
+		Name: oidcTransactionCookieName(state), Value: state, Path: oidcCallbackPath,
 		Expires: expires, MaxAge: maxAge, HttpOnly: true, Secure: secure,
 		SameSite: http.SameSiteLaxMode,
 	})
 }
 
-func clearOIDCTransactionCookie(w http.ResponseWriter, secure bool) {
+func clearOIDCTransactionCookie(w http.ResponseWriter, state string, secure bool) {
 	http.SetCookie(w, &http.Cookie{
-		Name: oidcTransactionCookieName, Value: "", Path: oidcCallbackPath,
+		Name: oidcTransactionCookieName(state), Value: "", Path: oidcCallbackPath,
 		Expires: time.Unix(1, 0), MaxAge: -1, HttpOnly: true, Secure: secure,
 		SameSite: http.SameSiteLaxMode,
 	})
+}
+
+func oidcTransactionCookieName(state string) string {
+	digest := sha256.Sum256([]byte(state))
+	return oidcTransactionCookiePrefix + hex.EncodeToString(digest[:8])
+}
+
+func setSSOHandoffCookie(w http.ResponseWriter, code, binding string, expiresAt int64, secure bool) {
+	expires := time.UnixMilli(expiresAt)
+	maxAge := int(time.Until(expires).Seconds())
+	if maxAge < 1 {
+		maxAge = 1
+	}
+	http.SetCookie(w, &http.Cookie{
+		Name: ssoHandoffCookieName(code), Value: binding, Path: ssoSessionExchangePath,
+		Expires: expires, MaxAge: maxAge, HttpOnly: true, Secure: secure,
+		SameSite: http.SameSiteStrictMode,
+	})
+}
+
+func clearSSOHandoffCookie(w http.ResponseWriter, code string, secure bool) {
+	http.SetCookie(w, &http.Cookie{
+		Name: ssoHandoffCookieName(code), Value: "", Path: ssoSessionExchangePath,
+		Expires: time.Unix(1, 0), MaxAge: -1, HttpOnly: true, Secure: secure,
+		SameSite: http.SameSiteStrictMode,
+	})
+}
+
+func ssoHandoffCookieName(code string) string {
+	digest := sha256.Sum256([]byte(code))
+	return ssoHandoffCookiePrefix + hex.EncodeToString(digest[:8])
 }
 
 func oidcCookieSecure(r *http.Request, manager *oidcauth.Manager) bool {

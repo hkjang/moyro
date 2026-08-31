@@ -37,6 +37,7 @@
 - [x] username/email claim mapping, 가입 정책, 내부 CA와 connection test를 제공한다.
 - [x] 설정 변경을 재기동 없이 적용하고 secret을 redaction한다.
 - [x] 로그인 화면은 활성 provider만 표시한다.
+- [x] callback에는 장기 JWT 대신 hash 저장된 browser-bound 1회용 code를 사용하고 user/session을 원자적으로 교환한다.
 
 ## Phase 4 — UI 구조와 접근성
 
