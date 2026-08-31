@@ -1,7 +1,7 @@
 # moyro 제품·기술 사양
 
 > 상태: 구현 기준선
-> 작성일: 2026-08-30
+> 작성일: 2026-08-31
 > 제품명: `moyro`
 
 ## 1. 제품 정의
@@ -30,9 +30,9 @@ moyro 프로세스가 직접 읽는 환경변수는 정확히 네 개다.
 | `BOOTSTRAP_ADMIN_PASSWORD` | 예 | 최초 관리자 생성에만 사용하며 로그·감사 payload·DB 평문에 남기지 않는다. |
 | `ENCRYPTION_KEY` | 예 | 정확히 32바이트를 base64로 인코딩한 root key. JWT 서명과 DB 비밀 암호화용 하위 키를 분리 파생한다. |
 
-HTTP listen 주소 `:8065`, 로컬 파일 저장소 `/var/lib/moyro/files`, 플러그인 디렉터리 `/var/lib/moyro/plugins`, 웹 정적 자산 위치는 이미지 계약으로 고정한다. v0.2.1에서 OIDC, AI, webhook outbound allowlist는 관리자 설정 전까지 비활성이다. SMTP, Redis, S3와 outbound link preview는 이 릴리스의 운영 범위에 포함하지 않으며 호환 API에서도 거짓 성공을 반환하지 않는다. 검토한 Mattermost 형식 `.tar.gz`의 runtime 업로드·교체·활성화·비활성화·설정·삭제는 지원한다.
+HTTP listen 주소 `:8065`, 로컬 파일 저장소 `/var/lib/moyro/files`, 플러그인 디렉터리 `/var/lib/moyro/plugins`, 웹 정적 자산 위치는 이미지 계약으로 고정한다. v0.2.2에서 OIDC, AI, webhook outbound allowlist는 관리자 설정 전까지 비활성이다. SMTP, Redis, S3와 outbound link preview는 이 릴리스의 운영 범위에 포함하지 않으며 호환 API에서도 거짓 성공을 반환하지 않는다. 검토한 Mattermost 형식 `.tar.gz`의 runtime 업로드·교체·활성화·비활성화·설정·삭제는 지원한다.
 
-v0.2.1의 지원 배포 단위는 PostgreSQL에 연결된 moyro 애플리케이션 컨테이너 **한 개**다. 관리자 설정의 DB commit과 live snapshot 전환은 이 프로세스 안에서 직렬화한다. 여러 애플리케이션 replica, Redis fan-out, HA 설정 전파는 후속 범위이며 이 릴리스에서 지원한다고 주장하지 않는다.
+v0.2.2의 지원 배포 단위는 PostgreSQL에 연결된 moyro 애플리케이션 컨테이너 **한 개**다. 관리자 설정의 DB commit과 live snapshot 전환은 이 프로세스 안에서 직렬화한다. 여러 애플리케이션 replica, Redis fan-out, HA 설정 전파는 후속 범위이며 이 릴리스에서 지원한다고 주장하지 않는다.
 
 ### 2.2 이미지와 릴리스
 
@@ -45,7 +45,7 @@ v0.2.1의 지원 배포 단위는 PostgreSQL에 연결된 moyro 애플리케이�
 
 ## 3. 설정과 비밀 관리
 
-v0.2.1이 지원하는 운영 설정은 관리 페이지와 DB-backed API로 관리한다. 공개 설정, 일반 설정, 비밀 설정을 명시적으로 구분한다.
+v0.2.2가 지원하는 운영 설정은 관리 페이지와 DB-backed API로 관리한다. 공개 설정, 일반 설정, 비밀 설정을 명시적으로 구분한다.
 
 - 일반 설정은 JSON 값과 revision을 저장한다. 현재 role permission처럼
   revision을 입력받는 변경 표면은 optimistic concurrency를 강제하며,
@@ -54,8 +54,8 @@ v0.2.1이 지원하는 운영 설정은 관리 페이지와 DB-backed API로 관
 - 설정 section과 key로 구성한 row identity를 AEAD AAD에 결합해 다른 설정 row로 ciphertext를 옮겨도 복호화되지 않게 한다.
 - provider의 공개 JSON과 새 비밀은 같은 PostgreSQL transaction으로 저장한 뒤 검증된 live snapshot으로 전환한다.
 - 지원되는 설정 변경은 감사 이벤트를 남긴다.
-- root `ENCRYPTION_KEY`는 관리 페이지에서 변경하지 않는다. v0.2.1에는 온라인 rewrap 절차가 없으므로 인스턴스 수명 동안 고정하고 별도로 백업한다.
-- Site URL, 조직명, 가입 정책, outbound webhook host allowlist, browser draft 정책, Keycloak, AI, MCP, 키 정책, 승인 정책과 Trusted Native 플러그인 lifecycle을 관리자 설정 catalog에 포함한다. SMTP·S3·Redis는 v0.2.1 미지원이며 저장 가능한 것처럼 표시하지 않는다.
+- root `ENCRYPTION_KEY`는 관리 페이지에서 변경하지 않는다. v0.2.2에는 온라인 rewrap 절차가 없으므로 인스턴스 수명 동안 고정하고 별도로 백업한다.
+- Site URL, 조직명, 가입 정책, outbound webhook host allowlist, browser draft 정책, Keycloak, AI, MCP, 키 정책, 승인 정책과 Trusted Native 플러그인 lifecycle을 관리자 설정 catalog에 포함한다. SMTP·S3·Redis는 v0.2.2 미지원이며 저장 가능한 것처럼 표시하지 않는다.
 - browser draft 정책은 `local`, `session`, `disabled` 중 하나를 선택한다. `local`의 보존 기간은 1~30일이며 기본값은 7일이고, 로그아웃 시 현재 사용자 초안을 지우는 정책을 별도로 적용한다. 공개 `/api/moyro/v1/system/info`는 클라이언트가 사용할 유효 draft capability만 반환한다.
 
 ## 4. 인증과 권한
@@ -76,11 +76,11 @@ v0.2.1이 지원하는 운영 설정은 관리 페이지와 DB-backed API로 관
 
 ### 4.3 Keycloak OIDC
 
-관리자는 먼저 canonical Site URL을 저장한 뒤 최소 `Issuer URL`, `Client ID`, `Client Secret`을 입력한다. moyro는 discovery로 endpoint와 JWKS를 구성하며 callback URL을 Site URL에서 계산한다. 활성화된 동안 Site URL을 비울 수 없고, 저장된 검증 callback은 재기동 뒤에도 유지된다.
+관리자는 먼저 canonical Site URL을 저장한 뒤 최소 `Issuer URL`, `Client ID`, `Client Secret`을 입력한다. realm issuer 대신 정확한 `.well-known/openid-configuration` URL을 입력해도 issuer로 정규화한다. moyro는 크기가 제한된 discovery 문서와 실제 JWKS signing key를 확인해 endpoint를 구성하며, 서로 다른 HTTP(S) origin의 front-channel/back-channel endpoint를 지원하되 HTTPS issuer의 HTTP downgrade와 credentials·fragment가 든 endpoint는 거부한다. callback URL은 Site URL에서 계산한다. 활성화된 동안 Site URL을 비울 수 없고, 저장된 검증 callback은 재기동 뒤에도 유지된다. discovery/JWKS 확인은 client secret이나 redirect 등록을 인증하지 않으므로 활성화 뒤 실제 로그인을 별도로 검증한다.
 
 - Authorization Code + PKCE S256
 - state와 nonce 검증
-- ID token signature, issuer, audience/azp, expiry 검증
+- ID token signature, issuer, audience/azp, expiry와 제공된 access token의 `at_hash` 검증
 - 기본 scope `openid profile email`
 - username과 email claim mapping
 - 계정 자동 생성, 이메일 확인 정책, 내부 CA 설정
@@ -91,7 +91,7 @@ v0.2.1이 지원하는 운영 설정은 관리 페이지와 DB-backed API로 관
 
 권한을 문자열 상수 비교가 아니라 DB 역할과 permission 연결로 평가한다. 기존 Mattermost 호환 role 문자열은 assignment source로 유지하되 각 role을 DB 정의에 resolve한다.
 
-핵심 permission namespace는 `system.settings.*`, `oidc.*`, `ai.*`, `keys.*`, `approval.*`, `mcp.*`와 채팅 resource permission으로 구성한다. 역할 permission 변경은 다음 요청부터 반영하며, 기본 `system_admin` 역할에서는 복구 권한인 `manage_system`을 제거할 수 없다. 사용자별 system-admin assignment lifecycle은 v0.2.1의 native 관리 표면에 포함하지 않는다.
+핵심 permission namespace는 `system.settings.*`, `oidc.*`, `ai.*`, `keys.*`, `approval.*`, `mcp.*`와 채팅 resource permission으로 구성한다. 역할 permission 변경은 다음 요청부터 반영하며, 기본 `system_admin` 역할에서는 복구 권한인 `manage_system`을 제거할 수 없다. 사용자별 system-admin assignment lifecycle은 v0.2.2의 native 관리 표면에 포함하지 않는다.
 
 ## 5. 사용자 키 관리
 
@@ -102,7 +102,7 @@ v0.2.1이 지원하는 운영 설정은 관리 페이지와 DB-backed API로 관
 - 관리자가 role permission을 회수하면 기존 키 권한도 즉시 축소된다.
 - 사용자 요청 회전은 새 키를 만들고 이전 키를 configurable grace 기간 동안 `retiring`으로 둔 뒤 폐기한다.
 - 폐기된 키는 다시 활성화하지 않고 새 secret을 발급한다.
-- 개인 페이지는 자기 키 생성·회전·폐기를, 관리자 페이지는 허용 scope·TTL·회전 유예와 역할별 권한을 관리한다. v0.2.1은 일정 기반 자동 회전을 실행하지 않는다.
+- 개인 페이지는 자기 키 생성·회전·폐기를, 관리자 페이지는 허용 scope·TTL·회전 유예와 역할별 권한을 관리한다. v0.2.2는 일정 기반 자동 회전을 실행하지 않는다.
 
 ## 6. AI
 
@@ -117,7 +117,7 @@ v0.2.1이 지원하는 운영 설정은 관리 페이지와 DB-backed API로 관
 - 개인은 관리자가 구성한 provider/model 범위 안에서 기본 model과 생성 선호만 선택한다.
 - prompt와 response 본문은 기본 감사 로그에 저장하지 않고 model, token count, 상태만 남긴다.
 - AI 대화는 `use_ai` 권한과 개인 설정을 확인한 뒤 현재 브라우저 세션의 텍스트만 SSE로 전송한다. 요청은 최신 대화 최대 24개·48,000자의 sliding window로 제한하고, 서버가 provider 별 context token 제한을 다시 검증한다. 화면 이동 뒤 복원되는 대화 이력은 제공하지 않는다.
-- 채널 컨텍스트의 AI 요약은 사용자가 버튼을 누를 때 현재 클라이언트에 로드된 최근 메시지만 전송한다. 입력 메시지 목록은 확인할 수 있지만, v0.2.1은 벡터 검색·RAG나 모든 문장에 대한 citation 정확성을 보장하지 않는다.
+- 채널 컨텍스트의 AI 요약은 사용자가 버튼을 누를 때 현재 클라이언트에 로드된 최근 메시지만 전송한다. 입력 메시지 목록은 확인할 수 있지만, v0.2.2는 벡터 검색·RAG나 모든 문장에 대한 citation 정확성을 보장하지 않는다.
 
 ## 7. MCP와 native API
 
@@ -135,13 +135,13 @@ Mattermost 호환 endpoint는 `/api/v4`에 유지하고 moyro 기능은 `/api/mo
 - Write tools: `create_post`, `reply_to_thread`
 - Review tools: `list_pending_approvals`, `approve_request`, `reject_request`
 
-MCP와 REST는 같은 Principal, Authorizer, approval engine, audit service를 사용한다. 설정 secret, API key 평문, 관리자 전용 데이터는 MCP resource로 노출하지 않는다. 보호된 write는 입력의 idempotency key로 중복 승인 요청을 합치며, 승인된 side effect는 request ID로 중복 실행을 막는다. 정책이 적용되지 않는 직접 게시에는 v0.2.1에서 별도 idempotency 보장을 주장하지 않는다.
+MCP와 REST는 같은 Principal, Authorizer, approval engine, audit service를 사용한다. 설정 secret, API key 평문, 관리자 전용 데이터는 MCP resource로 노출하지 않는다. 보호된 write는 입력의 idempotency key로 중복 승인 요청을 합치며, 승인된 side effect는 request ID로 중복 실행을 막는다. 정책이 적용되지 않는 직접 게시에는 v0.2.2에서 별도 idempotency 보장을 주장하지 않는다.
 
 ## 8. 선택적 팀장 검토·승인
 
 승인 기능의 기본값은 비활성이다.
 
-- 적용 가능한 action type, reviewer 역할, 자기 승인 허용 여부, 반려 사유 요구와 만료를 관리자가 설정한다. v0.2.1의 승인 quorum은 한 명으로 고정한다.
+- 적용 가능한 action type, reviewer 역할, 자기 승인 허용 여부, 반려 사유 요구와 만료를 관리자가 설정한다. v0.2.2의 승인 quorum은 한 명으로 고정한다.
 - 적용 정책이 없거나 비활성이면 승인 record를 만들지 않고 기존 동작을 즉시 수행한다.
 - 활성 정책에 해당하면 MCP write 결과에 승인 대기 상태와 request ID를 반환하고 승인 후 outbox를 통해 한 번만 실행한다.
 - 기본 reviewer role은 `team_lead`와 `system_admin`이며 관리자가 role permission mapping을 바꿀 수 있다.
@@ -202,7 +202,7 @@ UI framework는 MUI Core와 MUI X Community DataGrid, navigation은 React Router
 ## 10. 호환성과 보안 검증 기준
 
 다음은 production 수준의 호환성과 보안을 주장하기 위한 목표 기준이다.
-v0.2.1 릴리스 검증은 태그 시점의 unit/build/browser/offline image gate로
+v0.2.2 릴리스 검증은 태그 시점의 unit/build/browser/offline image gate로
 재현하며, 이 문서 갱신만으로 임의 환경의 검증 완료를 주장하지
 않는다. [구현·검증 체크리스트](moyro-build-checklist.md)는 공개된
 v0.1.0/v0.1.1의 역사적 검증 기록으로 보존한다.
@@ -211,7 +211,7 @@ v0.1.0/v0.1.1의 역사적 검증 기록으로 보존한다.
 2. logout·session revoke·비활성 사용자의 HTTP/WebSocket token이 즉시 거부된다.
 3. secret API 응답, 로그, audit payload에 평문 비밀이 없다.
 4. bootstrap은 동시 기동과 재기동에도 idempotent하다.
-5. Keycloak state·nonce·PKCE·issuer·audience·expiry negative test가 통과한다.
+5. Keycloak discovery/JWKS·cross-origin back-channel·HTTPS downgrade와 state·nonce·PKCE·issuer·audience/azp·at_hash·expiry negative test가 통과한다.
 6. API key plaintext 1회 표시, scope intersection, revoke/expire/rotation grace test가 통과한다.
 7. AI는 기본 streaming, disconnect cancellation, 262144 허용·262145 거부를 검증한다.
 8. 승인 비활성 시 direct execution 및 승인 row 0개, 활성 시 승인/반려/idempotent execution과 raw payload 비노출 preview를 검증한다.

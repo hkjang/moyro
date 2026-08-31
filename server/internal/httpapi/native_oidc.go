@@ -133,8 +133,20 @@ func (h *handlers) listNativeOIDCProviders(w http.ResponseWriter, r *http.Reques
 		writeError(w, http.StatusInternalServerError, "api.moyro.oidc.read", err.Error())
 		return
 	}
+	live := h.native != nil && h.native.oidc != nil && h.native.oidc.Enabled()
+	view.DiscoveryStatus = runtimeOIDCDiscoveryStatus(view, live)
 	view.RedirectURL = h.effectivePublicBaseURL(r) + oidcCallbackPath
 	writeJSON(w, http.StatusOK, []oidcProviderView{view})
+}
+
+func runtimeOIDCDiscoveryStatus(view oidcProviderView, live bool) string {
+	if view.Enabled && !live {
+		// Stored settings can outlive a failed restart-time discovery. Report the
+		// current runtime truth instead of showing the last successful probe as if
+		// SSO were still available.
+		return "error"
+	}
+	return view.DiscoveryStatus
 }
 
 func (h *handlers) readOIDCProvider(ctx context.Context) (oidcProviderView, error) {
@@ -191,8 +203,8 @@ func (h *handlers) saveNativeOIDCProvider(w http.ResponseWriter, r *http.Request
 	view.DiscoveryStatus = "unknown"
 	actor := userID(r)
 
-	secret := strings.TrimSpace(view.ClientSecret)
-	if secret == "" {
+	secret := view.ClientSecret
+	if strings.TrimSpace(secret) == "" {
 		var err error
 		secret, err = h.native.revealOptionalSecret(r.Context(), oidcSettingsSection, oidcSecretKey)
 		if err != nil {
@@ -212,6 +224,7 @@ func (h *handlers) saveNativeOIDCProvider(w http.ResponseWriter, r *http.Request
 			writeError(w, http.StatusBadRequest, "api.moyro.oidc.discovery", err.Error())
 			return
 		}
+		view.IssuerURL = prepared.IssuerURL()
 		view.DiscoveryStatus = "ready"
 		view.LastTestedAt = time.Now().UnixMilli()
 	}
@@ -244,24 +257,16 @@ func (h *handlers) testNativeOIDCProvider(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusBadRequest, "api.moyro.oidc.body", err.Error())
 		return
 	}
-	secret := strings.TrimSpace(view.ClientSecret)
-	if secret == "" {
-		var err error
-		secret, err = h.native.revealOptionalSecret(r.Context(), oidcSettingsSection, oidcSecretKey)
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, "api.moyro.oidc.secret_read", err.Error())
-			return
-		}
-	}
 	view.Enabled = true
 	origin := h.effectivePublicBaseURL(r)
 	view.RedirectURL = origin + oidcCallbackPath
 	temporary := oidcauth.NewManager(nil)
-	if err := temporary.Configure(r.Context(), view.oidcConfig(secret)); err != nil {
+	issuer, err := temporary.Probe(r.Context(), view.oidcConfig(""))
+	if err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "message": err.Error()})
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "issuer": strings.TrimRight(view.IssuerURL, "/")})
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "issuer": issuer})
 }
 
 func (h *handlers) nativeOIDCLogin(w http.ResponseWriter, r *http.Request) {

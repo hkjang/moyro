@@ -158,13 +158,14 @@ export type SaveBarProps = {
   saved: string;
   onSave: () => void;
   label?: string;
+  disabled?: boolean;
 };
 
-export function SaveBar({ saving, saved, onSave, label = "설정 저장" }: SaveBarProps) {
+export function SaveBar({ saving, saved, onSave, label = "설정 저장", disabled = false }: SaveBarProps) {
   return (
     <Stack direction="row" sx={{ gap: 1.5, alignItems: "center", justifyContent: "flex-end" }}>
       {saved && <Typography color="success.main" variant="body2" role="status">{saved}</Typography>}
-      <Button variant="contained" onClick={onSave} disabled={saving}>
+      <Button variant="contained" onClick={onSave} disabled={saving || disabled}>
         {saving ? "저장 중…" : label}
       </Button>
     </Stack>

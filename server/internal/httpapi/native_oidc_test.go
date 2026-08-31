@@ -100,6 +100,22 @@ func TestOIDCRestartPreservesStoredCallbackWithoutManagedPublicURL(t *testing.T)
 	}
 }
 
+func TestRuntimeOIDCDiscoveryStatusReflectsFailedReload(t *testing.T) {
+	t.Parallel()
+
+	ready := oidcProviderView{Enabled: true, DiscoveryStatus: "ready"}
+	if got := runtimeOIDCDiscoveryStatus(ready, false); got != "error" {
+		t.Fatalf("failed reload status = %q, want error", got)
+	}
+	if got := runtimeOIDCDiscoveryStatus(ready, true); got != "ready" {
+		t.Fatalf("live provider status = %q, want ready", got)
+	}
+	disabled := oidcProviderView{Enabled: false, DiscoveryStatus: "unknown"}
+	if got := runtimeOIDCDiscoveryStatus(disabled, false); got != "unknown" {
+		t.Fatalf("disabled provider status = %q, want unknown", got)
+	}
+}
+
 type recordingOIDCFlowConsumer struct {
 	flow   oidcauth.Flow
 	err    error

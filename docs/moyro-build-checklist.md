@@ -31,8 +31,9 @@
 
 ## Phase 3 — Keycloak OIDC
 
-- [x] issuer/client ID/client secret 기반 discovery와 callback URL 자동 구성을 구현한다.
-- [x] Code + PKCE, state, nonce, ID token/JWKS 검증을 구현한다.
+- [x] issuer 또는 discovery 문서 URL, client ID/client secret 기반 discovery와 callback URL 자동 구성을 구현한다.
+- [x] bounded discovery/JWKS probe, cross-origin back-channel, HTTPS downgrade 방어를 구현한다.
+- [x] Code + PKCE, state, nonce, ID token signature·issuer·audience/azp·at_hash 검증을 구현한다.
 - [x] username/email claim mapping, 가입 정책, 내부 CA와 connection test를 제공한다.
 - [x] 설정 변경을 재기동 없이 적용하고 secret을 redaction한다.
 - [x] 로그인 화면은 활성 provider만 표시한다.

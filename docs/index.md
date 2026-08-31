@@ -43,7 +43,7 @@ set.
 
 ## Current Product Shape
 
-moyro v0.2.1 presents collaboration as Moyro Flow: **read conversations, make
+moyro v0.2.2 presents collaboration as Moyro Flow: **read conversations, make
 decisions, and act in one workspace**. A global navigation rail connects
 Today, a durable user-scoped activity inbox, the channel workspace, tasks,
 decisions, saved/scheduled/reminder data in My Work, approval history and
@@ -67,7 +67,7 @@ as proof that the runtime is healthy. Other compatibility surfaces may be
 partial.
 The site policy also controls whether browser drafts use seven-day local
 retention by default, current-session storage, or no local storage, and whether
-logout clears the current user's stored drafts. The supported v0.2.1 deployment
+logout clears the current user's stored drafts. The supported v0.2.2 deployment
 is one application container with external
 PostgreSQL and local file storage. Unconfigured SMTP is exposed as a disabled
 capability and does not start a digest worker. S3, Redis fan-out, outbound link

@@ -14,4 +14,4 @@ GOTOOLCHAIN=local GOOS=windows GOARCH=amd64 CGO_ENABLED=0 \
 ```
 
 Review the source and checksum the resulting binary before provisioning it to
-an operator-controlled plugin directory. v0.2.1 does not sandbox plugins.
+an operator-controlled plugin directory. v0.2.2 does not sandbox plugins.

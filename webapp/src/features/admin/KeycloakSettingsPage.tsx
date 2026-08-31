@@ -12,7 +12,7 @@ import {
   TextField,
   Typography,
 } from "@mui/material";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useSelector } from "react-redux";
 import { moyroAdminApi, type OIDCProviderSettings } from "@/api/client";
 import { LoadState, SaveBar, SettingsCard, SettingsPage } from "@/components/settings/SettingsPrimitives";
@@ -40,6 +40,7 @@ export function KeycloakSettingsPage() {
   const [testing, setTesting] = useState(false);
   const [error, setError] = useState("");
   const [saved, setSaved] = useState("");
+  const editRevision = useRef(0);
   const callbackURL = provider.redirect_url?.trim()
     || `${window.location.origin}/api/moyro/v1/auth/oidc/callback`;
 
@@ -62,12 +63,13 @@ export function KeycloakSettingsPage() {
   }, [token]);
 
   const update = <K extends keyof OIDCProviderSettings>(key: K, value: OIDCProviderSettings[K]) => {
-    setProvider((prev) => ({ ...prev, [key]: value }));
+    editRevision.current += 1;
+    setProvider((prev) => ({ ...prev, [key]: value, discovery_status: "unknown" }));
     setSaved("");
   };
 
   async function save() {
-    if (!token) return;
+    if (!token || testing) return;
     setSaving(true);
     setSaved("");
     try {
@@ -87,16 +89,27 @@ export function KeycloakSettingsPage() {
   }
 
   async function testConnection() {
-    if (!token) return;
+    if (!token || saving) return;
+    const testedRevision = editRevision.current;
     setTesting(true);
+    setError("");
+    setSaved("");
+    setProvider((prev) => ({ ...prev, discovery_status: "unknown" }));
     try {
       const payload: OIDCProviderSettings = { ...provider };
       if (!payload.client_secret?.trim()) delete payload.client_secret;
       const result = await moyroAdminApi.testOIDCProvider(token, payload);
-      setProvider((prev) => ({ ...prev, discovery_status: result.ok ? "ready" : "error" }));
+      if (editRevision.current !== testedRevision) return;
+      setProvider((prev) => ({
+        ...prev,
+        issuer_url: result.issuer || prev.issuer_url,
+        discovery_status: result.ok ? "ready" : "error",
+      }));
       setError(result.ok ? "" : result.message || "OIDC discovery 확인에 실패했습니다.");
       if (result.ok) setSaved(`연동 확인 완료${result.issuer ? ` · ${result.issuer}` : ""}`);
     } catch (err) {
+      if (editRevision.current !== testedRevision) return;
+      setProvider((prev) => ({ ...prev, discovery_status: "error" }));
       setError(err instanceof Error ? err.message : "연동 확인에 실패했습니다.");
     } finally {
       setTesting(false);
@@ -107,7 +120,7 @@ export function KeycloakSettingsPage() {
     <SettingsPage title="Keycloak SSO" description="Issuer URL의 OIDC discovery 문서를 이용해 로그인 endpoint와 키를 자동 구성합니다.">
       <LoadState loading={loading} error={error}>
         {provider.discovery_status === "ready" && (
-          <Alert severity="success" icon={<CheckCircleRounded />}>OIDC discovery와 client 설정을 확인했습니다.</Alert>
+          <Alert severity="success" icon={<CheckCircleRounded />}>OIDC discovery와 JWKS 서명 키를 확인했습니다.</Alert>
         )}
         <SettingsCard title="연결 정보" description="Client Secret은 저장 후 다시 표시되지 않습니다.">
           <Stack spacing={2.25}>
@@ -124,7 +137,7 @@ export function KeycloakSettingsPage() {
                   value={provider.issuer_url}
                   placeholder="https://keycloak.internal/realms/moyro"
                   onChange={(event) => update("issuer_url", event.target.value)}
-                  helperText="realm까지 포함한 HTTPS 주소를 입력하세요."
+                  helperText="realm까지 포함한 Issuer 또는 discovery 문서 주소를 입력하세요."
                 />
               </Grid>
               <Grid size={{ xs: 12, md: 4 }}>
@@ -191,10 +204,10 @@ export function KeycloakSettingsPage() {
         <Box>
           <Stack direction={{ xs: "column", sm: "row" }} sx={{ gap: 1.5, justifyContent: "flex-end", alignItems: "center" }}>
             {saved && <Typography color="success.main" variant="body2" role="status">{saved}</Typography>}
-            <Button variant="outlined" onClick={testConnection} disabled={testing || !provider.issuer_url || !provider.client_id}>
+            <Button variant="outlined" onClick={testConnection} disabled={testing || saving || !provider.issuer_url.trim() || !provider.client_id.trim()}>
               {testing ? "확인 중…" : "연동 확인"}
             </Button>
-            <SaveBar saving={saving} saved="" onSave={save} />
+            <SaveBar saving={saving} saved="" onSave={save} disabled={testing} />
           </Stack>
         </Box>
       </LoadState>
