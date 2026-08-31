@@ -34,23 +34,24 @@ type secretConfiguredView struct {
 }
 
 type oidcProviderView struct {
-	ID                   string                `json:"id,omitempty"`
-	Kind                 string                `json:"kind"`
-	Name                 string                `json:"name"`
-	Enabled              bool                  `json:"enabled"`
-	IssuerURL            string                `json:"issuer_url"`
-	ClientID             string                `json:"client_id"`
-	ClientSecret         string                `json:"client_secret,omitempty"`
-	ClientSecretState    *secretConfiguredView `json:"client_secret_state,omitempty"`
-	Scopes               []string              `json:"scopes"`
-	UsernameClaim        string                `json:"username_claim"`
-	EmailClaim           string                `json:"email_claim"`
-	CACertificatePEM     string                `json:"ca_certificate_pem,omitempty"`
-	AllowSignup          bool                  `json:"allow_signup"`
-	RequireVerifiedEmail bool                  `json:"require_verified_email"`
-	RedirectURL          string                `json:"redirect_url,omitempty"`
-	DiscoveryStatus      string                `json:"discovery_status,omitempty"`
-	LastTestedAt         int64                 `json:"last_tested_at,omitempty"`
+	ID                       string                `json:"id,omitempty"`
+	Kind                     string                `json:"kind"`
+	Name                     string                `json:"name"`
+	Enabled                  bool                  `json:"enabled"`
+	IssuerURL                string                `json:"issuer_url"`
+	ClientID                 string                `json:"client_id"`
+	ClientSecret             string                `json:"client_secret,omitempty"`
+	ClientSecretState        *secretConfiguredView `json:"client_secret_state,omitempty"`
+	Scopes                   []string              `json:"scopes"`
+	UsernameClaim            string                `json:"username_claim"`
+	EmailClaim               string                `json:"email_claim"`
+	CACertificatePEM         string                `json:"ca_certificate_pem,omitempty"`
+	AllowSignup              bool                  `json:"allow_signup"`
+	RequireVerifiedEmail     bool                  `json:"require_verified_email"`
+	AllowInsecureBackchannel bool                  `json:"allow_insecure_backchannel"`
+	RedirectURL              string                `json:"redirect_url,omitempty"`
+	DiscoveryStatus          string                `json:"discovery_status,omitempty"`
+	LastTestedAt             int64                 `json:"last_tested_at,omitempty"`
 }
 
 func defaultOIDCProvider() oidcProviderView {
@@ -118,8 +119,10 @@ func (v oidcProviderView) oidcConfig(secret string) oidcauth.Config {
 		Enabled: v.Enabled, DisplayName: v.Name, IssuerURL: v.IssuerURL,
 		ClientID: v.ClientID, ClientSecret: secret, RedirectURL: v.RedirectURL,
 		Scopes: v.Scopes, UsernameClaim: v.UsernameClaim, EmailClaim: v.EmailClaim,
-		AllowSignup:          v.AllowSignup,
-		RequireVerifiedEmail: v.RequireVerifiedEmail, CACertificatePEM: v.CACertificatePEM,
+		AllowSignup:              v.AllowSignup,
+		RequireVerifiedEmail:     v.RequireVerifiedEmail,
+		AllowInsecureBackchannel: v.AllowInsecureBackchannel,
+		CACertificatePEM:         v.CACertificatePEM,
 	}
 }
 

@@ -57,7 +57,11 @@ type Config struct {
 	GroupsClaim          string   `json:"groups_claim"`
 	AllowSignup          bool     `json:"allow_signup"`
 	RequireVerifiedEmail bool     `json:"require_verified_email"`
-	CACertificatePEM     string   `json:"ca_certificate_pem,omitempty"`
+	// AllowInsecureBackchannel permits explicitly advertised HTTP token, JWKS,
+	// and UserInfo endpoints when the issuer itself is HTTPS. Authorization
+	// endpoints remain HTTPS-only because they are browser-facing.
+	AllowInsecureBackchannel bool   `json:"allow_insecure_backchannel"`
+	CACertificatePEM         string `json:"ca_certificate_pem,omitempty"`
 }
 
 type Identity struct {
@@ -198,7 +202,7 @@ func (m *Manager) discover(ctx context.Context, cfg Config, requireSecret bool) 
 	if err != nil {
 		return nil, err
 	}
-	if err := validateDiscovery(normalized.IssuerURL, metadata); err != nil {
+	if err := validateDiscovery(normalized.IssuerURL, metadata, normalized.AllowInsecureBackchannel); err != nil {
 		return nil, err
 	}
 	advertisedAlgorithms := metadata.SigningAlgorithms
@@ -536,7 +540,7 @@ func normalizeIssuerURL(raw string) (string, error) {
 	return parsed.String(), nil
 }
 
-func validateDiscovery(issuer string, metadata discoveryMetadata) error {
+func validateDiscovery(issuer string, metadata discoveryMetadata, allowInsecureBackchannel bool) error {
 	if err := validateHTTPURL("issuer", metadata.Issuer, true); err != nil {
 		return fmt.Errorf("%w: %v", ErrIssuerMismatch, err)
 	}
@@ -545,12 +549,13 @@ func validateDiscovery(issuer string, metadata discoveryMetadata) error {
 	}
 	issuerURL, _ := url.Parse(metadata.Issuer)
 	endpoints := []struct {
-		name string
-		raw  string
+		name        string
+		raw         string
+		backchannel bool
 	}{
 		{name: "authorization_endpoint", raw: metadata.AuthorizationEndpoint},
-		{name: "token_endpoint", raw: metadata.TokenEndpoint},
-		{name: "jwks_uri", raw: metadata.JWKSURI},
+		{name: "token_endpoint", raw: metadata.TokenEndpoint, backchannel: true},
+		{name: "jwks_uri", raw: metadata.JWKSURI, backchannel: true},
 	}
 	for _, endpointConfig := range endpoints {
 		if err := validateHTTPURL(endpointConfig.name, endpointConfig.raw, false); err != nil {
@@ -558,7 +563,12 @@ func validateDiscovery(issuer string, metadata discoveryMetadata) error {
 		}
 		endpoint, _ := url.Parse(endpointConfig.raw)
 		if issuerURL.Scheme == "https" && endpoint.Scheme != "https" {
-			return fmt.Errorf("%w: %s must not downgrade an HTTPS issuer", ErrUnexpectedEndpoint, endpointConfig.name)
+			if !endpointConfig.backchannel {
+				return fmt.Errorf("%w: %s must use HTTPS when the issuer uses HTTPS", ErrUnexpectedEndpoint, endpointConfig.name)
+			}
+			if !allowInsecureBackchannel {
+				return fmt.Errorf("%w: %s uses HTTP with an HTTPS issuer; enable allow_insecure_backchannel only for a trusted private network", ErrUnexpectedEndpoint, endpointConfig.name)
+			}
 		}
 	}
 	if metadata.UserInfoEndpoint != "" {
@@ -566,8 +576,8 @@ func validateDiscovery(issuer string, metadata discoveryMetadata) error {
 			return fmt.Errorf("%w: %v", ErrUnexpectedEndpoint, err)
 		}
 		endpoint, _ := url.Parse(metadata.UserInfoEndpoint)
-		if issuerURL.Scheme == "https" && endpoint.Scheme != "https" {
-			return fmt.Errorf("%w: userinfo_endpoint must not downgrade an HTTPS issuer", ErrUnexpectedEndpoint)
+		if issuerURL.Scheme == "https" && endpoint.Scheme != "https" && !allowInsecureBackchannel {
+			return fmt.Errorf("%w: userinfo_endpoint uses HTTP with an HTTPS issuer; enable allow_insecure_backchannel only for a trusted private network", ErrUnexpectedEndpoint)
 		}
 	}
 	return nil

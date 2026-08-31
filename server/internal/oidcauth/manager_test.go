@@ -356,14 +356,137 @@ func TestOIDCClientRejectsCrossOriginCredentialRedirect(t *testing.T) {
 	}
 }
 
-func TestValidateDiscoveryRejectsEndpointSchemeDowngrade(t *testing.T) {
+func TestValidateDiscoveryRequiresExplicitHTTPBackchannelOptIn(t *testing.T) {
 	err := validateDiscovery("https://issuer.example/realms/moyro", discoveryMetadata{
 		Issuer:                "https://issuer.example/realms/moyro",
 		AuthorizationEndpoint: "https://login.example/auth",
 		TokenEndpoint:         "http://tokens.example/token",
 		JWKSURI:               "https://keys.example/certs",
+	}, false)
+	if !errors.Is(err, ErrUnexpectedEndpoint) || !strings.Contains(err.Error(), "enable allow_insecure_backchannel") {
+		t.Fatalf("validateDiscovery() error = %v", err)
+	}
+}
+
+func TestProbeAllowsExplicitHTTPBackchannel(t *testing.T) {
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/certs" {
+			_ = json.NewEncoder(w).Encode(testJWKS)
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer backend.Close()
+
+	var issuer *httptest.Server
+	issuer = httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != discoveryDocumentSuffix {
+			http.NotFound(w, r)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"issuer": issuer.URL, "authorization_endpoint": issuer.URL + "/auth",
+			"token_endpoint": backend.URL + "/token", "jwks_uri": backend.URL + "/certs",
+			"userinfo_endpoint":                     backend.URL + "/userinfo",
+			"id_token_signing_alg_values_supported": []string{"RS256"},
+		})
+	}))
+	defer issuer.Close()
+
+	got, err := NewManager(issuer.Client()).Probe(context.Background(), Config{
+		Enabled: true, IssuerURL: issuer.URL, ClientID: "moyro",
+		RedirectURL: "https://moyro.example/callback", AllowInsecureBackchannel: true,
 	})
-	if !errors.Is(err, ErrUnexpectedEndpoint) || !strings.Contains(err.Error(), "must not downgrade") {
+	if err != nil {
+		t.Fatalf("Probe() rejected explicitly allowed HTTP back-channel: %v", err)
+	}
+	if got != issuer.URL {
+		t.Fatalf("Probe() issuer = %q, want %q", got, issuer.URL)
+	}
+}
+
+func TestExchangeAllowsExplicitHTTPBackchannel(t *testing.T) {
+	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const accessToken = "access-token"
+	var issuer *httptest.Server
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/certs":
+			_ = json.NewEncoder(w).Encode(rsaJWKS(&privateKey.PublicKey))
+		case "/token":
+			if err := r.ParseForm(); err != nil {
+				http.Error(w, "invalid form", http.StatusBadRequest)
+				return
+			}
+			if r.Form.Get("code") != "code" || r.Form.Get("code_verifier") != "verifier" {
+				http.Error(w, "invalid authorization code exchange", http.StatusBadRequest)
+				return
+			}
+			claims := jwt.MapClaims{
+				"iss": issuer.URL, "sub": "subject-1", "aud": "moyro",
+				"exp": time.Now().Add(time.Hour).Unix(), "iat": time.Now().Unix(),
+				"nonce": "expected-nonce", "preferred_username": "operator",
+				"email": "operator@example.com", "email_verified": true,
+				"at_hash": accessTokenHash(accessToken),
+			}
+			token := jwt.NewWithClaims(jwt.SigningMethodRS256, claims)
+			token.Header["kid"] = "test-key"
+			rawToken, signErr := token.SignedString(privateKey)
+			if signErr != nil {
+				http.Error(w, "sign token", http.StatusInternalServerError)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"access_token": accessToken, "token_type": "Bearer", "expires_in": 300, "id_token": rawToken,
+			})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer backend.Close()
+
+	issuer = httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != discoveryDocumentSuffix {
+			http.NotFound(w, r)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"issuer": issuer.URL, "authorization_endpoint": issuer.URL + "/auth",
+			"token_endpoint": backend.URL + "/token", "jwks_uri": backend.URL + "/certs",
+			"id_token_signing_alg_values_supported": []string{"RS256"},
+		})
+	}))
+	defer issuer.Close()
+
+	manager := NewManager(issuer.Client())
+	if err := manager.Configure(context.Background(), Config{
+		Enabled: true, IssuerURL: issuer.URL, ClientID: "moyro", ClientSecret: "secret",
+		RedirectURL: "https://moyro.example/callback", RequireVerifiedEmail: true,
+		AllowInsecureBackchannel: true,
+	}); err != nil {
+		t.Fatalf("Configure() rejected explicitly allowed HTTP back-channel: %v", err)
+	}
+	identity, err := manager.Exchange(context.Background(), "code", "verifier", "expected-nonce")
+	if err != nil {
+		t.Fatalf("Exchange() over explicitly allowed HTTP back-channel error = %v", err)
+	}
+	if identity.Subject != "subject-1" || identity.Email != "operator@example.com" {
+		t.Fatalf("Exchange() identity = %+v", identity)
+	}
+}
+
+func TestValidateDiscoveryKeepsAuthorizationEndpointHTTPS(t *testing.T) {
+	err := validateDiscovery("https://issuer.example/realms/moyro", discoveryMetadata{
+		Issuer:                "https://issuer.example/realms/moyro",
+		AuthorizationEndpoint: "http://login.example/auth",
+		TokenEndpoint:         "http://tokens.example/token",
+		JWKSURI:               "http://keys.example/certs",
+	}, true)
+	if !errors.Is(err, ErrUnexpectedEndpoint) || !strings.Contains(err.Error(), "authorization_endpoint must use HTTPS") {
 		t.Fatalf("validateDiscovery() error = %v", err)
 	}
 }

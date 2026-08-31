@@ -116,6 +116,15 @@ func TestRuntimeOIDCDiscoveryStatusReflectsFailedReload(t *testing.T) {
 	}
 }
 
+func TestOIDCProviderConfigMapsInsecureBackchannelOptIn(t *testing.T) {
+	t.Parallel()
+
+	cfg := (oidcProviderView{AllowInsecureBackchannel: true}).oidcConfig("secret")
+	if !cfg.AllowInsecureBackchannel {
+		t.Fatal("allow_insecure_backchannel was not passed to the OIDC manager")
+	}
+}
+
 type recordingOIDCFlowConsumer struct {
 	flow   oidcauth.Flow
 	err    error

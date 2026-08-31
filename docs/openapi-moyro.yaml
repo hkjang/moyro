@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Moyro Native API
-  version: 0.2.2
+  version: 0.2.3
   description: |
     Moyro Flow, durable activity inbox, conversation-derived work items, safe
     approval previews, and service policy endpoints under `/api/moyro/v1`.

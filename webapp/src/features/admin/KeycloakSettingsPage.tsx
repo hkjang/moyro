@@ -29,6 +29,7 @@ const DEFAULT_PROVIDER: OIDCProviderSettings = {
   email_claim: "email",
   allow_signup: true,
   require_verified_email: true,
+  allow_insecure_backchannel: false,
   discovery_status: "unknown",
 };
 
@@ -194,6 +195,17 @@ export function KeycloakSettingsPage() {
             </Grid>
             <Grid size={{ xs: 12 }}>
               <TextField fullWidth multiline minRows={3} label="내부 CA 인증서 (선택)" value={provider.ca_certificate_pem ?? ""} onChange={(event) => update("ca_certificate_pem", event.target.value)} />
+            </Grid>
+            <Grid size={{ xs: 12 }}>
+              <FormControlLabel
+                control={<Switch checked={provider.allow_insecure_backchannel} onChange={(event) => update("allow_insecure_backchannel", event.target.checked)} />}
+                label="신뢰할 수 있는 내부망의 HTTP back-channel 허용"
+              />
+              {provider.allow_insecure_backchannel && (
+                <Alert severity="warning" sx={{ mt: 1 }}>
+                  Token, JWKS, UserInfo endpoint에만 적용됩니다. Client secret과 authorization code가 평문 HTTP로 전송될 수 있으므로 격리된 내부망에서만 사용하세요. HTTP 통신과 JWKS는 가로채기·변조될 수 있습니다. 브라우저 authorization endpoint는 계속 HTTPS여야 합니다.
+                </Alert>
+              )}
             </Grid>
           </Grid>
           {!provider.require_verified_email && (

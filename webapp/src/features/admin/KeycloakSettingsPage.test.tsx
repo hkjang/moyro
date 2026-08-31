@@ -23,6 +23,7 @@ const providerFixture: OIDCProviderSettings = {
   email_claim: "email",
   allow_signup: true,
   require_verified_email: true,
+  allow_insecure_backchannel: false,
   discovery_status: "ready",
 };
 
@@ -129,5 +130,30 @@ describe("KeycloakSettingsPage", () => {
 
     expect(issuer.value).toBe("https://edited.internal/realms/moyro");
     expect(container.textContent).not.toContain("OIDC discovery와 JWKS 서명 키를 확인했습니다.");
+  });
+
+  it("sends the explicit HTTP back-channel opt-in with the probe", async () => {
+    const probe = vi.spyOn(moyroAdminApi, "testOIDCProvider").mockResolvedValue({
+      ok: true,
+      issuer: providerFixture.issuer_url,
+    });
+    await renderPage();
+
+    const label = Array.from(container.querySelectorAll("label"))
+      .find((candidate) => candidate.textContent?.includes("HTTP back-channel"));
+    const toggle = label?.querySelector<HTMLInputElement>('input[type="checkbox"]');
+    if (!toggle) throw new Error("HTTP back-channel toggle not found");
+    await act(async () => { toggle.click(); });
+
+    expect(container.textContent).toContain("authorization code가 평문 HTTP로 전송될 수 있으므로");
+    await act(async () => {
+      connectionButton().click();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+
+    expect(probe).toHaveBeenCalledWith(
+      "admin-token",
+      expect.objectContaining({ allow_insecure_backchannel: true }),
+    );
   });
 });

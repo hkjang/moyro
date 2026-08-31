@@ -1545,6 +1545,7 @@ export type OIDCProviderSettings = {
   email_claim: string;
   allow_signup: boolean;
   require_verified_email: boolean;
+  allow_insecure_backchannel: boolean;
   ca_certificate_pem?: string;
   redirect_url?: string;
   discovery_status?: "unknown" | "ready" | "error";
