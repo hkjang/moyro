@@ -11,7 +11,7 @@ import (
 	"github.com/hkjang/moyro/server/internal/secrets"
 )
 
-func TestLoginHandoffCreatesAuthenticatedSessionExactlyOncePostgres(t *testing.T) {
+func TestLoginHandoffCreatesOneRecoverableAuthenticatedSessionPostgres(t *testing.T) {
 	db := newAuthTestDB(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
@@ -70,8 +70,24 @@ func TestLoginHandoffCreatesAuthenticatedSessionExactlyOncePostgres(t *testing.T
 	if claims.UserID != user.ID || claims.SessionID == "" {
 		t.Fatalf("authenticated claims = user %q session %q", claims.UserID, claims.SessionID)
 	}
+	replayedUser, replayedToken, err := svc.ExchangeLoginHandoff(ctx, handoff.Code, handoff.BrowserBinding)
+	if err != nil || replayedUser.ID != user.ID || replayedToken != token {
+		t.Fatalf("idempotent retry = user %v token_equal=%t err=%v", replayedUser, replayedToken == token, err)
+	}
+	var sessionCount int
+	if err := db.Pool.QueryRow(ctx, `SELECT COUNT(*) FROM sessions WHERE user_id=$1`, user.ID).Scan(&sessionCount); err != nil {
+		t.Fatal(err)
+	}
+	if sessionCount != 1 {
+		t.Fatalf("session count after retry = %d, want 1", sessionCount)
+	}
+	if _, err := db.Pool.Exec(ctx, `
+		UPDATE login_handoffs SET exchanged_at=$2 WHERE code_hash=$1
+	`, wantDigest[:], time.Now().Add(-loginHandoffRetryWindow-time.Second).UnixMilli()); err != nil {
+		t.Fatal(err)
+	}
 	if _, _, err := svc.ExchangeLoginHandoff(ctx, handoff.Code, handoff.BrowserBinding); !errors.Is(err, ErrInvalidLoginHandoff) {
-		t.Fatalf("replayed handoff error = %v, want ErrInvalidLoginHandoff", err)
+		t.Fatalf("late retry error = %v, want ErrInvalidLoginHandoff", err)
 	}
 }
 
@@ -128,18 +144,27 @@ func TestLoginHandoffRejectsExpiredAndConcurrentReplayPostgres(t *testing.T) {
 	workers.Wait()
 	close(results)
 
-	var successes, replays int
+	var successes int
+	var firstToken string
 	for result := range results {
-		switch {
-		case result.err == nil && result.token != "":
-			successes++
-		case errors.Is(result.err, ErrInvalidLoginHandoff):
-			replays++
-		default:
+		if result.err != nil || result.token == "" {
 			t.Fatalf("unexpected concurrent exchange result: token=%t err=%v", result.token != "", result.err)
 		}
+		if firstToken == "" {
+			firstToken = result.token
+		} else if result.token != firstToken {
+			t.Fatal("concurrent idempotent exchange returned different session tokens")
+		}
+		successes++
 	}
-	if successes != 1 || replays != 1 {
-		t.Fatalf("concurrent exchange results = %d successes, %d replays", successes, replays)
+	if successes != 2 {
+		t.Fatalf("concurrent exchange results = %d successes, want 2 idempotent responses", successes)
+	}
+	var sessionCount int
+	if err := db.Pool.QueryRow(ctx, `SELECT COUNT(*) FROM sessions WHERE user_id=$1`, user.ID).Scan(&sessionCount); err != nil {
+		t.Fatal(err)
+	}
+	if sessionCount != 1 {
+		t.Fatalf("concurrent exchange created %d sessions, want 1", sessionCount)
 	}
 }

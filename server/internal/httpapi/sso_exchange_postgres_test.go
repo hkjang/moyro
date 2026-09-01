@@ -42,15 +42,19 @@ func TestSSOCodeExchangeReturnsSessionAcceptedByUsersMePostgres(t *testing.T) {
 	router := chi.NewRouter()
 	router.Post(ssoSessionExchangePath, h.nativeSSOSessionExchange)
 	router.With(h.requireAuth).Get("/api/v4/users/me", h.me)
+	router.With(h.requireAuth).Post("/api/moyro/v1/auth/session/logout", h.logout)
 
 	body, _ := json.Marshal(map[string]string{"code": handoff.Code})
 	unboundRecorder := httptest.NewRecorder()
-	router.ServeHTTP(unboundRecorder, httptest.NewRequest(http.MethodPost, ssoSessionExchangePath, bytes.NewReader(body)))
+	unboundRequest := httptest.NewRequest(http.MethodPost, ssoSessionExchangePath, bytes.NewReader(body))
+	unboundRequest.Header.Set("Origin", "http://example.com")
+	router.ServeHTTP(unboundRecorder, unboundRequest)
 	if unboundRecorder.Code != http.StatusUnauthorized {
 		t.Fatalf("SSO exchange without browser binding status = %d, want 401", unboundRecorder.Code)
 	}
 
 	exchangeRequest := httptest.NewRequest(http.MethodPost, ssoSessionExchangePath, bytes.NewReader(body))
+	exchangeRequest.Header.Set("Origin", "http://example.com")
 	exchangeRequest.AddCookie(&http.Cookie{Name: ssoHandoffCookieName(handoff.Code), Value: handoff.BrowserBinding, Path: ssoSessionExchangePath})
 	exchangeRecorder := httptest.NewRecorder()
 	router.ServeHTTP(exchangeRecorder, exchangeRequest)
@@ -58,22 +62,29 @@ func TestSSOCodeExchangeReturnsSessionAcceptedByUsersMePostgres(t *testing.T) {
 		t.Fatalf("SSO exchange status = %d, body=%s", exchangeRecorder.Code, exchangeRecorder.Body.String())
 	}
 	var exchanged struct {
-		Token string    `json:"token"`
-		User  auth.User `json:"user"`
+		User auth.User `json:"user"`
 	}
 	if err := json.NewDecoder(exchangeRecorder.Body).Decode(&exchanged); err != nil {
 		t.Fatalf("decode SSO exchange: %v", err)
 	}
-	if exchanged.Token == "" || exchanged.User.ID != user.ID || exchangeRecorder.Header().Get("Token") != exchanged.Token {
-		t.Fatalf("unexpected SSO exchange response: user=%q token=%t header_match=%t", exchanged.User.ID, exchanged.Token != "", exchangeRecorder.Header().Get("Token") == exchanged.Token)
+	if exchanged.User.ID != user.ID || exchangeRecorder.Header().Get("Token") != "" {
+		t.Fatalf("unexpected SSO exchange response: user=%q token_header=%q", exchanged.User.ID, exchangeRecorder.Header().Get("Token"))
 	}
 	if exchangeRecorder.Header().Get("Cache-Control") != "no-store" {
 		t.Fatalf("SSO exchange Cache-Control = %q, want no-store", exchangeRecorder.Header().Get("Cache-Control"))
 	}
-	assertSSOHandoffCookieCleared(t, exchangeRecorder.Result(), handoff.Code)
+	var sessionCookie *http.Cookie
+	for _, cookie := range exchangeRecorder.Result().Cookies() {
+		if cookie.Name == browserSessionCookie {
+			sessionCookie = cookie
+		}
+	}
+	if sessionCookie == nil || sessionCookie.Value == "" || !sessionCookie.HttpOnly || sessionCookie.Path != "/" {
+		t.Fatalf("browser session cookie = %#v", sessionCookie)
+	}
 
 	meRequest := httptest.NewRequest(http.MethodGet, "/api/v4/users/me", nil)
-	meRequest.Header.Set("Authorization", "Bearer "+exchanged.Token)
+	meRequest.AddCookie(sessionCookie)
 	meRecorder := httptest.NewRecorder()
 	router.ServeHTTP(meRecorder, meRequest)
 	if meRecorder.Code != http.StatusOK {
@@ -86,9 +97,36 @@ func TestSSOCodeExchangeReturnsSessionAcceptedByUsersMePostgres(t *testing.T) {
 
 	replayRecorder := httptest.NewRecorder()
 	replayRequest := httptest.NewRequest(http.MethodPost, ssoSessionExchangePath, bytes.NewReader(body))
+	replayRequest.Header.Set("Origin", "http://example.com")
 	replayRequest.AddCookie(&http.Cookie{Name: ssoHandoffCookieName(handoff.Code), Value: handoff.BrowserBinding, Path: ssoSessionExchangePath})
 	router.ServeHTTP(replayRecorder, replayRequest)
-	if replayRecorder.Code != http.StatusUnauthorized {
-		t.Fatalf("replayed SSO code status = %d, want 401", replayRecorder.Code)
+	if replayRecorder.Code != http.StatusOK {
+		t.Fatalf("idempotent SSO retry status = %d, want 200", replayRecorder.Code)
+	}
+	var retryCookie *http.Cookie
+	for _, cookie := range replayRecorder.Result().Cookies() {
+		if cookie.Name == browserSessionCookie {
+			retryCookie = cookie
+		}
+	}
+	if retryCookie == nil || retryCookie.Value != sessionCookie.Value {
+		t.Fatal("idempotent SSO retry did not return the same browser session")
+	}
+
+	logoutRequest := httptest.NewRequest(http.MethodPost, "/api/moyro/v1/auth/session/logout", nil)
+	logoutRequest.Header.Set("Origin", "http://example.com")
+	logoutRequest.AddCookie(sessionCookie)
+	logoutRecorder := httptest.NewRecorder()
+	router.ServeHTTP(logoutRecorder, logoutRequest)
+	if logoutRecorder.Code != http.StatusOK {
+		t.Fatalf("SSO browser logout status = %d, body=%s", logoutRecorder.Code, logoutRecorder.Body.String())
+	}
+
+	revokedMeRequest := httptest.NewRequest(http.MethodGet, "/api/v4/users/me", nil)
+	revokedMeRequest.AddCookie(sessionCookie)
+	revokedMeRecorder := httptest.NewRecorder()
+	router.ServeHTTP(revokedMeRecorder, revokedMeRequest)
+	if revokedMeRecorder.Code != http.StatusUnauthorized {
+		t.Fatalf("revoked SSO cookie /users/me status = %d, want 401", revokedMeRecorder.Code)
 	}
 }

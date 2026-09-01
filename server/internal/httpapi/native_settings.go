@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net"
 	"net/http"
+	"net/netip"
 	"net/url"
 	"slices"
 	"strings"
@@ -58,6 +59,7 @@ type siteSettingsView struct {
 	SiteName             string   `json:"site_name"`
 	PublicBaseURL        string   `json:"public_base_url"`
 	AllowedOutgoingHosts []string `json:"allowed_outgoing_hosts"`
+	TrustedProxyCIDRs    []string `json:"trusted_proxy_cidrs"`
 	LocalSignupEnabled   bool     `json:"local_signup_enabled"`
 	DraftStorageMode     string   `json:"draft_storage_mode"`
 	DraftRetentionDays   int      `json:"draft_retention_days"`
@@ -66,7 +68,7 @@ type siteSettingsView struct {
 
 func defaultSiteSettings() siteSettingsView {
 	return siteSettingsView{
-		SiteName: "moyro", AllowedOutgoingHosts: []string{},
+		SiteName: "moyro", AllowedOutgoingHosts: []string{}, TrustedProxyCIDRs: []string{},
 		DraftStorageMode: "local", DraftRetentionDays: 7, DraftClearOnLogout: true,
 	}
 }
@@ -76,6 +78,7 @@ func (n *nativeServices) currentSiteSettings() siteSettingsView {
 		if current := n.site.Load(); current != nil {
 			copy := *current
 			copy.AllowedOutgoingHosts = append([]string(nil), current.AllowedOutgoingHosts...)
+			copy.TrustedProxyCIDRs = append([]string(nil), current.TrustedProxyCIDRs...)
 			return copy
 		}
 	}
@@ -98,6 +101,7 @@ func (n *nativeServices) reloadSite(ctx context.Context, dispatcher *webhooks.Di
 func (n *nativeServices) applySite(value siteSettingsView, dispatcher *webhooks.Dispatcher) {
 	copy := value
 	copy.AllowedOutgoingHosts = append([]string(nil), value.AllowedOutgoingHosts...)
+	copy.TrustedProxyCIDRs = append([]string(nil), value.TrustedProxyCIDRs...)
 	n.site.Store(&copy)
 	if dispatcher != nil {
 		dispatcher.ConfigureAllowedHosts(copy.AllowedOutgoingHosts)
@@ -252,7 +256,7 @@ func (h *handlers) patchNativeSettings(w http.ResponseWriter, r *http.Request) {
 		baseURL := value.PublicBaseURL
 		if baseURL == "" {
 			var err error
-			baseURL, err = externalOrigin(r)
+			baseURL, err = h.externalOrigin(r)
 			if err != nil {
 				writeError(w, http.StatusBadRequest, "api.moyro.settings.site_origin", err.Error())
 				return
@@ -397,6 +401,26 @@ func validateSiteSettings(value *siteSettingsView) error {
 	}
 	slices.Sort(hosts)
 	value.AllowedOutgoingHosts = hosts
+
+	if len(value.TrustedProxyCIDRs) > 64 {
+		return errors.New("at most 64 trusted proxy CIDRs can be configured")
+	}
+	proxyCIDRs := make([]string, 0, len(value.TrustedProxyCIDRs))
+	proxySeen := make(map[string]struct{}, len(value.TrustedProxyCIDRs))
+	for _, raw := range value.TrustedProxyCIDRs {
+		prefix, err := netip.ParsePrefix(strings.TrimSpace(raw))
+		if err != nil {
+			return errors.New("trusted proxies must be IP CIDRs such as 10.0.0.0/8 or 2001:db8::/32")
+		}
+		canonical := prefix.Masked().String()
+		if _, exists := proxySeen[canonical]; exists {
+			continue
+		}
+		proxySeen[canonical] = struct{}{}
+		proxyCIDRs = append(proxyCIDRs, canonical)
+	}
+	slices.Sort(proxyCIDRs)
+	value.TrustedProxyCIDRs = proxyCIDRs
 	return nil
 }
 

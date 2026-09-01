@@ -81,7 +81,7 @@ func (h *handlers) effectivePublicBaseURL(r *http.Request) string {
 		}
 	}
 	if r != nil {
-		if origin, err := externalOrigin(r); err == nil {
+		if origin, err := h.externalOrigin(r); err == nil {
 			return origin
 		}
 	}

@@ -3,6 +3,7 @@ import { useDispatch, useSelector } from "react-redux";
 import type { RootState } from "@/store";
 import { clearAuth, setAuth } from "@/store/authSlice";
 import { api } from "@/api/client";
+import { APIError, BROWSER_SESSION_TOKEN } from "@/api/transport";
 import { AppRouter } from "@/app/AppRouter";
 import { isSSOCallbackFragment, parseSSOCallbackFragment } from "@/auth/ssoCallback";
 import { useSystemInfo } from "@/features/system/SystemInfoContext";
@@ -29,10 +30,9 @@ export function App() {
     () => Boolean(initialTokenRef.current) && !initialSSOCallbackRef.current,
   );
 
-  // New callbacks carry only a short-lived, one-time code. The public exchange
-  // returns user + local session atomically, removing the fragile /users/me
-  // probe and keeping the reusable bearer token out of browser history.
-  // Legacy #token callbacks remain accepted during a coordinated upgrade.
+  // Callbacks carry only a short-lived, browser-bound code. Retry transient
+  // transport/5xx failures twice; terminal failures require an explicit new
+  // provider flow, avoiding silent redirect loops.
   useEffect(() => {
     const callback = parseSSOCallbackFragment(window.location.hash);
     if (!callback) return;
@@ -44,16 +44,14 @@ export function App() {
       return;
     }
 
-    const session = callback.kind === "code"
-      ? api.exchangeSSOCode(callback.value)
-      : api.me(callback.value).then((user) => ({ token: callback.value, user }));
+    const session = exchangeSSOCodeWithRetry(callback.value);
     session.then(
       (result) => {
         dispatch(setAuth(result));
         setConsumingHash(false);
       },
       () => {
-        history.replaceState(null, "", "/login#oauth_error=session_failed");
+        history.replaceState(null, "", "/login#oauth_error=sso_restart_required");
         dispatch(clearAuth());
         setConsumingHash(false);
       },
@@ -63,8 +61,11 @@ export function App() {
   useEffect(() => {
     const storedToken = initialTokenRef.current;
     if (!storedToken || initialSSOCallbackRef.current) return;
-    api.me(storedToken).then(
-      (user) => dispatch(setAuth({ token: storedToken, user })),
+    const restore = storedToken === BROWSER_SESSION_TOKEN
+      ? api.me(storedToken).then((user) => ({ token: storedToken, user }))
+      : api.adoptBrowserSession(storedToken);
+    restore.then(
+      (session) => dispatch(setAuth(session)),
       () => {
         if (
           initialUserRef.current?.id
@@ -90,4 +91,24 @@ export function App() {
       )}
     </div>
   );
+}
+
+function waitForRetry(delay: number): Promise<void> {
+  return new Promise((resolve) => window.setTimeout(resolve, delay));
+}
+
+function retryableSSOError(error: unknown): boolean {
+  return error instanceof TypeError || (error instanceof APIError && error.status >= 500);
+}
+
+export async function exchangeSSOCodeWithRetry(code: string) {
+  const delays = [150, 400];
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      return await api.exchangeSSOCode(code);
+    } catch (error) {
+      if (attempt >= delays.length || !retryableSSOError(error)) throw error;
+      await waitForRetry(delays[attempt]);
+    }
+  }
 }

@@ -245,6 +245,22 @@ describe("authenticated plugin fetch", () => {
     expect(request.redirect).toBe("error");
   });
 
+  it("uses the HttpOnly cookie mode without fabricating a bearer header", async () => {
+    const upstream = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) =>
+      new Response(null, { status: 204 }));
+    const pluginFetch = createAuthenticatedPluginFetch(
+      upstream as unknown as typeof fetch,
+      () => "__moyro_browser_session__",
+      "https://chat.example.com",
+    );
+
+    await pluginFetch("/api/v4/users/me", { headers: { Authorization: "Bearer stale" } });
+
+    const request = upstream.mock.calls[0][0] as Request;
+    expect(request.headers.get("Authorization")).toBeNull();
+    expect(request.credentials).toBe("same-origin");
+  });
+
   it("never attaches the token to an external URL", async () => {
     const upstream = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) =>
       new Response(null, { status: 204 }));

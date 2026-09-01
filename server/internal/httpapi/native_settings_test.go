@@ -134,6 +134,7 @@ func TestValidateSiteSettingsCanonicalizesValues(t *testing.T) {
 		AllowedOutgoingHosts: []string{
 			"Keycloak.Internal.", "10.20.30.40", "keycloak.internal", "[fd00::1]",
 		},
+		TrustedProxyCIDRs: []string{"10.0.0.1/8", "2001:db8::1/32", "10.0.0.0/8"},
 	}
 	if err := validateSiteSettings(&value); err != nil {
 		t.Fatalf("validate site settings: %v", err)
@@ -148,6 +149,10 @@ func TestValidateSiteSettingsCanonicalizesValues(t *testing.T) {
 	if !reflect.DeepEqual(value.AllowedOutgoingHosts, wantHosts) {
 		t.Fatalf("allowed hosts = %#v, want %#v", value.AllowedOutgoingHosts, wantHosts)
 	}
+	wantProxies := []string{"10.0.0.0/8", "2001:db8::/32"}
+	if !reflect.DeepEqual(value.TrustedProxyCIDRs, wantProxies) {
+		t.Fatalf("trusted proxies = %#v, want %#v", value.TrustedProxyCIDRs, wantProxies)
+	}
 }
 
 func TestValidateSiteSettingsRejectsUnsafeValues(t *testing.T) {
@@ -159,6 +164,8 @@ func TestValidateSiteSettingsRejectsUnsafeValues(t *testing.T) {
 		{SiteName: "moyro", AllowedOutgoingHosts: []string{"keycloak.internal:8080"}},
 		{SiteName: "moyro", DraftStorageMode: "database"},
 		{SiteName: "moyro", DraftStorageMode: "local", DraftRetentionDays: 31},
+		{SiteName: "moyro", TrustedProxyCIDRs: []string{"10.0.0.1"}},
+		{SiteName: "moyro", TrustedProxyCIDRs: []string{"https://proxy.internal"}},
 	}
 	for _, value := range tests {
 		if err := validateSiteSettings(&value); err == nil {

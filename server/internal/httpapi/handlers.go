@@ -32,6 +32,7 @@ import (
 	"github.com/hkjang/moyro/server/internal/files"
 	"github.com/hkjang/moyro/server/internal/invites"
 	"github.com/hkjang/moyro/server/internal/links"
+	"github.com/hkjang/moyro/server/internal/metrics"
 	"github.com/hkjang/moyro/server/internal/oauth"
 	"github.com/hkjang/moyro/server/internal/pluginhost"
 	"github.com/hkjang/moyro/server/internal/postacks"
@@ -143,9 +144,13 @@ func (h *handlers) requireAuth(next http.Handler) http.Handler {
 			next.ServeHTTP(w, r.WithContext(ensureUserPrincipal(r.Context(), v)))
 			return
 		}
-		tok := extractBearer(r)
+		tok, fromBrowserCookie := requestSessionToken(r)
 		if tok == "" {
 			writeError(w, http.StatusUnauthorized, "api.context.session_expired.app_error", "missing token")
+			return
+		}
+		if fromBrowserCookie && !isSafeBrowserMethod(r.Method) && !h.validateBrowserOrigin(r) {
+			writeError(w, http.StatusForbidden, "api.context.csrf.app_error", "browser request origin is invalid")
 			return
 		}
 		claims, err := h.auth.Authenticate(r.Context(), tok)
@@ -434,7 +439,7 @@ func (h *handlers) login(w http.ResponseWriter, r *http.Request) {
 		if errors.Is(err, auth.ErrInvalidCredentials) {
 			if h.audit != nil {
 				h.audit.LogAsync("", audit.ActionUserLoginFailed, loginID, map[string]any{
-					"ip": r.RemoteAddr,
+					"ip": h.clientIP(r),
 				})
 			}
 			writeError(w, 401, "api.user.login.invalid_credentials", "invalid credentials")
@@ -445,7 +450,7 @@ func (h *handlers) login(w http.ResponseWriter, r *http.Request) {
 	}
 	if h.audit != nil {
 		h.audit.LogAsync(u.ID, audit.ActionUserLogin, u.Username, map[string]any{
-			"ip": r.RemoteAddr,
+			"ip": h.clientIP(r),
 		})
 	}
 	// Mattermost returns token in Token header. Also include in body for convenience.
@@ -469,7 +474,7 @@ func ensureRoleToken(roles, role string) string {
 
 func (h *handlers) logout(w http.ResponseWriter, r *http.Request) {
 	uid := userID(r)
-	tok := extractBearer(r)
+	tok, _ := requestSessionToken(r)
 	if tok == "" {
 		writeError(w, 401, "api.context.session_expired.app_error", "missing token")
 		return
@@ -478,6 +483,7 @@ func (h *handlers) logout(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 500, "api.user.logout.app_error", err.Error())
 		return
 	}
+	h.clearBrowserSessionCookie(w, r)
 	// Existing WebSocket connections do not make another HTTP request after
 	// authentication. Close them immediately so a revoked session cannot keep
 	// receiving realtime events until the periodic validity check runs.
@@ -2685,8 +2691,12 @@ func (h *handlers) authenticatePluginRequest(w http.ResponseWriter, r *http.Requ
 	r.Header.Del("Mattermost-User-ID")
 	uid := userID(r)
 	if uid == "" {
-		token := extractBearer(r)
+		token, fromBrowserCookie := requestSessionToken(r)
 		if token != "" {
+			if fromBrowserCookie && !isSafeBrowserMethod(r.Method) && !h.validateBrowserOrigin(r) {
+				writeError(w, http.StatusForbidden, "api.context.csrf.app_error", "browser request origin is invalid")
+				return nil, false
+			}
 			claims, err := h.auth.Authenticate(r.Context(), token)
 			if err != nil {
 				writeError(w, http.StatusUnauthorized, "api.context.session_expired.app_error", "invalid token")
@@ -3087,6 +3097,19 @@ func (h *handlers) websocket(w http.ResponseWriter, r *http.Request) {
 		ws.Handle(h.hub, uid, tok, authenticate).ServeHTTP(w, r)
 		return
 	}
+	if tok := browserSessionToken(r); tok != "" {
+		if !h.validateBrowserOrigin(r) {
+			writeError(w, http.StatusForbidden, "api.websocket.origin.invalid", "websocket origin is invalid")
+			return
+		}
+		uid, err := authenticate(r.Context(), tok)
+		if err != nil {
+			writeError(w, http.StatusUnauthorized, "api.context.session_expired.app_error", "invalid session")
+			return
+		}
+		ws.Handle(h.hub, uid, tok, authenticate).ServeHTTP(w, r)
+		return
+	}
 
 	ws.HandleChallenge(h.hub, authenticate).ServeHTTP(w, r)
 }
@@ -3329,8 +3352,6 @@ func (h *handlers) filePreview(w http.ResponseWriter, r *http.Request) {
 // access or refresh token — we only need enough to verify identity once
 // and then mint our own JWT session.
 
-const oauthStateCookie = "moyro_oauth_state"
-
 // oauthStateMaxAge caps the window between /login and /callback; if the
 // user takes longer than this the browser simply discards the cookie and
 // the callback returns a state-mismatch error.
@@ -3348,8 +3369,12 @@ func (h *handlers) oauthSecureCookies(r *http.Request) bool {
 // and redirects the browser to the provider's authorize URL.
 func (h *handlers) oauthLogin(w http.ResponseWriter, r *http.Request) {
 	name := chi.URLParam(r, "provider")
+	started := time.Now()
+	result := "internal_error"
+	defer func() { metrics.ObserveSSOStage(name, "login", result, time.Since(started)) }()
 	p := h.oauthReg.Get(name)
 	if p == nil {
+		result = "disabled"
 		writeError(w, 404, "api.oauth.unknown_provider", "provider not enabled")
 		return
 	}
@@ -3358,10 +3383,13 @@ func (h *handlers) oauthLogin(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 500, "api.oauth.state.app_error", err.Error())
 		return
 	}
+	result = "success"
+	returnTo := sanitizeReturnTo(r.URL.Query().Get("return_to"))
+	callbackPath := "/api/v4/oauth/" + url.PathEscape(name) + "/callback"
 	http.SetCookie(w, &http.Cookie{
-		Name:     oauthStateCookie,
-		Value:    name + ":" + state,
-		Path:     "/",
+		Name:     oauthTransactionCookieName(state),
+		Value:    name + ":" + state + ":" + url.QueryEscape(returnTo),
+		Path:     callbackPath,
 		HttpOnly: true,
 		Secure:   h.oauthSecureCookies(r),
 		SameSite: http.SameSiteLaxMode,
@@ -3377,53 +3405,56 @@ func (h *handlers) oauthLogin(w http.ResponseWriter, r *http.Request) {
 // created only when the webapp exchanges that code.
 func (h *handlers) oauthCallback(w http.ResponseWriter, r *http.Request) {
 	name := chi.URLParam(r, "provider")
+	started := time.Now()
+	result := "internal_error"
+	defer func() { metrics.ObserveSSOStage(name, "callback", result, time.Since(started)) }()
 	p := h.oauthReg.Get(name)
 	if p == nil {
+		result = "disabled"
 		writeError(w, 404, "api.oauth.unknown_provider", "provider not enabled")
 		return
 	}
 
 	qs := r.URL.Query()
-	if e := qs.Get("error"); e != "" {
-		// Provider reported an error (user denied consent, etc). Send
-		// the user back to the login page with a readable hash so the
-		// webapp can surface it rather than showing a raw JSON error.
+	state := qs.Get("state")
+	callbackPath := "/api/v4/oauth/" + url.PathEscape(name) + "/callback"
+	cookie, err := r.Cookie(oauthTransactionCookieName(state))
+	http.SetCookie(w, &http.Cookie{
+		Name: oauthTransactionCookieName(state), Value: "", Path: callbackPath,
+		Expires: time.Unix(1, 0), MaxAge: -1, HttpOnly: true,
+		Secure: h.oauthSecureCookies(r), SameSite: http.SameSiteLaxMode,
+	})
+	if err != nil {
+		result = "invalid"
+		h.oauthRedirectError(w, r, "state_missing")
+		return
+	}
+	parts := strings.SplitN(cookie.Value, ":", 3)
+	if state == "" || len(parts) != 3 || parts[0] != name || parts[1] != state {
+		result = "invalid"
+		h.oauthRedirectError(w, r, "state_mismatch")
+		return
+	}
+	returnTo, unescapeErr := url.QueryUnescape(parts[2])
+	returnTo = sanitizeReturnTo(returnTo)
+	if unescapeErr != nil {
+		returnTo = ""
+	}
+	if e := sanitizeProviderError(qs.Get("error")); e != "" {
+		result = "provider_error"
 		h.oauthRedirectError(w, r, "provider_"+e)
 		return
 	}
 	code := qs.Get("code")
-	state := qs.Get("state")
-	if code == "" || state == "" {
+	if code == "" {
+		result = "invalid"
 		h.oauthRedirectError(w, r, "missing_params")
-		return
-	}
-
-	// Consume the state cookie: expected value is "<provider>:<state>".
-	// This binds the cookie to the provider that started the flow — an
-	// attacker can't swap a cookie minted for Google into a GitHub
-	// callback because the prefix won't match.
-	cookie, err := r.Cookie(oauthStateCookie)
-	if err != nil {
-		h.oauthRedirectError(w, r, "state_missing")
-		return
-	}
-	http.SetCookie(w, &http.Cookie{
-		Name:     oauthStateCookie,
-		Value:    "",
-		Path:     "/",
-		MaxAge:   -1,
-		HttpOnly: true,
-		Secure:   h.oauthSecureCookies(r),
-		SameSite: http.SameSiteLaxMode,
-	})
-	wantPrefix := name + ":"
-	if !strings.HasPrefix(cookie.Value, wantPrefix) || cookie.Value[len(wantPrefix):] != state {
-		h.oauthRedirectError(w, r, "state_mismatch")
 		return
 	}
 
 	info, err := p.Exchange(r.Context(), code, h.oauthReg.RedirectURL[name])
 	if err != nil {
+		result = "exchange_error"
 		h.logger.Warn("oauth exchange failed", "provider", name, "err", err)
 		h.oauthRedirectError(w, r, "exchange_failed")
 		return
@@ -3432,9 +3463,11 @@ func (h *handlers) oauthCallback(w http.ResponseWriter, r *http.Request) {
 	u, created, err := h.oauthIdent.ResolveOrCreateUser(r.Context(), name, info)
 	if err != nil {
 		if errors.Is(err, oauth.ErrUnverifiedLink) {
+			result = "resolve_error"
 			h.oauthRedirectError(w, r, "unverified_email")
 			return
 		}
+		result = "resolve_error"
 		h.logger.Error("oauth resolve failed", "provider", name, "err", err)
 		h.oauthRedirectError(w, r, "resolve_failed")
 		return
@@ -3458,6 +3491,7 @@ func (h *handlers) oauthCallback(w http.ResponseWriter, r *http.Request) {
 	}
 	handoff, err := h.auth.CreateLoginHandoff(r.Context(), u.ID)
 	if err != nil {
+		result = "session_error"
 		h.logger.Error("oauth login handoff creation failed", "provider", name, "user", u.ID, "err", err)
 		h.oauthRedirectError(w, r, "session_failed")
 		return
@@ -3465,15 +3499,18 @@ func (h *handlers) oauthCallback(w http.ResponseWriter, r *http.Request) {
 	setSSOHandoffCookie(w, handoff.Code, handoff.BrowserBinding, handoff.ExpiresAt, h.oauthSecureCookies(r))
 	if h.audit != nil {
 		h.audit.LogAsync(u.ID, audit.ActionUserLogin, u.Username, map[string]any{
-			"ip":             r.RemoteAddr,
+			"ip":             h.clientIP(r),
 			"oauth_provider": name,
 		})
 	}
+	result = "success"
 
 	// The fragment is an opaque, single-use, five-minute code. It never reaches
 	// access logs or Referer headers and cannot authenticate an API directly.
-	base := h.effectivePublicBaseURL(r)
-	http.Redirect(w, r, base+"/#sso_code="+url.QueryEscape(handoff.Code), http.StatusFound)
+	if returnTo == "" {
+		returnTo = "/"
+	}
+	http.Redirect(w, r, returnTo+"#sso_code="+url.QueryEscape(handoff.Code), http.StatusFound)
 }
 
 // oauthRedirectError bounces the browser back to the webapp with an error

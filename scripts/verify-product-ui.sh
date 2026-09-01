@@ -13,6 +13,7 @@ if [[ $# -gt 0 ]]; then
   playwright_specs=("$@")
 else
   playwright_specs=(
+    e2e/sso-oidc.spec.ts
     e2e/product-pages.spec.ts
     e2e/plugin-compatibility.spec.ts
     e2e/accessibility.spec.ts
@@ -25,10 +26,13 @@ if [[ "${MOYRO_UPDATE_SNAPSHOTS:-false}" == "true" ]]; then
 fi
 
 requires_plugin_fixtures=false
+requires_sso_fixture=false
 for spec in "${playwright_specs[@]}"; do
   if [[ "${spec}" == *"plugin-compatibility.spec.ts" ]]; then
     requires_plugin_fixtures=true
-    break
+  fi
+  if [[ "${spec}" == *"sso-oidc.spec.ts" ]]; then
+    requires_sso_fixture=true
   fi
 done
 if [[ "${requires_plugin_fixtures}" == "true" ]]; then
@@ -57,7 +61,10 @@ suffix="${GITHUB_RUN_ID:-local}-$$"
 network="moyro-e2e-net-${suffix}"
 db_container="moyro-e2e-db-${suffix}"
 app_container="moyro-e2e-app-${suffix}"
+fake_oidc_container="moyro-e2e-oidc-${suffix}"
+fake_oidc_image="moyro-fake-oidc:${suffix}"
 base_url="http://127.0.0.1:${port}"
+fake_oidc_port="${MOYRO_FAKE_OIDC_PORT:-18066}"
 expected_version="${MOYRO_EXPECTED_VERSION:-${image##*:}}"
 admin_email="admin@moyro.local"
 admin_password="MoyroRelease!2026"
@@ -69,9 +76,13 @@ cleanup() {
   if [[ $status -ne 0 ]]; then
     docker logs --tail 200 "${app_container}" 2>/dev/null || true
     docker logs --tail 100 "${db_container}" 2>/dev/null || true
+    docker logs --tail 100 "${fake_oidc_container}" 2>/dev/null || true
   fi
-  docker rm -f "${app_container}" "${db_container}" >/dev/null 2>&1 || true
+  docker rm -f "${app_container}" "${db_container}" "${fake_oidc_container}" >/dev/null 2>&1 || true
   docker network rm "${network}" >/dev/null 2>&1 || true
+  if [[ "${requires_sso_fixture}" == "true" ]]; then
+    docker image rm "${fake_oidc_image}" >/dev/null 2>&1 || true
+  fi
   exit $status
 }
 trap cleanup EXIT INT TERM
@@ -81,6 +92,24 @@ capture_dir="$(cd "${capture_dir}" && pwd -P)"
 # Browser tests run on the host and need the published loopback port. The
 # separate release verifier performs the strict internal-only/offline check.
 docker network create "${network}" >/dev/null
+
+if [[ "${requires_sso_fixture}" == "true" ]]; then
+  repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
+  docker build --target fake-oidc -t "${fake_oidc_image}" "${repo_root}" >/dev/null
+  docker run -d --name "${fake_oidc_container}" --network "${network}" \
+    -p "127.0.0.1:${fake_oidc_port}:8080" \
+    -e "FAKE_OIDC_ISSUER=http://${fake_oidc_container}:8080" \
+    -e "FAKE_OIDC_BROWSER_BASE=http://127.0.0.1:${fake_oidc_port}" \
+    "${fake_oidc_image}" >/dev/null
+  for _ in $(seq 1 60); do
+    if curl --fail --silent "http://127.0.0.1:${fake_oidc_port}/healthz" >/dev/null 2>&1; then
+      break
+    fi
+    sleep 1
+  done
+  curl --fail --silent --show-error "http://127.0.0.1:${fake_oidc_port}/healthz" >/dev/null
+fi
+
 docker run -d --name "${db_container}" --network "${network}" \
   -e POSTGRES_USER=moyro \
   -e POSTGRES_PASSWORD=moyro-e2e-db-password \
@@ -128,5 +157,6 @@ bash scripts/contract-test.sh
   MOYRO_ADMIN_PASSWORD="${admin_password}" \
   MOYRO_CAPTURE_DIR="${capture_dir}" \
   MOYRO_EXPECTED_VERSION="${expected_version}" \
+  MOYRO_FAKE_OIDC_ISSUER="http://${fake_oidc_container}:8080" \
   npx playwright test "${playwright_args[@]}"
 )

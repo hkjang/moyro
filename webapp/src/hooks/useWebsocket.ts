@@ -12,6 +12,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { openWebSocket } from "../api/client";
+import { BROWSER_SESSION_TOKEN } from "../api/transport";
 
 export type WSStatus = "connected" | "reconnecting" | "offline";
 
@@ -82,6 +83,15 @@ export function useWebsocket(
           ws.close(WS_CLOSE_LOGOUT, "missing token");
           return;
         }
+        if (currentToken === BROWSER_SESSION_TOKEN) {
+          authenticatedRef.current = true;
+          attemptsRef.current = 0;
+          setAttempts(0);
+          setStatus("connected");
+          if (openedOnceRef.current) setReconnectSeq((n) => n + 1);
+          openedOnceRef.current = true;
+          return;
+        }
         // Browsers cannot attach Authorization headers to the WebSocket
         // upgrade. Authenticate in the first frame instead of leaking the
         // bearer through the URL/query string.
@@ -93,6 +103,10 @@ export function useWebsocket(
       });
       ws.addEventListener("message", (ev) => {
         if (wsRef.current !== ws) return;
+        if (tokenRef.current === BROWSER_SESSION_TOKEN) {
+          onMessageRef.current(ev);
+          return;
+        }
         if (!authenticatedRef.current) {
           try {
             const reply = JSON.parse(ev.data as string) as { status?: string; seq_reply?: number };

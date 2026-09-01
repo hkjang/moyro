@@ -24,6 +24,8 @@ type Registry struct {
 	postsCreated prometheus.Counter
 	wsClients    prometheus.Gauge
 	webhookDepth prometheus.Gauge
+	ssoStages    *prometheus.CounterVec
+	ssoDuration  *prometheus.HistogramVec
 }
 
 // package-level singleton — single-process server, no isolation needed.
@@ -56,7 +58,16 @@ func New() *Registry {
 		Name: "moyro_webhook_queue_depth",
 		Help: "Length of the outgoing webhook dispatcher's job queue.",
 	})
-	reg.MustRegister(r.httpDuration, r.postsCreated, r.wsClients, r.webhookDepth)
+	r.ssoStages = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "moyro_sso_stage_total",
+		Help: "SSO flow stages by bounded provider, stage, and result labels.",
+	}, []string{"provider", "stage", "result"})
+	r.ssoDuration = prometheus.NewHistogramVec(prometheus.HistogramOpts{
+		Name:    "moyro_sso_stage_duration_seconds",
+		Help:    "SSO stage latency in seconds by bounded provider, stage, and result labels.",
+		Buckets: []float64{0.01, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30},
+	}, []string{"provider", "stage", "result"})
+	reg.MustRegister(r.httpDuration, r.postsCreated, r.wsClients, r.webhookDepth, r.ssoStages, r.ssoDuration)
 	return r
 }
 
@@ -100,3 +111,26 @@ func ObserveWSClients(n int) { pkg.wsClients.Set(float64(n)) }
 
 // ObserveWebhookQueue sets the outgoing-webhook queue-depth gauge.
 func ObserveWebhookQueue(n int) { pkg.webhookDepth.Set(float64(n)) }
+
+func boundedSSOLabel(value string, allowed []string, fallback string) string {
+	for _, candidate := range allowed {
+		if value == candidate {
+			return value
+		}
+	}
+	return fallback
+}
+
+// ObserveSSOStage intentionally accepts only bounded labels. Provider errors,
+// identities, issuer URLs, codes, and other high-cardinality/secret values
+// never enter the metrics registry.
+func ObserveSSOStage(provider, stage, result string, duration time.Duration) {
+	provider = boundedSSOLabel(provider, []string{"keycloak", "google", "github", "browser"}, "other")
+	stage = boundedSSOLabel(stage, []string{"login", "callback", "exchange"}, "other")
+	result = boundedSSOLabel(result, []string{
+		"success", "disabled", "invalid", "provider_error", "exchange_error",
+		"resolve_error", "session_error", "internal_error",
+	}, "internal_error")
+	pkg.ssoStages.WithLabelValues(provider, stage, result).Inc()
+	pkg.ssoDuration.WithLabelValues(provider, stage, result).Observe(duration.Seconds())
+}

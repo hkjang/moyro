@@ -3,6 +3,7 @@ import {
   MOYRO_API_BASE as MOYRO_BASE,
   compatRequest as request,
   moyroRequest,
+  BROWSER_SESSION_TOKEN,
 } from "./transport";
 
 // Media bytes are fetched with an Authorization header and converted to a
@@ -34,8 +35,9 @@ function isAuthenticatedMediaPath(path: string): boolean {
 async function authenticatedMediaBlob(token: string, path: string): Promise<Blob> {
   if (!token) throw new Error("missing media credential");
   if (!isAuthenticatedMediaPath(path)) throw new Error("invalid authenticated media path");
-  const headers = new Headers({ Authorization: `Bearer ${token}` });
-  const res = await fetch(path, { headers });
+  const headers = new Headers();
+  if (token !== BROWSER_SESSION_TOKEN) headers.set("Authorization", `Bearer ${token}`);
+  const res = await fetch(path, { headers, credentials: "same-origin" });
   if (!res.ok) {
     const err = await res.json().catch(() => ({ message: res.statusText }));
     throw new Error(err.message ?? `HTTP ${res.status}`);
@@ -372,20 +374,23 @@ export const api = {
         : { username, email, password },
     }),
   login: (login_id: string, password: string) =>
-    request<{ token: string; user: User }>(null, "/users/login", {
+    moyroRequest<{ user: User }>(null, "/auth/session/login", {
       method: "POST",
       body: { login_id, password },
-    }),
+    }).then(({ user }) => ({ token: BROWSER_SESSION_TOKEN, user })),
   exchangeSSOCode: (code: string) =>
-    moyroRequest<{ token: string; user: User }>(null, "/auth/sso/session", {
+    moyroRequest<{ user: User }>(null, "/auth/sso/session", {
       method: "POST",
       body: { code },
-    }),
+    }).then(({ user }) => ({ token: BROWSER_SESSION_TOKEN, user })),
+  adoptBrowserSession: (token: string) =>
+    moyroRequest<{ user: User }>(token, "/auth/session/adopt", { method: "POST" })
+      .then(({ user }) => ({ token: BROWSER_SESSION_TOKEN, user })),
   me: (token: string) => request<User>(token, "/users/me"),
   ping: () => request<SystemPing>(null, "/system/ping"),
   clientConfig: () => request<ClientConfig>(null, "/config/client"),
   logout: (token: string) =>
-    request<{ status: string }>(token, "/users/logout", { method: "POST" }),
+    moyroRequest<{ status: string }>(token, "/auth/session/logout", { method: "POST" }),
 
   // user directory
   //
@@ -1590,6 +1595,7 @@ export type SiteSettings = {
   site_name: string;
   public_base_url: string;
   allowed_outgoing_hosts: string[];
+  trusted_proxy_cidrs: string[];
   local_signup_enabled: boolean;
 	draft_storage_mode: "local" | "session" | "disabled";
 	draft_retention_days: number;

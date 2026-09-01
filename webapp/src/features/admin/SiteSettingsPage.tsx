@@ -18,6 +18,7 @@ const DEFAULT_SETTINGS: SiteSettings = {
   site_name: "moyro",
   public_base_url: "",
   allowed_outgoing_hosts: [],
+  trusted_proxy_cidrs: [],
   local_signup_enabled: false,
   draft_storage_mode: "local",
   draft_retention_days: 7,
@@ -50,6 +51,7 @@ export function SiteSettingsPage() {
   const systemInfo = useSystemInfo();
   const [settings, setSettings] = useState<SiteSettings>(DEFAULT_SETTINGS);
   const [hostsText, setHostsText] = useState("");
+  const [trustedProxiesText, setTrustedProxiesText] = useState("");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -72,6 +74,7 @@ export function SiteSettingsPage() {
         const next = { ...DEFAULT_SETTINGS, ...value };
         setSettings(next);
         setHostsText(next.allowed_outgoing_hosts.join("\n"));
+        setTrustedProxiesText(next.trusted_proxy_cidrs.join("\n"));
         setError("");
       },
       (err: unknown) => {
@@ -99,6 +102,7 @@ export function SiteSettingsPage() {
         site_name: settings.site_name.trim(),
         public_base_url: settings.public_base_url.trim().replace(/\/+$/, ""),
         allowed_outgoing_hosts: parseHosts(hostsText),
+        trusted_proxy_cidrs: parseHosts(trustedProxiesText),
         local_signup_enabled: settings.local_signup_enabled,
         draft_storage_mode: settings.draft_storage_mode,
         draft_retention_days: settings.draft_retention_days,
@@ -107,6 +111,7 @@ export function SiteSettingsPage() {
       const result = await moyroAdminApi.patchSettings<SiteSettings>(token, "site", payload);
       setSettings(result);
       setHostsText(result.allowed_outgoing_hosts.join("\n"));
+      setTrustedProxiesText(result.trusted_proxy_cidrs.join("\n"));
       setError("");
       setSaved("사이트 설정을 저장했습니다.");
       await systemInfo.refresh();
@@ -139,6 +144,23 @@ export function SiteSettingsPage() {
             />
             {settings.public_base_url.trim().startsWith("http://") && (
               <Alert severity="warning">HTTP URL은 전송 중 인증 정보가 노출될 수 있습니다. 운영 환경에서는 HTTPS를 사용하세요.</Alert>
+            )}
+          </Stack>
+        </SettingsCard>
+
+        <SettingsCard title="신뢰할 reverse proxy" description="나열한 프록시에서 직접 들어온 요청에만 Forwarded / X-Forwarded-* 헤더를 사용합니다.">
+          <Stack spacing={2}>
+            <TextField
+              multiline
+              minRows={3}
+              label="Trusted proxy CIDR"
+              value={trustedProxiesText}
+              onChange={(event) => { setTrustedProxiesText(event.target.value); setSaved(""); }}
+              placeholder={"10.0.0.0/8\n2001:db8::/32"}
+              helperText="한 줄 또는 쉼표로 구분한 IPv4/IPv6 CIDR입니다. 비어 있으면 전달 헤더를 모두 무시합니다."
+            />
+            {parseHosts(trustedProxiesText).length > 0 && (
+              <Alert severity="warning">실제로 통제하는 proxy 네트워크만 추가하세요. 너무 넓은 CIDR은 IP·scheme·host 위조를 허용할 수 있습니다.</Alert>
             )}
           </Stack>
         </SettingsCard>

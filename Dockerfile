@@ -29,7 +29,15 @@ RUN CGO_ENABLED=0 GOOS="${TARGETOS}" GOARCH="${TARGETARCH}" \
       -X github.com/hkjang/moyro/server/internal/buildinfo.Commit=${COMMIT} \
       -X github.com/hkjang/moyro/server/internal/buildinfo.BuildDate=${BUILD_DATE}" \
     -o /out/moyro ./cmd/moyro
+RUN CGO_ENABLED=0 GOOS="${TARGETOS}" GOARCH="${TARGETARCH}" \
+    go build -trimpath -buildvcs=false -ldflags="-s -w" -o /out/fakeoidc ./cmd/fakeoidc
 RUN mkdir -p /runtime/var/lib/moyro/files /runtime/var/lib/moyro/plugins
+
+FROM gcr.io/distroless/static-debian12:nonroot@sha256:afa5c872c891853ca7fcf1f12c3edb23f7eeef36189728842dd51042ff57f7ab AS fake-oidc
+COPY --from=server-build --chown=65532:65532 /out/fakeoidc /usr/local/bin/fakeoidc
+USER 65532:65532
+EXPOSE 8080
+ENTRYPOINT ["/usr/local/bin/fakeoidc"]
 
 FROM gcr.io/distroless/static-debian12:nonroot@sha256:afa5c872c891853ca7fcf1f12c3edb23f7eeef36189728842dd51042ff57f7ab
 ARG VERSION=dev

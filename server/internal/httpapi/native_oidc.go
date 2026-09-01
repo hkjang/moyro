@@ -15,6 +15,7 @@ import (
 
 	"github.com/hkjang/moyro/server/internal/audit"
 	"github.com/hkjang/moyro/server/internal/auth"
+	"github.com/hkjang/moyro/server/internal/metrics"
 	"github.com/hkjang/moyro/server/internal/oauth"
 	"github.com/hkjang/moyro/server/internal/oidcauth"
 	"github.com/hkjang/moyro/server/internal/rbac"
@@ -26,11 +27,12 @@ const (
 	oidcSettingsKey     = "keycloak"
 	oidcSecretKey       = "keycloak-client-secret"
 
-	oidcTransactionCookiePrefix = "moyro_oidc_transaction_"
-	oidcCallbackPath            = "/api/moyro/v1/auth/oidc/callback"
-	ssoHandoffCookiePrefix      = "moyro_sso_handoff_"
-	ssoSessionExchangePath      = "/api/moyro/v1/auth/sso/session"
-	maxReturnToLength           = 2048
+	oidcTransactionCookiePrefix  = "moyro_oidc_transaction_"
+	oauthTransactionCookiePrefix = "moyro_oauth_transaction_"
+	oidcCallbackPath             = "/api/moyro/v1/auth/oidc/callback"
+	ssoHandoffCookiePrefix       = "moyro_sso_handoff_"
+	ssoSessionExchangePath       = "/api/moyro/v1/auth/sso/session"
+	maxReturnToLength            = 2048
 )
 
 type secretConfiguredView struct {
@@ -277,8 +279,12 @@ func (h *handlers) testNativeOIDCProvider(w http.ResponseWriter, r *http.Request
 }
 
 func (h *handlers) nativeOIDCLogin(w http.ResponseWriter, r *http.Request) {
+	started := time.Now()
+	result := "internal_error"
+	defer func() { metrics.ObserveSSOStage("keycloak", "login", result, time.Since(started)) }()
 	w.Header().Set("Cache-Control", "no-store")
 	if h.native == nil || !h.native.oidc.Enabled() {
+		result = "disabled"
 		writeError(w, http.StatusNotFound, "api.moyro.oidc.disabled", "Keycloak login is not enabled")
 		return
 	}
@@ -296,13 +302,18 @@ func (h *handlers) nativeOIDCLogin(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusServiceUnavailable, "api.moyro.oidc.disabled", err.Error())
 		return
 	}
+	result = "success"
 	setOIDCTransactionCookie(w, state, flow.ExpiresAt, oidcCookieSecure(r, h.native.oidc))
 	http.Redirect(w, r, authURL, http.StatusFound)
 }
 
 func (h *handlers) nativeOIDCCallback(w http.ResponseWriter, r *http.Request) {
+	started := time.Now()
+	result := "internal_error"
+	defer func() { metrics.ObserveSSOStage("keycloak", "callback", result, time.Since(started)) }()
 	w.Header().Set("Cache-Control", "no-store")
 	if h.native == nil || h.native.oidcFlows == nil || h.native.oidc == nil {
+		result = "disabled"
 		clearOIDCTransactionCookie(w, r.URL.Query().Get("state"), r.TLS != nil)
 		h.nativeOIDCRedirectError(w, r, "provider_unavailable")
 		return
@@ -311,17 +322,20 @@ func (h *handlers) nativeOIDCCallback(w http.ResponseWriter, r *http.Request) {
 		w, r, h.native.oidcFlows, oidcCookieSecure(r, h.native.oidc),
 	)
 	if callbackErr != "" {
+		result = "invalid"
 		h.nativeOIDCRedirectError(w, r, callbackErr)
 		return
 	}
 	identity, err := h.native.oidc.Exchange(r.Context(), r.URL.Query().Get("code"), flow.Verifier, flow.Nonce)
 	if err != nil {
+		result = "exchange_error"
 		h.logger.Warn("Keycloak exchange failed", "err", err)
 		h.nativeOIDCRedirectError(w, r, "exchange_failed")
 		return
 	}
 	publicCfg, ok := h.native.oidc.PublicConfig()
 	if !ok {
+		result = "disabled"
 		h.nativeOIDCRedirectError(w, r, "provider_disabled")
 		return
 	}
@@ -329,6 +343,7 @@ func (h *handlers) nativeOIDCCallback(w http.ResponseWriter, r *http.Request) {
 	if !publicCfg.AllowSignup {
 		canResolve, err := h.oidcCanResolveExisting(r.Context(), providerKey, identity)
 		if err != nil || !canResolve {
+			result = "resolve_error"
 			h.nativeOIDCRedirectError(w, r, "signup_disabled")
 			return
 		}
@@ -340,9 +355,11 @@ func (h *handlers) nativeOIDCCallback(w http.ResponseWriter, r *http.Request) {
 	u, created, err := h.oauthIdent.ResolveOrCreateUser(r.Context(), providerKey, info)
 	if err != nil {
 		if errors.Is(err, oauth.ErrUnverifiedLink) {
+			result = "resolve_error"
 			h.nativeOIDCRedirectError(w, r, "unverified_email")
 			return
 		}
+		result = "resolve_error"
 		h.logger.Error("Keycloak identity resolution failed", "err", err)
 		h.nativeOIDCRedirectError(w, r, "resolve_failed")
 		return
@@ -357,14 +374,16 @@ func (h *handlers) nativeOIDCCallback(w http.ResponseWriter, r *http.Request) {
 	}
 	handoff, err := h.auth.CreateLoginHandoff(r.Context(), u.ID)
 	if err != nil {
+		result = "session_error"
 		h.logger.Error("Keycloak login handoff creation failed", "user", u.ID, "err", err)
 		h.nativeOIDCRedirectError(w, r, "session_failed")
 		return
 	}
 	setSSOHandoffCookie(w, handoff.Code, handoff.BrowserBinding, handoff.ExpiresAt, oidcCookieSecure(r, h.native.oidc))
 	if h.audit != nil {
-		h.audit.LogAsync(u.ID, audit.ActionUserLogin, u.Username, map[string]any{"oauth_provider": "keycloak", "ip": r.RemoteAddr})
+		h.audit.LogAsync(u.ID, audit.ActionUserLogin, u.Username, map[string]any{"oauth_provider": "keycloak", "ip": h.clientIP(r)})
 	}
+	result = "success"
 	destination := sanitizeReturnTo(flow.ReturnTo)
 	if destination == "" {
 		destination = "/"
@@ -380,45 +399,63 @@ type ssoSessionExchangeRequest struct {
 // The opaque code and independent HttpOnly browser binding must both match the
 // same live database row before a local session can be minted.
 func (h *handlers) nativeSSOSessionExchange(w http.ResponseWriter, r *http.Request) {
+	started := time.Now()
+	result := "internal_error"
+	defer func() { metrics.ObserveSSOStage("browser", "exchange", result, time.Since(started)) }()
 	w.Header().Set("Cache-Control", "no-store")
+	if !h.validateBrowserOrigin(r) {
+		result = "invalid"
+		writeError(w, http.StatusForbidden, "api.context.csrf.app_error", "browser request origin is invalid")
+		return
+	}
 	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4<<10))
 	decoder.DisallowUnknownFields()
 	var req ssoSessionExchangeRequest
 	if err := decoder.Decode(&req); err != nil {
+		result = "invalid"
 		writeError(w, http.StatusBadRequest, "api.moyro.sso.invalid_body", err.Error())
 		return
 	}
 	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+		result = "invalid"
 		writeError(w, http.StatusBadRequest, "api.moyro.sso.invalid_body", "request body must contain one JSON object")
 		return
 	}
 	req.Code = strings.TrimSpace(req.Code)
 	if req.Code == "" {
+		result = "invalid"
 		writeError(w, http.StatusBadRequest, "api.moyro.sso.missing_code", "code is required")
 		return
 	}
 	cookie, err := r.Cookie(ssoHandoffCookieName(req.Code))
 	if err != nil || strings.TrimSpace(cookie.Value) == "" {
+		result = "invalid"
 		writeError(w, http.StatusUnauthorized, "api.moyro.sso.invalid_code", "SSO login code is invalid or expired")
 		return
 	}
 
 	u, token, err := h.auth.ExchangeLoginHandoff(r.Context(), req.Code, cookie.Value)
 	if errors.Is(err, auth.ErrInvalidLoginHandoff) {
+		result = "invalid"
 		clearSSOHandoffCookie(w, req.Code, h.oauthSecureCookies(r))
 		writeError(w, http.StatusUnauthorized, "api.moyro.sso.invalid_code", "SSO login code is invalid or expired")
 		return
 	}
 	if err != nil {
+		result = "session_error"
 		if h.logger != nil {
 			h.logger.Error("SSO login code exchange failed", "err", err)
 		}
 		writeError(w, http.StatusInternalServerError, "api.moyro.sso.exchange", "could not create the SSO session")
 		return
 	}
-	clearSSOHandoffCookie(w, req.Code, h.oauthSecureCookies(r))
-	w.Header().Set("Token", token)
-	writeJSON(w, http.StatusOK, map[string]any{"token": token, "user": u})
+	// Keep the path-restricted binding cookie until its five-minute expiry so
+	// the browser can repeat this exact request if the success response is lost.
+	// The exchange service returns the same session during its shorter retry
+	// window. Only the HttpOnly session cookie receives the reusable credential.
+	h.setBrowserSessionCookie(w, r, token)
+	result = "success"
+	writeJSON(w, http.StatusOK, map[string]any{"user": u})
 }
 
 func (h *handlers) nativeOIDCRedirectError(w http.ResponseWriter, r *http.Request, code string) {
@@ -483,12 +520,11 @@ func containsURLControl(value string) bool {
 	return false
 }
 
-// externalOrigin deliberately ignores Forwarded and X-Forwarded-* headers.
-// Trusting those headers without a configured trusted-proxy boundary permits
-// Host-header poisoning of the OIDC redirect_uri. A reverse proxy must
-// preserve the original Host; a same-host browser Origin can preserve the
-// public HTTPS scheme across TLS termination. Broader proxy trust can be added
-// later as an explicit administrator setting rather than an implicit default.
+// externalOrigin deliberately handles only a direct request and ignores
+// Forwarded and X-Forwarded-* headers. The handlers.externalOrigin wrapper may
+// use those headers after the immediate peer matches the administrator's
+// trusted-proxy CIDR allowlist. A same-host browser Origin can preserve the
+// public HTTPS scheme here without accepting an arbitrary forwarded host.
 func externalOrigin(r *http.Request) (string, error) {
 	scheme := "http"
 	if r.TLS != nil {
@@ -588,6 +624,11 @@ func clearOIDCTransactionCookie(w http.ResponseWriter, state string, secure bool
 func oidcTransactionCookieName(state string) string {
 	digest := sha256.Sum256([]byte(state))
 	return oidcTransactionCookiePrefix + hex.EncodeToString(digest[:8])
+}
+
+func oauthTransactionCookieName(state string) string {
+	digest := sha256.Sum256([]byte(state))
+	return oauthTransactionCookiePrefix + hex.EncodeToString(digest[:8])
 }
 
 func setSSOHandoffCookie(w http.ResponseWriter, code, binding string, expiresAt int64, secure bool) {

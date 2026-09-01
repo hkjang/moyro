@@ -35,7 +35,7 @@ Product site: <https://hkjang.github.io/moyro/>
 - A workspace context panel for threads, user-triggered AI summary of currently
   loaded messages, files from those messages, and channel information
 - Search, saved posts, public channel discovery, and a link-preview foundation
-  (outbound previews are disabled by the offline-safe v0.2.4 runtime)
+  (outbound previews are disabled by the offline-safe v0.2.5 runtime)
 - Incoming/outgoing webhooks, slash commands, bots, personal access tokens
 - OAuth compatibility hooks, limited-use invite links, audit logs, and metrics
 - Scheduled messages with PostgreSQL leases and duplicate-post prevention, plus post reminders
@@ -50,7 +50,7 @@ Product site: <https://hkjang.github.io/moyro/>
   plugins remain fully trusted and unsandboxed
 - Authenticated web-plugin discovery and a reactive Mattermost-style registry
 - A permission-aware SSE AI assistant. Conversation state is browser-session
-  only; v0.2.4 does not claim RAG, durable AI history, or AI-triggered actions
+  only; v0.2.5 does not claim RAG, durable AI history, or AI-triggered actions
 - Conversation-derived tasks and decisions with source-message links, current
   channel-membership enforcement, cursor pagination, idempotent creation, audit
   events, and real-time refresh
@@ -109,7 +109,7 @@ variables. See the [Offline Deployment Guide](docs/offline-deployment.md) for
 the complete load, run, backup, and upgrade procedure. A redacted four-key
 template is available at [`deploy/docker/moyro.env.example`](deploy/docker/moyro.env.example).
 
-The supported v0.2.4 topology is one moyro application container connected to
+The supported v0.2.5 topology is one moyro application container connected to
 external PostgreSQL, with uploads on the local `/var/lib/moyro` volume. The
 four-variable production contract does not expose SMTP configuration, so email
 is reported unavailable and no digest worker records false delivery success.
@@ -126,10 +126,14 @@ Administrators may explicitly allow those back-channel endpoints only for an
 isolated, trusted private network; the browser-facing authorization endpoint
 remains HTTPS-only and the setting warns that secrets and codes cross HTTP in
 plaintext and that the traffic, including JWKS, can be intercepted or modified.
-After a successful provider callback, v0.2.4 sends the browser a five-minute,
-single-use code instead of a session JWT. An independent HttpOnly cookie binds
-the code to that browser, and one atomic exchange returns both the local user
-and session without an intermediate `/users/me` request.
+After a successful provider callback, v0.2.5 sends the browser a five-minute,
+browser-bound handoff code instead of a session JWT. The atomic exchange sets
+the reusable login credential only in an HttpOnly, SameSite cookie and returns
+the local user without exposing that credential to JavaScript. If the exchange
+response is lost, the same browser may retry for 60 seconds and receives the
+exact same session; late or differently bound retries are rejected. Browser UI
+requests use the cookie, while API clients and personal access tokens keep the
+Bearer contract.
 
 The PostgreSQL real-archive E2E boundary is Botman 0.1.2, Chatdump 0.5.1,
 Langflow 0.1.20, and EchoSummary 0.6.5 in the local release gate. Public CI

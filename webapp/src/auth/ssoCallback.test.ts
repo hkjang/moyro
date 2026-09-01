@@ -10,11 +10,9 @@ describe("SSO callback fragment", () => {
     });
   });
 
-  it("keeps legacy token redirects compatible during an upgrade", () => {
-    expect(parseSSOCallbackFragment("#token=header.payload.signature")).toEqual({
-      kind: "legacy-token",
-      value: "header.payload.signature",
-    });
+  it("rejects the removed legacy bearer fragment", () => {
+    expect(parseSSOCallbackFragment("#token=header.payload.signature")).toBeNull();
+    expect(isSSOCallbackFragment("#token=header.payload.signature")).toBe(false);
   });
 
   it("fails closed instead of throwing on malformed or oversized fragments", () => {

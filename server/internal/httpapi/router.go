@@ -346,19 +346,18 @@ func New(cfg *config.Config, db *store.DB, hub *ws.Hub, host *pluginhost.Host, l
 	signupLimiter := ratelimit.New(0.2, 3)
 	// Per-IP incoming-webhook limiter: public surface, must be tight.
 	hookIPLimiter := ratelimit.New(5, 10)
-	// Per-IP OAuth limiter: the login kickoff is cheap but the callback
-	// does provider HTTP calls + DB writes, so we cap both at the same
-	// rate an honest user could never hit.
-	oauthIPLimiter := ratelimit.New(5, 10)
+	// Keep external-login kickoff, callback, and local handoff exchange in
+	// separate buckets. A slow provider or a burst of callbacks cannot consume
+	// the recovery budget needed to finish an already-authorized browser flow.
+	oauthLoginLimiter := ratelimit.New(2, 10)
+	oauthCallbackLimiter := ratelimit.New(1, 6)
+	ssoExchangeLimiter := ratelimit.New(2, 8)
 
 	r := chi.NewRouter()
 	r.Use(middleware.RequestID)
-	// Do not trust X-Forwarded-For, X-Real-IP, or True-Client-IP by default.
-	// The four-variable runtime contract has no trusted-proxy allow-list, so
-	// accepting those headers from a directly exposed container would let an
-	// attacker rotate the rate-limit and audit address at will. Peer
-	// RemoteAddr remains the authoritative address until a trusted-proxy
-	// allow-list becomes part of the supported runtime contract.
+	// Forwarding headers remain ignored by default. Administrators can opt in
+	// exact proxy CIDRs through site settings; h.clientIP then walks only that
+	// trusted suffix of the chain.
 	r.Use(middleware.Recoverer)
 	r.Use(requestLog(logger))
 	// Prometheus HTTP duration histogram. Registered after chi's route
@@ -373,7 +372,7 @@ func New(cfg *config.Config, db *store.DB, hub *ws.Hub, host *pluginhost.Host, l
 	// Public incoming webhook endpoint. Kept OUTSIDE /api/v4 and outside
 	// the auth chain so clients can POST with a bare URL. A per-IP
 	// limiter handles abuse; body size is capped in the handler.
-	r.With(hookIPLimiter.Middleware(ratelimit.ClientIP)).
+	r.With(hookIPLimiter.Middleware(h.clientIP)).
 		Post("/hooks/{hookID}", h.fireIncomingWebhook)
 
 	// PAT pre-middleware: if the bearer token begins with "mdp_", resolve
@@ -406,18 +405,18 @@ func New(cfg *config.Config, db *store.DB, hub *ws.Hub, host *pluginhost.Host, l
 		// before we know who the user is, and /callback is reached via
 		// provider redirect (no JWT yet). Per-IP rate-limited so a scripted
 		// state-guessing attack can't exhaust DB connections.
-		r.With(oauthIPLimiter.Middleware(ratelimit.ClientIP)).
+		r.With(oauthLoginLimiter.Middleware(h.clientIP)).
 			Get("/oauth/{provider}/login", h.oauthLogin)
-		r.With(oauthIPLimiter.Middleware(ratelimit.ClientIP)).
+		r.With(oauthCallbackLimiter.Middleware(h.clientIP)).
 			Get("/oauth/{provider}/callback", h.oauthCallback)
 
-		r.With(signupLimiter.Middleware(ratelimit.ClientIP)).Post("/users", h.register)
-		r.With(loginLimiter.Middleware(ratelimit.ClientIP)).Post("/users/login", h.login)
+		r.With(signupLimiter.Middleware(h.clientIP)).Post("/users", h.register)
+		r.With(loginLimiter.Middleware(h.clientIP)).Post("/users/login", h.login)
 
 		// Public invite preview. Reveals only the team display name + basic
 		// invite metadata so the signup form can say "You're joining X".
 		// Rate-limited per-IP because this is unauthenticated surface.
-		r.With(loginLimiter.Middleware(ratelimit.ClientIP)).
+		r.With(loginLimiter.Middleware(h.clientIP)).
 			Get("/invites/{inviteID}", h.getInvite)
 
 		// Phase 27 — Mattermost API v4 compatibility wave 7.
@@ -429,7 +428,7 @@ func New(cfg *config.Config, db *store.DB, hub *ws.Hub, host *pluginhost.Host, l
 		// run an SMTP-driven verify/reset path yet. Single-line registration
 		// form so the audit regex picks them up cleanly.
 		r.Group(func(r chi.Router) {
-			r.Use(loginLimiter.Middleware(ratelimit.ClientIP))
+			r.Use(loginLimiter.Middleware(h.clientIP))
 			r.Post("/users/email/verify", h.verifyUserEmail)
 			r.Post("/users/email/verify/send", h.sendUserEmailVerification)
 			r.Post("/users/password/reset", h.consumePasswordReset)
@@ -1419,11 +1418,17 @@ func New(cfg *config.Config, db *store.DB, hub *ws.Hub, host *pluginhost.Host, l
 	// do not inherit the generic 30-second REST timeout.
 	r.Route("/api/moyro/v1", func(r chi.Router) {
 		r.Get("/system/info", h.nativeSystemInfo)
-		r.With(oauthIPLimiter.Middleware(ratelimit.ClientIP), middleware.Timeout(30*time.Second)).
+		r.With(loginLimiter.Middleware(h.clientIP), middleware.Timeout(30*time.Second)).
+			Post("/auth/session/login", h.nativeBrowserLogin)
+		r.With(h.requireAuth, middleware.Timeout(30*time.Second)).
+			Post("/auth/session/adopt", h.nativeBrowserAdopt)
+		r.With(h.requireAuth, middleware.Timeout(30*time.Second)).
+			Post("/auth/session/logout", h.logout)
+		r.With(oauthLoginLimiter.Middleware(h.clientIP), middleware.Timeout(30*time.Second)).
 			Get("/auth/oidc/login", h.nativeOIDCLogin)
-		r.With(oauthIPLimiter.Middleware(ratelimit.ClientIP), middleware.Timeout(30*time.Second)).
+		r.With(oauthCallbackLimiter.Middleware(h.clientIP), middleware.Timeout(30*time.Second)).
 			Get("/auth/oidc/callback", h.nativeOIDCCallback)
-		r.With(oauthIPLimiter.Middleware(ratelimit.ClientIP), middleware.Timeout(30*time.Second)).
+		r.With(ssoExchangeLimiter.Middleware(h.clientIP), middleware.Timeout(30*time.Second)).
 			Post("/auth/sso/session", h.nativeSSOSessionExchange)
 
 		r.Group(func(r chi.Router) {

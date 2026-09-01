@@ -15,6 +15,7 @@ const OAUTH_ERROR_MESSAGES: Record<string, string> = {
   missing_params: "인증 콜백이 완전하지 않습니다.",
   exchange_failed: "소셜 로그인 제공자와 통신하지 못했습니다.",
   session_failed: "SSO 로그인 세션을 완료하지 못했습니다. 다시 로그인해 주세요.",
+  sso_restart_required: "로그인 세션을 완료할 수 없습니다. 아래 버튼으로 SSO 로그인을 새로 시작해 주세요.",
   resolve_failed: "계정을 처리하지 못했습니다. 관리자에게 문의해 주세요.",
   unverified_email:
     "이메일이 확인되지 않아 기존 계정과 자동 연결할 수 없습니다. 기존 비밀번호로 먼저 로그인해 주세요.",
@@ -54,6 +55,7 @@ export function LoginView() {
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [ssoRestartRequired, setSSORestartRequired] = useState(false);
   const [providers, setProviders] = useState<string[]>([]);
   // `invite` is null until the `#invite=<id>` fragment parse completes (and
   // the server confirms it). A failed preview (expired / revoked / bad id)
@@ -72,9 +74,15 @@ export function LoginView() {
       ? [systemInfo.oidc_provider_name === "Keycloak" ? "keycloak" : "oidc"]
       : [];
   const canRegister = Boolean(invite || systemInfo.local_signup_enabled);
+  const returnTo = window.location.pathname === "/login"
+    ? "/today"
+    : window.location.pathname + window.location.search;
   const oidcLoginURL = `/api/moyro/v1/auth/oidc/login?return_to=${encodeURIComponent(
-    window.location.pathname + window.location.search,
+    returnTo,
   )}`;
+  const providerLoginURL = (name: string) => name === "keycloak" || name === "oidc"
+    ? oidcLoginURL
+    : `/api/v4/oauth/${encodeURIComponent(name)}/login?return_to=${encodeURIComponent(returnTo)}`;
 
   useEffect(() => {
     if (systemInfo.loaded && !canRegister && mode === "register") {
@@ -170,6 +178,7 @@ export function LoginView() {
     const code = decodeURIComponent(
       window.location.hash.slice("#oauth_error=".length),
     );
+    setSSORestartRequired(code === "sso_restart_required");
     setError(OAUTH_ERROR_MESSAGES[code] ?? `소셜 로그인에 실패했습니다 (${code}).`);
     history.replaceState(null, "", window.location.pathname + window.location.search);
   }, []);
@@ -333,6 +342,11 @@ export function LoginView() {
           </button>
 
           {error && <div className="login-error" role="alert">{error}</div>}
+          {ssoRestartRequired && authProviders.length > 0 && (
+            <a className="btn-primary" href={providerLoginURL(authProviders[0])}>
+              SSO 로그인 다시 시작
+            </a>
+          )}
         </form>
 
         {authProviders.length > 0 && (
@@ -343,9 +357,7 @@ export function LoginView() {
                 <a
                   key={name}
                   className={`oauth-btn oauth-btn-${name}`}
-                  href={name === "keycloak" || name === "oidc"
-                    ? oidcLoginURL
-                    : `/api/v4/oauth/${encodeURIComponent(name)}/login`}
+                  href={providerLoginURL(name)}
                 >
                   <span className={`oauth-icon oauth-icon-${name}`} aria-hidden />
                   <span>{PROVIDER_LABELS[name] ?? `${name}로 계속하기`}</span>

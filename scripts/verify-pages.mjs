@@ -262,7 +262,7 @@ for (const releasePage of [
   join(docs, "guides", "offline-deployment.html"),
 ]) {
   const html = htmlByFile.get(releasePage) ?? "";
-  if (!html.includes("v0.2.4")) failures.push(`v0.2.4 release marker is missing in ${relative(root, releasePage)}`);
+  if (!html.includes("v0.2.5")) failures.push(`v0.2.5 release marker is missing in ${relative(root, releasePage)}`);
   if (/v0\.1\.[01]/.test(html)) failures.push(`stale v0.1.x release marker remains in ${relative(root, releasePage)}`);
   if (!html.includes('"dateModified": "2026-08-31"')) {
     failures.push(`2026-08-31 dateModified is missing in ${relative(root, releasePage)}`);
@@ -282,7 +282,7 @@ for (const page of ["https://hkjang.github.io/moyro/", "https://hkjang.github.io
 const sitemapDates = [...sitemap.matchAll(/<lastmod>([^<]+)<\/lastmod>/g)].map((match) => match[1]);
 if (sitemapDates.filter((date) => date === "2026-08-31").length !== 4
   || sitemapDates.filter((date) => date === "2026-08-30").length !== 1) {
-  failures.push("sitemap must date current v0.2.4 pages at 2026-08-31 and the v0.2.1 gallery at 2026-08-30");
+  failures.push("sitemap must date current v0.2.5 pages at 2026-08-31 and the v0.2.1 gallery at 2026-08-30");
 }
 
 try {

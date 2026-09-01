@@ -1,19 +1,18 @@
 openapi: 3.1.0
 info:
   title: Moyro Native API
-  version: 0.2.4
+  version: 0.2.5
   description: |
     Moyro Flow, durable activity inbox, conversation-derived work items, safe
     approval previews, and service policy endpoints under `/api/moyro/v1`.
     This contract is intentionally separate from `openapi-v4.yaml`, which
     documents the Mattermost-compatible `/api/v4` boundary.
 
-    Except for `GET /system/info` and the browser-only SSO session exchange,
-    requests require an `Authorization: Bearer` header containing a live
-    session JWT, PAT, or Moyro API key accepted by the endpoint. Protected
+    First-party browser requests use an HttpOnly same-origin session cookie;
+    API, PAT, and managed-key clients use `Authorization: Bearer`. Protected
     native endpoints reject credentials supplied through the `access_token`
-    query parameter. Every resource operation documents the current membership
-    and endpoint-specific RBAC checks it applies.
+    query parameter. Cookie-authenticated mutations also require the configured
+    same-origin `Origin` value.
 servers:
   - url: /api/moyro/v1
     description: Native API on the current Moyro deployment origin
@@ -36,19 +35,101 @@ tags:
     description: Protected MCP requests and display-safe review projections.
 security:
   - bearerAuth: []
+  - browserSession: []
 paths:
+  /auth/session/login:
+    post:
+      operationId: createBrowserSession
+      tags: [Authentication]
+      security: []
+      summary: Authenticate the first-party web client with an HttpOnly session
+      description: |
+        Same-origin browser endpoint. The reusable session credential is set in
+        an HttpOnly, SameSite cookie and is never returned in JSON or a response
+        token header. API clients should continue using `/api/v4/users/login`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [login_id, password]
+              properties:
+                login_id: { type: string }
+                password: { type: string, format: password }
+                device_id: { type: string }
+      responses:
+        "201":
+          description: Browser session created
+          headers:
+            Cache-Control:
+              schema: { type: string, const: no-store }
+            Set-Cookie:
+              schema: { type: string }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/BrowserLoginSession" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "500": { $ref: "#/components/responses/InternalError" }
+  /auth/session/adopt:
+    post:
+      operationId: adoptLegacyBrowserSession
+      tags: [Authentication]
+      security:
+        - bearerAuth: []
+      summary: Move a legacy browser bearer session into an HttpOnly cookie
+      description: |
+        One-release migration endpoint for an existing browser session stored
+        by an older web client. A valid session Bearer token is required once;
+        the response sets the browser cookie and does not echo the credential.
+      responses:
+        "200":
+          description: Browser session adopted
+          headers:
+            Cache-Control:
+              schema: { type: string, const: no-store }
+            Set-Cookie:
+              schema: { type: string }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/BrowserLoginSession" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+  /auth/session/logout:
+    post:
+      operationId: revokeBrowserSession
+      tags: [Authentication]
+      summary: Revoke the current session and clear its browser cookie
+      responses:
+        "200":
+          description: Session revoked
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [status]
+                properties:
+                  status: { type: string, const: OK }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
   /auth/sso/session:
     post:
       operationId: exchangeBrowserSSOSession
       tags: [Authentication]
       security: []
-      summary: Exchange a browser-bound one-time SSO code for a local session
+      summary: Exchange a browser-bound SSO code for an HttpOnly local session
       description: |
         OAuth and OIDC callbacks place a five-minute opaque code in the browser
         fragment and an independent binding in an HttpOnly, path-restricted
         cookie. Both must match the same live PostgreSQL row. A successful
-        exchange atomically consumes the row and returns the local user and
-        session; no reusable bearer token appears in the callback URL.
+        exchange atomically creates a session and returns only the local user;
+        the reusable credential is set only in an HttpOnly cookie. The same
+        browser binding can recover the identical session for 60 seconds if a
+        successful response is lost, without minting a second session.
       requestBody:
         required: true
         content:
@@ -65,11 +146,11 @@ paths:
           headers:
             Cache-Control:
               schema: { type: string, const: no-store }
-            Token:
+            Set-Cookie:
               schema: { type: string }
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/LoginSession" }
+              schema: { $ref: "#/components/schemas/BrowserLoginSession" }
         "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "500": { $ref: "#/components/responses/InternalError" }
@@ -510,6 +591,10 @@ components:
       type: http
       scheme: bearer
       bearerFormat: JWT, PAT, or scoped Moyro API key
+    browserSession:
+      type: apiKey
+      in: cookie
+      name: moyro_browser_session
   parameters:
     EventID:
       name: eventID
@@ -604,12 +689,11 @@ components:
         last_name: { type: string }
         nickname: { type: string }
         position: { type: string }
-    LoginSession:
+    BrowserLoginSession:
       type: object
       additionalProperties: false
-      required: [token, user]
+      required: [user]
       properties:
-        token: { type: string }
         user: { $ref: "#/components/schemas/LoginUser" }
     SystemInfo:
       type: object
@@ -661,6 +745,7 @@ components:
         - site_name
         - public_base_url
         - allowed_outgoing_hosts
+        - trusted_proxy_cidrs
         - local_signup_enabled
         - draft_storage_mode
         - draft_retention_days
@@ -678,6 +763,12 @@ components:
           items:
             type: string
             description: Hostname or IP address without scheme, port, or path.
+        trusted_proxy_cidrs:
+          type: array
+          maxItems: 64
+          items:
+            type: string
+            description: Canonical IPv4 or IPv6 CIDR whose direct connections may supply forwarding headers.
         local_signup_enabled: { type: boolean }
         draft_storage_mode: { $ref: "#/components/schemas/DraftPolicy/properties/storage_mode" }
         draft_retention_days: { type: integer, minimum: 1, maximum: 30, default: 7 }

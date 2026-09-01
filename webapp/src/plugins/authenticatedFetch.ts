@@ -1,3 +1,5 @@
+import { BROWSER_SESSION_TOKEN } from "@/api/transport";
+
 type TokenProvider = () => string | null;
 
 function inputURL(input: RequestInfo | URL, origin: string): URL | null {
@@ -37,7 +39,7 @@ export function createAuthenticatedPluginFetch(
     // caller-controlled user id to a plugin or /api/v4 handler.
     headers.delete("Mattermost-User-ID");
     const token = getToken();
-    if (token) headers.set("Authorization", `Bearer ${token}`);
+    if (token && token !== BROWSER_SESSION_TOKEN) headers.set("Authorization", `Bearer ${token}`);
     else headers.delete("Authorization");
 
     return upstream(new Request(request, { headers, redirect: "error" }));
