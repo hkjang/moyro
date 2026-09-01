@@ -5,8 +5,8 @@ import (
 	"encoding/json"
 	"time"
 
-	"github.com/jackc/pgx/v5"
 	"github.com/hkjang/moyro/server/internal/store"
+	"github.com/jackc/pgx/v5"
 )
 
 // Valid status values. Mattermost-compatible.
@@ -55,22 +55,27 @@ func (s *Service) GetMany(ctx context.Context, userIDs []string) ([]Status, erro
 		return nil, err
 	}
 	defer rows.Close()
-	seen := map[string]struct{}{}
+	byUserID := make(map[string]Status, len(userIDs))
 	for rows.Next() {
 		var st Status
 		if err := rows.Scan(&st.UserID, &st.Status, &st.Manual, &st.LastActivityAt); err != nil {
 			return nil, err
 		}
-		out = append(out, st)
-		seen[st.UserID] = struct{}{}
+		byUserID[st.UserID] = st
 	}
-	// Pad unseen users with offline so callers don't need to merge.
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	// Preserve the caller's input order while padding unseen users with
+	// offline, so permission-filtered bulk hydration remains deterministic.
 	for _, uid := range userIDs {
-		if _, ok := seen[uid]; !ok {
+		if st, ok := byUserID[uid]; ok {
+			out = append(out, st)
+		} else {
 			out = append(out, Status{UserID: uid, Status: Offline})
 		}
 	}
-	return out, rows.Err()
+	return out, nil
 }
 
 // Set upserts a status row. manual=true means the user explicitly picked

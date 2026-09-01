@@ -190,6 +190,12 @@ func handleClientAction(hub *Hub, c *Client, msg []byte) {
 		if channelID == "" {
 			return
 		}
+		ctx, cancel := context.WithTimeout(context.Background(), revalidateWait)
+		allowed, err := hub.CanPublish(ctx, c.UserID, Broadcast{ChannelID: channelID})
+		cancel()
+		if err != nil || !allowed {
+			return
+		}
 		hub.Broadcast(Event{
 			Event: "typing",
 			Data: map[string]any{

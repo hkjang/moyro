@@ -3,8 +3,11 @@ import {
   Alert,
   Avatar,
   Button,
+  Checkbox,
   Chip,
+  Divider,
   FormControlLabel,
+  MenuItem,
   Radio,
   RadioGroup,
   Stack,
@@ -14,7 +17,13 @@ import {
 } from "@mui/material";
 import { useEffect, useState } from "react";
 import { useDispatch, useSelector } from "react-redux";
-import { api, type SessionRow } from "@/api/client";
+import { api, type SessionRow, type User } from "@/api/client";
+import type { ActivityEventType } from "@/api/activity";
+import {
+  DEFAULT_INBOX_PREFERENCES,
+  inboxPreferencesApi,
+  type InboxPreferences,
+} from "@/api/inbox-preferences";
 import { AuthenticatedImage, isExternalImageURL } from "@/components/AuthenticatedMedia";
 import { SettingsCard, SettingsPage } from "@/components/settings/SettingsPrimitives";
 import { useSystemInfo } from "@/features/system/SystemInfoContext";
@@ -131,6 +140,11 @@ export function NotificationSettingsPage() {
   const [digest, setDigest] = useState(false);
   const [loaded, setLoaded] = useState(false);
   const [message, setMessage] = useState("");
+  const [rules, setRules] = useState<InboxPreferences>(DEFAULT_INBOX_PREFERENCES);
+  const [rulesLoaded, setRulesLoaded] = useState(false);
+  const [rulesSaving, setRulesSaving] = useState(false);
+  const [vipCandidates, setVIPCandidates] = useState<User[]>([]);
+  const [snoozeInput, setSnoozeInput] = useState(DEFAULT_INBOX_PREFERENCES.snooze_presets_minutes.join(", "));
 
   useEffect(() => {
     if (!token || !systemInfo.loaded) return;
@@ -144,6 +158,26 @@ export function NotificationSettingsPage() {
       (err: unknown) => { setLoaded(true); setMessage(err instanceof Error ? err.message : "알림 설정을 불러오지 못했습니다."); },
     );
   }, [emailDigestAvailable, systemInfo.loaded, token]);
+
+  useEffect(() => {
+    if (!token) return;
+    const controller = new AbortController();
+    setRulesLoaded(false);
+    void Promise.all([
+      inboxPreferencesApi.get(token, controller.signal),
+      api.listUsers(token, 0, 200),
+    ]).then(([preferences, users]) => {
+      setRules(preferences);
+      setSnoozeInput(preferences.snooze_presets_minutes.join(", "));
+      setVIPCandidates(users);
+      setRulesLoaded(true);
+    }).catch((err: unknown) => {
+      if (controller.signal.aborted) return;
+      setRulesLoaded(true);
+      setMessage(err instanceof Error ? err.message : "알림함 규칙을 불러오지 못했습니다.");
+    });
+    return () => controller.abort();
+  }, [token]);
 
   async function update(next: boolean) {
     if (!token) return;
@@ -159,12 +193,164 @@ export function NotificationSettingsPage() {
     }
   }
 
+  async function saveRules() {
+    if (!token) return;
+    const presets = [...new Set(snoozeInput.split(/[,\s]+/).filter(Boolean).map(Number))]
+      .filter((value) => Number.isInteger(value));
+    if (presets.some((value) => value < 5 || value > 43_200) || presets.length < 1 || presets.length > 8) {
+      setMessage("미루기 프리셋은 5~43,200분 값 1~8개로 입력하세요.");
+      return;
+    }
+    setRulesSaving(true);
+    try {
+      const { update_at: _serverRevision, ...editableRules } = rules;
+      const updated = await inboxPreferencesApi.patch(token, { ...editableRules, snooze_presets_minutes: presets });
+      setRules(updated);
+      setSnoozeInput(updated.snooze_presets_minutes.join(", "));
+      setMessage("알림함 규칙을 저장했습니다.");
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "알림함 규칙을 저장하지 못했습니다.");
+    } finally {
+      setRulesSaving(false);
+    }
+  }
+
+  const setRule = <K extends keyof InboxPreferences>(key: K, value: InboxPreferences[K]) => {
+    setRules((current) => ({ ...current, [key]: value }));
+  };
+
+  const priorityOptions: Array<{ type: ActivityEventType; label: string }> = [
+    { type: "mention", label: "멘션" },
+    { type: "direct_message", label: "다이렉트 메시지" },
+    { type: "thread_reply", label: "스레드 답글" },
+    { type: "approval_requested", label: "승인 요청" },
+    { type: "task_assigned", label: "작업 할당" },
+    { type: "system_warning", label: "시스템 경고" },
+  ];
+  const weekdayOptions = ["월", "화", "수", "목", "금", "토", "일"];
+
   return (
     <SettingsPage title="알림" description="내 계정의 이메일과 기본 알림 방식을 관리합니다.">
       <SettingsCard title="이메일 요약">
         <FormControlLabel control={<Switch checked={digest} disabled={!loaded || !emailDigestAvailable} onChange={(event) => void update(event.target.checked)} />} label="놓친 멘션을 하루 한 번 이메일로 받기" />
         {systemInfo.loaded && !emailDigestAvailable && <Alert severity="info" sx={{ mt: 2 }}>현재 릴리스는 SMTP 관리 설정과 이메일 요약 발송을 지원하지 않습니다.</Alert>}
         {message && <Typography variant="body2" sx={{ mt: 2 }} role="status">{message}</Typography>}
+      </SettingsCard>
+      <SettingsCard title="우선순위와 묶음" description="VIP와 중요한 이벤트를 먼저 표시하고 반복 알림을 한 묶음으로 정리합니다.">
+        <Stack spacing={2}>
+          <TextField
+            select
+            fullWidth
+            label="VIP 사용자"
+            value={rules.vip_user_ids}
+            disabled={!rulesLoaded}
+            onChange={(event) => {
+              const value = event.target.value;
+              setRule("vip_user_ids", typeof value === "string" ? value.split(",") : value as string[]);
+            }}
+            slotProps={{ select: { multiple: true } }}
+            helperText="선택한 사용자의 활동은 우선순위로 처리합니다."
+          >
+            {vipCandidates.map((candidate) => (
+              <MenuItem key={candidate.id} value={candidate.id}>
+                <Checkbox checked={rules.vip_user_ids.includes(candidate.id)} />
+                {candidate.username}
+              </MenuItem>
+            ))}
+          </TextField>
+          <Stack direction="row" sx={{ flexWrap: "wrap", gap: 0.5 }}>
+            {priorityOptions.map((option) => (
+              <FormControlLabel
+                key={option.type}
+                control={<Checkbox
+                  checked={rules.priority_event_types.includes(option.type)}
+                  onChange={(event) => setRule(
+                    "priority_event_types",
+                    event.target.checked
+                      ? [...rules.priority_event_types, option.type]
+                      : rules.priority_event_types.filter((type) => type !== option.type),
+                  )}
+                />}
+                label={option.label}
+              />
+            ))}
+          </Stack>
+          <TextField select label="알림 묶음 기준" value={rules.bundle_by} onChange={(event) => setRule("bundle_by", event.target.value as InboxPreferences["bundle_by"])}>
+            <MenuItem value="none">묶지 않음</MenuItem>
+            <MenuItem value="channel">채널별</MenuItem>
+            <MenuItem value="type">이벤트 유형별</MenuItem>
+          </TextField>
+          <TextField
+            label="미루기 프리셋(분)"
+            value={snoozeInput}
+            onChange={(event) => setSnoozeInput(event.target.value)}
+            helperText="쉼표로 구분합니다. 예: 60, 240, 1440"
+          />
+        </Stack>
+      </SettingsCard>
+      <SettingsCard title="근무 시간" description="설정한 시간 밖에는 브라우저 알림을 조용히 보관합니다.">
+        <Stack spacing={2}>
+          <FormControlLabel
+            control={<Switch checked={rules.work_hours_enabled} disabled={!rulesLoaded} onChange={(event) => setRule("work_hours_enabled", event.target.checked)} />}
+            label="근무 시간에만 일반 알림 표시"
+          />
+          <TextField label="IANA 시간대" value={rules.work_hours_timezone} onChange={(event) => setRule("work_hours_timezone", event.target.value)} helperText="예: Asia/Seoul, UTC" />
+          <Stack direction="row" sx={{ flexWrap: "wrap", gap: 0.5 }}>
+            {weekdayOptions.map((label, index) => {
+              const weekday = index + 1;
+              return (
+                <FormControlLabel
+                  key={label}
+                  control={<Checkbox
+                    checked={rules.work_hours_weekdays.includes(weekday)}
+                    onChange={(event) => setRule(
+                      "work_hours_weekdays",
+                      event.target.checked
+                        ? [...rules.work_hours_weekdays, weekday].sort()
+                        : rules.work_hours_weekdays.filter((value) => value !== weekday),
+                    )}
+                  />}
+                  label={label}
+                />
+              );
+            })}
+          </Stack>
+          <Stack direction={{ xs: "column", sm: "row" }} spacing={1.5}>
+            <TextField
+              fullWidth
+              type="time"
+              label="시작"
+              value={`${String(Math.floor(rules.work_hours_start_minute / 60)).padStart(2, "0")}:${String(rules.work_hours_start_minute % 60).padStart(2, "0")}`}
+              onChange={(event) => {
+                const [hours, minutes] = event.target.value.split(":").map(Number);
+                setRule("work_hours_start_minute", hours * 60 + minutes);
+              }}
+              slotProps={{ inputLabel: { shrink: true } }}
+            />
+            <TextField
+              fullWidth
+              type="time"
+              label="종료"
+              value={`${String(Math.floor(rules.work_hours_end_minute / 60)).padStart(2, "0")}:${String(rules.work_hours_end_minute % 60).padStart(2, "0")}`}
+              onChange={(event) => {
+                const [hours, minutes] = event.target.value.split(":").map(Number);
+                setRule("work_hours_end_minute", hours * 60 + minutes);
+              }}
+              slotProps={{ inputLabel: { shrink: true } }}
+            />
+          </Stack>
+          <FormControlLabel
+            control={<Switch checked={rules.priority_override} onChange={(event) => setRule("priority_override", event.target.checked)} />}
+            label="VIP·우선순위 알림은 근무 시간 밖에도 표시"
+          />
+          <Divider />
+          <Stack direction="row" sx={{ justifyContent: "flex-end", alignItems: "center", gap: 1.5 }}>
+            {message && <Typography variant="body2" role="status">{message}</Typography>}
+            <Button variant="contained" onClick={() => void saveRules()} disabled={!rulesLoaded || rulesSaving || rules.work_hours_weekdays.length === 0}>
+              {rulesSaving ? "저장 중…" : "알림함 규칙 저장"}
+            </Button>
+          </Stack>
+        </Stack>
       </SettingsCard>
     </SettingsPage>
   );

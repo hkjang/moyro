@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>moyro 사용자 가이드 | Moyro Flow·채널·AI·승인</title>
-    <meta name="description" content="moyro v0.2.5의 durable 통합 알림함, 작업·결정, 채널 컨텍스트, 실제 SSE AI와 안전한 승인 화면을 설명합니다.">
+    <meta name="description" content="moyro v0.2.6의 durable 통합 알림함, 작업·결정, 채널 컨텍스트, 실제 SSE AI와 안전한 승인 화면을 설명합니다.">
     <meta name="robots" content="index,follow,max-image-preview:large,max-snippet:-1">
     <meta name="theme-color" content="#101a3b">
     <link rel="icon" href="../favicon.svg" type="image/svg+xml">
@@ -21,7 +21,7 @@
     <meta property="og:locale" content="ko_KR">
     <meta property="og:site_name" content="moyro">
     <meta property="og:title" content="moyro 사용자 가이드 | Moyro Flow·채널·AI·승인">
-    <meta property="og:description" content="대화를 읽고, 결정하고, 실행하는 v0.2.5 Moyro Flow를 실제 화면으로 확인하세요.">
+    <meta property="og:description" content="대화를 읽고, 결정하고, 실행하는 v0.2.6 Moyro Flow를 실제 화면으로 확인하세요.">
     <meta property="og:url" content="https://hkjang.github.io/moyro/guides/user-guide.html">
     <meta property="og:image" content="https://hkjang.github.io/moyro/assets/brand/moyro-social-card.png">
     <meta property="og:image:secure_url" content="https://hkjang.github.io/moyro/assets/brand/moyro-social-card.png">
@@ -30,7 +30,7 @@
     <meta property="og:image:height" content="630">
     <meta property="og:image:alt" content="moyro 로고와 팀의 대화와 업무 흐름을 조직 안에 문구">
     <meta name="twitter:card" content="summary_large_image">
-    <meta name="twitter:title" content="moyro v0.2.5 사용자 가이드">
+    <meta name="twitter:title" content="moyro v0.2.6 사용자 가이드">
     <meta name="twitter:description" content="오늘, 통합 알림함, 내 업무, 채널, AI와 승인을 실제 화면으로 확인하세요.">
     <meta name="twitter:image" content="https://hkjang.github.io/moyro/assets/brand/moyro-social-card.png">
     <meta name="twitter:image:alt" content="moyro 로고와 팀의 대화와 업무 흐름을 조직 안에 문구">
@@ -41,11 +41,11 @@
           {
             "@type": "TechArticle",
             "@id": "https://hkjang.github.io/moyro/guides/user-guide.html#article",
-            "headline": "moyro v0.2.5 사용자 가이드",
+            "headline": "moyro v0.2.6 사용자 가이드",
             "description": "오늘부터 채널, 내 업무, 실제 SSE AI와 승인 센터까지 Moyro Flow를 설명합니다.",
             "image": "https://hkjang.github.io/moyro/assets/screenshots/today.jpg",
             "inLanguage": "ko-KR",
-            "dateModified": "2026-08-31",
+            "dateModified": "2026-09-01",
             "mainEntityOfPage": {"@type": "WebPage", "@id": "https://hkjang.github.io/moyro/guides/user-guide.html"},
             "author": {"@type": "Organization", "name": "moyro contributors"}
           },
@@ -69,14 +69,14 @@
       </div>
     </header>
     <main id="guide">
-      <section class="guide-hero"><div class="shell"><p class="eyebrow eyebrow-light"><span></span> User guide · v0.2.5 release</p><h1>대화를 읽고, 결정하고,<br>실행하는 하나의 업무 공간</h1><p>글로벌 레일의 오늘부터 durable 통합 알림함, 채널, 작업·결정, 실제 SSE AI와 승인 센터까지 Moyro Flow를 따라 설명합니다.</p><span class="status-note">작업과 결정은 원본 메시지에 연결됩니다. RAG·파일 OCR·AI 자동 실행은 지원 범위가 아닙니다.</span></div></section>
+      <section class="guide-hero"><div class="shell"><p class="eyebrow eyebrow-light"><span></span> User guide · v0.2.6 release</p><h1>대화를 읽고, 결정하고,<br>실행하는 하나의 업무 공간</h1><p>알림 규칙, 작업·결정, 메시지 자동화, 근거가 있는 지식검색과 대화 문서화를 Moyro Flow 안에서 사용합니다.</p><span class="status-note">모든 업무·문서·검색 근거는 원본 채널의 현재 멤버십을 다시 확인합니다.</span></div></section>
       <div class="shell guide-layout">
         <aside class="guide-toc" aria-label="목차"><strong>이 페이지에서</strong><a href="#signin">로그인과 버전</a><a href="#flow">오늘·알림함</a><a href="#workspace">채널·컨텍스트</a><a href="#my-work">내 업무</a><a href="#search-ai">검색·AI</a><a href="#approval">승인 센터</a><a href="#personal">개인 설정</a><a href="#mobile">모바일</a><a href="#help">문제 해결</a></aside>
         <article class="guide-content">
           <section id="signin">
             <h2>1. 로그인과 서비스 버전</h2>
             <p>관리자가 안내한 내부 moyro 주소를 엽니다. 이메일 또는 사용자명과 비밀번호로 로그인합니다. 관리자가 Keycloak OIDC를 활성화했다면 로그인 화면에 SSO 진입점도 표시됩니다.</p>
-            <p>로컬 회원가입이 닫힌 조직에서는 관리자가 발급한 초대 링크를 여세요. 링크에 지정된 워크스페이스를 확인한 뒤 12–72바이트 비밀번호로 계정을 만들 수 있습니다. 만료·폐기·사용 횟수 소진 링크는 가입에 사용할 수 없습니다.</p>
+            <p>로컬 회원가입이 닫힌 조직에서는 관리자가 발급한 초대 링크를 여세요. 일반 사용자 링크는 워크스페이스에 가입시키고, 게스트 링크는 안내된 채널·접근 만료·파일 다운로드 정책만 허용합니다. 만료·폐기·사용 횟수 소진 링크는 가입에 사용할 수 없습니다.</p>
             <figure class="guide-figure"><picture><img src="../assets/screenshots/login.jpg" width="1440" height="1000" loading="lazy" decoding="async" alt="moyro 로그인 폼과 하단 서비스 버전"></picture><figcaption>로그인 화면 하단에서 현재 서비스 버전을 확인할 수 있습니다.</figcaption></figure>
             <p>로그인 뒤에는 오른쪽 위의 <strong>계정 메뉴 열기</strong> 버튼을 선택합니다. 프로필 컨텍스트 메뉴에서도 동일한 버전을 확인할 수 있습니다. 오류를 문의할 때 버전과 발생 시각을 함께 전달하세요.</p>
             <figure class="guide-figure"><picture><img src="../assets/screenshots/workspace-profile-menu.jpg" width="1440" height="1000" loading="lazy" decoding="async" alt="서비스 버전과 설정 진입점이 표시된 moyro 프로필 메뉴"></picture><figcaption>프로필 메뉴에는 개인 설정과 권한이 있는 서비스 관리자 진입점이 표시되며 주요 업무 기능은 글로벌 레일에서 엽니다.</figcaption></figure>
@@ -86,7 +86,7 @@
             <h2>2. 글로벌 레일, 오늘과 통합 알림함</h2>
             <p>로그인하면 <strong>오늘</strong>이 업무 시작점으로 열립니다. 데스크톱 글로벌 레일은 오늘, 알림함, 대화, 내 업무, 검색, 승인과 권한이 있을 때 AI를 연결합니다. 오늘 화면은 서버에 저장된 채널별 unread·mention counter와 저장 메시지, 예약 메시지, 리마인더, 승인 요청을 집계하며 일부 API가 실패하면 해당 영역을 0으로 성공 처리하지 않고 경고합니다.</p>
             <figure class="guide-figure"><picture><img src="../assets/screenshots/today.jpg" width="1440" height="1000" loading="lazy" decoding="async" alt="읽지 않음과 개인 업무를 요약한 moyro 오늘 화면"></picture><figcaption>오늘은 실제 대화와 개인 업무 상태를 모으고, 작업·결정은 내 업무에서 원본 메시지와 함께 관리합니다.</figcaption></figure>
-            <p>통합 알림함의 <strong>업데이트</strong> 탭은 나에게 온 멘션, DM, 참여 스레드 답글, 승인 요청·결과, 리마인더, 작업 할당과 지원되는 플러그인 알림을 PostgreSQL에 보존합니다. 각 항목을 읽음·읽지 않음, 1시간 미루기, 완료로 바꿀 수 있고 상태는 다른 로그인 환경에서도 유지됩니다. <strong>모두 읽음</strong>은 현재 화면의 미확인 업데이트에 적용하며, 이전 항목은 cursor로 더 불러옵니다.</p>
+            <p>통합 알림함의 <strong>업데이트</strong> 탭은 나에게 온 멘션, DM, 참여 스레드 답글, 승인 요청·결과, 리마인더, 작업 할당과 지원되는 플러그인 알림을 PostgreSQL에 보존합니다. 각 항목을 읽음·읽지 않음, 내가 정한 preset까지 미루기, 완료로 바꿀 수 있습니다. VIP·이벤트 우선순위, 채널/종류별 묶음, 시간대·요일·시각 기반 근무시간과 우선 알림 예외도 개인 설정에서 저장합니다.</p>
             <p><strong>대화</strong> 탭은 별도의 채널별 unread·mention counter입니다. 여기의 <strong>채널 전체 읽음</strong>은 durable 업데이트 하나가 아니라 그 채널의 현재 메시지 전체에 적용됩니다. 원본 채널 멤버십을 잃으면 해당 채널의 durable activity도 이후 목록과 상태 변경에서 보이지 않습니다.</p>
             <figure class="guide-figure"><picture><img src="../assets/screenshots/inbox-conversations.jpg" width="1440" height="1000" loading="lazy" decoding="async" alt="채널 단위 읽지 않음과 멘션을 표시한 moyro 통합 알림함"></picture><figcaption>대화 탭은 채널 단위 상태와 원래 채널로 이동하는 동작을 제공합니다.</figcaption></figure>
             <p><strong>승인</strong>과 <strong>리마인더</strong> 탭은 각각 실제 승인 요청 및 메시지 리마인더 API를 사용합니다. 승인 검토 목록은 클라이언트가 전역 권한을 추정하지 않고 서버가 team·resource scope로 허용한 항목만 표시합니다.</p>
@@ -103,7 +103,8 @@
 
           <section id="my-work">
             <h2>4. 작업·결정과 개인 항목을 모은 내 업무</h2>
-            <p><strong>내 업무</strong>는 내 작업, 내 결정, 저장한 메시지, 예약 메시지와 리마인더 탭을 제공합니다. 메시지의 더보기 메뉴에서 <strong>작업으로 만들기</strong> 또는 <strong>결정으로 기록</strong>을 선택하면 제목·설명과 작업 담당자·마감일을 확인한 뒤 원본 메시지에 연결해 저장합니다. 생성자는 작업 내용을 변경·삭제할 수 있고 현재 담당자는 작업 상태만 바꿀 수 있습니다. 결정은 현재 원본 채널 멤버에게 보이며 생성자가 상태·내용을 관리합니다.</p>
+            <p><strong>내 업무</strong>는 내 작업, 내 결정, 저장한 메시지, 예약 메시지와 리마인더 탭을 제공합니다. 작업은 목록·보드·월 달력·날짜순 타임라인으로 전환하고 우선순위, 일/주/월 반복과 선행 작업을 설정할 수 있습니다. 끝나지 않은 선행 작업이 있으면 시작·완료를 서버가 차단하며 반복 작업 완료 시 다음 회차 한 건을 만듭니다.</p>
+            <p>결정은 제안, 검토 중, 기록, 대체와 취소 단계 및 선택 검토자를 사용하고 영향받는 작업과 연결합니다. 변경 이력은 원본 채널의 현재 멤버에게만 보입니다. 자동화 화면에서는 한 채널의 메시지가 특정 문자열을 포함하거나 시작할 때 작업·결정·리마인더를 만드는 규칙을 최대 다섯 action으로 구성합니다. 실행은 lease·재시도·멱등 키를 사용해 재시작과 중복 delivery에도 같은 action을 두 번 만들지 않습니다.</p>
             <p>작업과 결정은 각각 독립 cursor로 더 불러오므로 한 종류가 많아도 다른 탭의 첫 페이지를 밀어내지 않습니다. 원본 post와 현재 멤버십을 서버가 다시 확인하며, 작업 담당자는 현재 채널 멤버만 선택할 수 있습니다. 저장 탭에서는 메시지 저장을 해제하고, 예약 탭에서는 발송 전 pending·retry 항목을 취소하며, 리마인더 탭에서는 원문과 알림 시각을 확인하고 취소합니다.</p>
             <p>저장 메시지·리마인더·메시지 검색·오늘 AI 브리핑의 원문 링크는 대상 post ID를 채널 작업 공간에 전달합니다. 현재 페이지에 그 메시지가 없으면 서버의 접근 검사를 거쳐 정확한 게시물만 추가로 불러온 뒤 해당 행으로 스크롤하고 키보드 포커스를 옮깁니다. 삭제됐거나 접근할 수 없는 메시지는 비슷한 최근 메시지로 대체하지 않고 오류를 표시합니다.</p>
             <figure class="guide-figure"><picture><img src="../assets/screenshots/my-work-saved.jpg" width="1440" height="1000" loading="lazy" decoding="async" alt="moyro 내 업무의 저장한 메시지 탭"></picture><figcaption>저장한 메시지는 배열·ID map 두 서버 응답 형태를 화면 경계에서 같은 순서로 정규화합니다.</figcaption></figure>
@@ -112,10 +113,10 @@
           </section>
 
           <section id="search-ai">
-            <h2>5. 메시지 검색과 AI 대화</h2>
-            <p>메시지 검색에서 가입한 팀을 선택하고 검색어를 입력하면 해당 팀에서 접근할 수 있는 메시지와 전체 건수를 표시합니다. 검색어·팀·페이지는 URL에 남아 새로고침하거나 링크를 공유해도 동일한 조건을 복원합니다. 작성자와 채널 정보를 함께 보여 주지만 벡터·자연어 RAG, 파일 본문 또는 OCR 검색으로 표시하지 않습니다.</p>
+            <h2>5. 지식검색, 대화 문서와 AI</h2>
+            <p>지식검색에서 가입한 팀과 선택 채널을 정하면 현재 접근 가능한 메시지와 대화 문서만 PostgreSQL 전문검색으로 찾습니다. 각 원문은 <code>[M#]</code> 또는 <code>[D#]</code> 근거 카드를 가지며, AI를 사용할 수 있을 때 이 카드만 전달해 근거가 있는 답변을 생성합니다. AI가 없거나 실패해도 검색 결과는 유지됩니다.</p>
             <figure class="guide-figure"><picture><img src="../assets/screenshots/global-search.jpg" width="1440" height="1000" loading="lazy" decoding="async" alt="팀 선택과 메시지 결과가 있는 moyro 메시지 검색"></picture><figcaption>검색 결과는 접근 가능한 팀 범위의 실제 게시물이며 원래 채널로 이동할 수 있습니다.</figcaption></figure>
-            <p>AI 대화는 <code>use_ai</code> 권한과 개인 AI 설정을 확인한 뒤 입력한 대화만 관리자가 허용한 모델에 SSE로 전송합니다. 전송 범위는 최신 대화 최대 24개·48,000자로 제한하고 서버가 모델의 token 한도를 다시 확인합니다. 안전한 Markdown 표시, 복사, 다시 생성, 수정 후 재전송과 부분 응답 보존을 지원하지만 대화는 현재 브라우저 화면에만 있고 서버 이력, 자동 채널 검색, citation 또는 후속 작업 실행은 없습니다.</p>
+            <p>메시지 메뉴의 <strong>대화 문서 만들기</strong>는 전체 원본 스레드를 불러와 Markdown 초안을 만들고 source watermark와 함께 저장합니다. 이후 원문이 추가·수정·삭제되면 문서를 오래됨으로 표시하며 최신 원문으로 다시 생성할 수 있습니다. 제목·본문 수정은 revision 충돌을 감지하고 작성자만 저장·삭제할 수 있습니다. AI 대화 자체는 현재 브라우저 화면에만 있고 서버 이력으로 저장되지 않습니다.</p>
             <figure class="guide-figure"><picture><img src="../assets/screenshots/ai-assistant.jpg" width="1440" height="1000" loading="lazy" decoding="async" alt="권한과 개인 설정을 표시한 moyro AI 대화"></picture><figcaption>사용 가능 여부와 데이터 범위를 표시하고 모델·공급자 정보는 세부 정보에서 확인합니다.</figcaption></figure>
           </section>
 
@@ -129,7 +130,7 @@
 
           <section id="personal">
             <h2>7. 개인 설정과 키</h2>
-            <p>프로필 메뉴의 개인 설정에는 프로필, 화면, 알림, 세션, 개인 키와 AI 개인화가 있습니다. 사이트 URL, Keycloak과 AI 공급자처럼 조직 전체에 영향을 주는 값은 관리자 영역에 있습니다.</p>
+            <p>프로필 메뉴의 개인 설정에는 프로필, 화면, 알림, 세션, 개인 키와 AI 개인화가 있습니다. 알림에서 VIP, 우선 이벤트, 묶음 기준, 미루기 preset, 근무시간과 시간대를 관리합니다. 사이트 URL, Keycloak과 AI 공급자처럼 조직 전체에 영향을 주는 값은 관리자 영역에 있습니다.</p>
             <figure class="guide-figure"><picture><img src="../assets/screenshots/settings-profile.jpg" width="1440" height="1000" loading="lazy" decoding="async" alt="moyro 개인 프로필 설정 화면"></picture><figcaption>개인 설정은 독립 URL을 사용하므로 새로고침 뒤에도 선택한 메뉴가 유지됩니다.</figcaption></figure>
             <p>개인 키 화면에서 관리자가 허용한 scope와 수명 안에서 API·MCP 키를 발급합니다. Secret은 생성 또는 회전 응답에서 한 번만 표시되므로 안전한 credential 저장소로 바로 옮기세요.</p>
             <figure class="guide-figure"><picture><img src="../assets/screenshots/settings-keys.jpg" width="1440" height="1000" loading="lazy" decoding="async" alt="moyro 개인 API와 MCP 키 화면"></picture><figcaption>키마다 scope, 만료와 상태를 확인하고 회전하거나 폐기합니다.</figcaption></figure>
@@ -159,6 +160,6 @@
         </article>
       </div>
     </main>
-    <footer class="site-footer"><div class="shell footer-bottom"><span>© 2026 moyro contributors · v0.2.5 release</span><span><a href="../screens.html">제품 화면</a> · <a href="https://github.com/hkjang/moyro">GitHub</a></span></div></footer>
+    <footer class="site-footer"><div class="shell footer-bottom"><span>© 2026 moyro contributors · v0.2.6 release</span><span><a href="../screens.html">제품 화면</a> · <a href="https://github.com/hkjang/moyro">GitHub</a></span></div></footer>
   </body>
 </html>

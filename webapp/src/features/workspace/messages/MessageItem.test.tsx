@@ -4,7 +4,9 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { api, compatApi } from "@/api/client";
+import { documentsApi } from "@/api/documents";
 import { workItemsApi } from "@/api/work-items";
+import { DocumentCreationProvider } from "@/features/knowledge/DocumentCreationProvider";
 import { WorkItemCreationProvider } from "@/features/work-items/WorkItemCreationProvider";
 import { MessageItem } from "./MessageItem";
 
@@ -192,6 +194,8 @@ describe("MessageItem mobile and keyboard actions", () => {
         id: "task-1", kind: "task", title: post.message, description: "", status: "open",
         created_by: "user-1", assignee_id: "user-1", channel_id: "channel-1",
         source_post_id: "post-1", due_at: 0, decided_at: 0,
+        priority: "normal", completed_at: 0, recurrence_unit: "none", recurrence_interval: 1,
+        occurrence_no: 0, dependency_ids: [], impact_task_ids: [],
         create_at: 1, update_at: 1, delete_at: 0,
       },
     });
@@ -223,5 +227,29 @@ describe("MessageItem mobile and keyboard actions", () => {
       source_post_id: "post-1",
     });
     expect(created.mock.calls[0][1].idempotency_key).toBeTruthy();
+  });
+
+  it("opens the permission-checked conversation document flow from the message menu", async () => {
+    const source = vi.spyOn(documentsApi, "source").mockResolvedValue({
+      team_id: "team-1", channel_id: "channel-1", thread_id: "root-1", cursor_at: 123,
+      posts: [{
+        id: "root-1", channel_id: "channel-1", user_id: "user-1", username: "moyro-user",
+        root_id: "", message: post.message, create_at: post.create_at, update_at: post.update_at,
+      }],
+    });
+
+    await act(async () => root.render(
+      <DocumentCreationProvider token="session-token" currentUserID="user-1">
+        <MessageItem {...props} />
+      </DocumentCreationProvider>,
+    ));
+    await openMoreMenu();
+    await act(async () => {
+      menuItem("대화에서 문서 만들기").click();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+
+    expect(source).toHaveBeenCalledWith("session-token", "post-1", expect.any(AbortSignal));
+    expect(document.querySelector('[role="dialog"]')?.textContent).toContain("대화에서 문서 만들기");
   });
 });

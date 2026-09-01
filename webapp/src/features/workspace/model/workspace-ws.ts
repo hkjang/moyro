@@ -10,6 +10,12 @@ import {
   type UserStatusValue,
 } from "@/api/client";
 import { parseMentionIDs } from "@/features/workspace/model/workspace-helpers";
+import {
+  DEFAULT_INBOX_PREFERENCES,
+  inboxNotificationsAllowed,
+  isPriorityActivity,
+  type InboxPreferences,
+} from "@/api/inbox-preferences";
 import type {
   ReactionMap,
   ReminderToast,
@@ -33,6 +39,7 @@ export type WorkspaceWebSocketEventInput = {
   currentChannelIdRef: MutableRefObject<string | null>;
   threadRootIdRef: MutableRefObject<string | null>;
   channelNotifyRef: MutableRefObject<Record<string, ChannelNotifyProps>>;
+  inboxPreferences?: InboxPreferences;
   showArchived: boolean;
   hydrateUsers: (ids: string[]) => void;
   hydrateFiles: (ids: string[]) => void;
@@ -65,6 +72,7 @@ export function handleWorkspaceWebSocketEvent(
     currentChannelIdRef,
     threadRootIdRef,
     channelNotifyRef,
+    inboxPreferences = DEFAULT_INBOX_PREFERENCES,
     showArchived,
     hydrateUsers,
     hydrateFiles,
@@ -116,6 +124,8 @@ export function handleWorkspaceWebSocketEvent(
       const isDM = channel?.type === "D";
       const mentionIDs = parseMentionIDs(data.mentions);
       const mentionsMe = !!user && mentionIDs.includes(user.id);
+      const inboxEventType = isDM ? "direct_message" : mentionsMe ? "mention" : "plugin_event";
+      const priority = isPriorityActivity(inboxPreferences, p.user_id, inboxEventType);
       const inFocus = !document.hidden && p.channel_id === currentChannelIdRef.current;
       const pref = channelNotifyRef.current[p.channel_id]?.desktop ?? "all";
       if (
@@ -124,7 +134,8 @@ export function handleWorkspaceWebSocketEvent(
         typeof Notification !== "undefined" &&
         Notification.permission === "granted" &&
         pref !== "none" &&
-        (pref === "all" || mentionsMe || isDM)
+        (pref === "all" || mentionsMe || isDM) &&
+        inboxNotificationsAllowed(inboxPreferences, new Date(), priority)
       ) {
         const author = users[p.user_id]?.username ?? "새 메시지";
         const channelLabel = isDM
@@ -133,7 +144,11 @@ export function handleWorkspaceWebSocketEvent(
         try {
           const n = new Notification(channelLabel, {
             body: p.message?.slice(0, 140) || "",
-            tag: p.channel_id,
+            tag: inboxPreferences.bundle_by === "none"
+              ? p.id
+              : inboxPreferences.bundle_by === "type"
+                ? `moyro-${inboxEventType}`
+                : p.channel_id,
             icon: "/favicon.ico",
           });
           n.onclick = () => {

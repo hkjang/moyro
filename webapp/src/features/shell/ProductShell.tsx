@@ -5,6 +5,7 @@ import CloseRounded from "@mui/icons-material/CloseRounded";
 import CommandRounded from "@mui/icons-material/KeyboardCommandKeyRounded";
 import FactCheckRounded from "@mui/icons-material/FactCheckRounded";
 import InboxRounded from "@mui/icons-material/InboxRounded";
+import MenuBookRounded from "@mui/icons-material/MenuBookRounded";
 import ManageAccountsRounded from "@mui/icons-material/ManageAccountsRounded";
 import MoreHorizRounded from "@mui/icons-material/MoreHorizRounded";
 import SearchRounded from "@mui/icons-material/SearchRounded";
@@ -30,7 +31,9 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useSelector } from "react-redux";
 import { Outlet, useLocation, useNavigate } from "react-router-dom";
 import { BrandMark } from "@/components/brand/BrandMark";
+import { GuestAccessBanner } from "@/components/GuestAccessBanner";
 import { useAdminAccess } from "@/features/admin/AdminAccessContext";
+import { DocumentCreationProvider } from "@/features/knowledge/DocumentCreationProvider";
 import { WorkItemCreationProvider } from "@/features/work-items/WorkItemCreationProvider";
 import type { RootState } from "@/store";
 import "@/features/shell/product-shell.css";
@@ -47,6 +50,7 @@ const primaryItems: readonly ShellItem[] = [
   { to: "/inbox", label: "알림함", icon: <InboxRounded /> },
   { to: "/workspace", label: "대화", icon: <ChatBubbleOutlineRounded /> },
   { to: "/my-work", label: "내 업무", icon: <AddTaskRounded />, accent: "automation" },
+  { to: "/knowledge", label: "지식", icon: <MenuBookRounded /> },
   { to: "/search", label: "검색", icon: <SearchRounded /> },
 ];
 
@@ -119,6 +123,7 @@ export function ProductShell() {
     // caller's actual team/resource scope, so the entry stays discoverable.
     const items: ShellItem[] = [
       { to: "/approvals", label: "승인", icon: <FactCheckRounded />, accent: "approval" },
+      { to: "/automations", label: "자동화", icon: <AutoAwesomeRounded />, accent: "automation" },
     ];
     if (access.can("use_ai")) {
       items.push({ to: "/assistant", label: "AI", icon: <AutoAwesomeRounded />, accent: "ai" });
@@ -131,6 +136,7 @@ export function ProductShell() {
     .filter((item): item is ShellItem => Boolean(item));
   const moreItems: ShellItem[] = [
     primaryItems.find((item) => item.to === "/my-work")!,
+    primaryItems.find((item) => item.to === "/knowledge")!,
     ...secondaryItems,
     { to: "/settings/profile", label: "내 설정", icon: <SettingsRounded /> },
     ...(access.hasAdminAccess
@@ -157,6 +163,7 @@ export function ProductShell() {
 
   return (
     <WorkItemCreationProvider token={token} currentUserID={user?.id ?? ""}>
+    <DocumentCreationProvider token={token} currentUserID={user?.id ?? ""}>
       <Box className="product-shell" aria-keyshortcuts="Control+K Meta+K">
       <a className="flow-skip-link" href="#main-content">본문으로 건너뛰기</a>
       <aside className="product-rail" aria-label="글로벌 탐색">
@@ -188,6 +195,7 @@ export function ProductShell() {
       </aside>
 
       <div ref={contentRef} id="main-content" className="product-content" tabIndex={-1}>
+        <GuestAccessBanner />
         <Outlet />
       </div>
 
@@ -289,6 +297,7 @@ export function ProductShell() {
         </DialogContent>
       </Dialog>
       </Box>
+    </DocumentCreationProvider>
     </WorkItemCreationProvider>
   );
 }

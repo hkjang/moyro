@@ -58,9 +58,7 @@ export type User = {
   // Bumped on any profile edit including avatar upload — useful as the
   // `?v=` cache-buster on the image URL.
   update_at?: number;
-  // Zero for active users; unix-millis for deactivated ones. Only the
-  // admin `listUsers(..., {includeDeleted: true})` call populates this
-  // reliably — other endpoints strip deactivated rows upstream.
+  // Admin include-deleted responses populate this reliably.
   delete_at?: number;
 };
 

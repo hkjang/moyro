@@ -241,7 +241,8 @@ func (s *Service) MembersByIDs(ctx context.Context, userID string, channelIDs []
 
 // ChannelsByIDsInTeam hydrates a bounded set of channels from a team-scoped
 // id list, returning only channels the caller can see (member of the
-// channel OR public ('O') channel in a team they belong to). Mirrors the
+// channel OR public ('O') channel in a team they belong to). Restricted
+// guests only see channels they joined. Mirrors the
 // official Mattermost endpoint shape — clients use it on launch to
 // hydrate sidebars without fanning per-channel. Cap input at 200 ids.
 func (s *Service) ChannelsByIDsInTeam(ctx context.Context, teamID, userID string, channelIDs []string) ([]Channel, error) {
@@ -253,13 +254,31 @@ func (s *Service) ChannelsByIDsInTeam(ctx context.Context, teamID, userID string
 		channelIDs = channelIDs[:200]
 	}
 	rows, err := s.db.Pool.Query(ctx, `
+		WITH actor AS (
+			SELECT
+				EXISTS (
+					SELECT 1 FROM team_members tm
+					WHERE tm.team_id=$1 AND tm.user_id=u.id
+				) AS team_member,
+				'system_admin'=ANY(regexp_split_to_array(BTRIM(u.roles), E'\\s+')) AS system_admin,
+				'system_guest'=ANY(regexp_split_to_array(BTRIM(u.roles), E'\\s+')) AS restricted_guest
+			FROM users u
+			WHERE u.id=$2
+			  AND u.delete_at=0
+			  AND (
+				u.roles !~ '(^|[[:space:]])system_guest([[:space:]]|$)'
+				OR u.guest_expires_at > (EXTRACT(EPOCH FROM clock_timestamp()) * 1000)::BIGINT
+			  )
+		)
 		SELECT c.id, c.team_id, c.name, c.display_name, c.type, c.header, c.purpose,
 		       c.create_at, c.update_at, c.delete_at
 		  FROM channels c
+		 CROSS JOIN actor a
 		 WHERE c.team_id = $1
 		   AND c.id = ANY($3)
 		   AND c.delete_at = 0
-		   AND (c.type = 'O'
+		   AND (a.team_member OR a.system_admin)
+		   AND ((c.type = 'O' AND NOT a.restricted_guest)
 		        OR EXISTS (SELECT 1 FROM channel_members m
 		                   WHERE m.channel_id = c.id AND m.user_id = $2))
 		 ORDER BY c.display_name
@@ -1080,9 +1099,9 @@ func (s *Service) GetByName(ctx context.Context, teamID, name string) (*Channel,
 
 // Stats returns the Mattermost-shaped channel stats payload. Member counts
 // are split into total + guest + pinned-post counts so dashboards can show
-// each independently. We don't track guest accounts yet, so guest_count is
-// always zero — the field is kept so the response shape exactly matches
-// the official contract.
+// each independently. Expired/deactivated guests are excluded from the live
+// membership totals even if a cleanup job has not removed their historical
+// membership rows yet.
 type Stats struct {
 	ChannelID       string `json:"channel_id"`
 	MemberCount     int64  `json:"member_count"`
@@ -1094,8 +1113,22 @@ type Stats struct {
 func (s *Service) Stats(ctx context.Context, channelID string) (*Stats, error) {
 	out := &Stats{ChannelID: channelID}
 	if err := s.db.Pool.QueryRow(ctx, `
-		SELECT COUNT(*) FROM channel_members WHERE channel_id=$1
-	`, channelID).Scan(&out.MemberCount); err != nil {
+		SELECT
+			COUNT(*) FILTER (
+				WHERE u.delete_at=0 AND (
+					NOT ('system_guest'=ANY(regexp_split_to_array(BTRIM(u.roles), E'\\s+')))
+					OR u.guest_expires_at > $2
+				)
+			),
+			COUNT(*) FILTER (
+				WHERE u.delete_at=0
+				  AND 'system_guest'=ANY(regexp_split_to_array(BTRIM(u.roles), E'\\s+'))
+				  AND u.guest_expires_at > $2
+			)
+		FROM channel_members cm
+		JOIN users u ON u.id=cm.user_id
+		WHERE cm.channel_id=$1
+	`, channelID, time.Now().UnixMilli()).Scan(&out.MemberCount, &out.GuestCount); err != nil {
 		return nil, err
 	}
 	if err := s.db.Pool.QueryRow(ctx, `

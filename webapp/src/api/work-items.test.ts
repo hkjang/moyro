@@ -15,6 +15,13 @@ const item: WorkItem = {
   source_post_id: "post-1",
   due_at: 0,
   decided_at: 0,
+  priority: "normal",
+  completed_at: 0,
+  recurrence_unit: "none",
+  recurrence_interval: 0,
+  occurrence_no: 0,
+  dependency_ids: [],
+  impact_task_ids: [],
   create_at: 1,
   update_at: 1,
   delete_at: 0,
@@ -66,5 +73,28 @@ describe("workItemsApi", () => {
     );
     expect(fetchMock.mock.calls[1][0]).toBe("/api/moyro/v1/me/work-items/work%2Fid");
     expect((fetchMock.mock.calls[1][1] as RequestInit).method).toBe("DELETE");
+  });
+
+  it("encodes calendar filters and relation endpoints", async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ items: [], next_cursor: "" }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify(item), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify([]), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await workItemsApi.list("session-token", {
+      kind: "task", dueFrom: 100, dueTo: 200, sort: "due",
+    });
+    await workItemsApi.addDependency("session-token", "work/id", "dependency/id");
+    await workItemsApi.events("session-token", "work/id");
+
+    expect(fetchMock.mock.calls[0][0]).toBe(
+      "/api/moyro/v1/me/work-items?kind=task&due_from=100&due_to=200&sort=due",
+    );
+    expect(fetchMock.mock.calls[1][0]).toBe(
+      "/api/moyro/v1/me/work-items/work%2Fid/dependencies/dependency%2Fid",
+    );
+    expect((fetchMock.mock.calls[1][1] as RequestInit).method).toBe("POST");
+    expect(fetchMock.mock.calls[2][0]).toBe("/api/moyro/v1/me/work-items/work%2Fid/events");
   });
 });

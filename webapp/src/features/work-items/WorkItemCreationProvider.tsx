@@ -15,13 +15,20 @@ import {
   Typography,
 } from "@mui/material";
 import { api, compatApi, type Post, type User } from "@/api/client";
-import { workItemsApi, type WorkItem, type WorkItemKind } from "@/api/work-items";
+import {
+  workItemsApi,
+  type WorkItem,
+  type WorkItemKind,
+  type WorkItemPriority,
+  type WorkItemRecurrence,
+} from "@/api/work-items";
 
-type CreationTarget = { post: Post; kind: WorkItemKind };
+type CreationTarget = { post: Post; kind: WorkItemKind; supersedesID?: string };
+type CreationOptions = { supersedesID?: string };
 
 type WorkItemCreationContextValue = {
   available: boolean;
-  open: (post: Post, kind: WorkItemKind) => void;
+  open: (post: Post, kind: WorkItemKind, options?: CreationOptions) => void;
 };
 
 const WorkItemCreationContext = createContext<WorkItemCreationContextValue>({
@@ -73,7 +80,12 @@ export function WorkItemCreationProvider({
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [assigneeID, setAssigneeID] = useState("");
+  const [reviewerID, setReviewerID] = useState("");
   const [dueAt, setDueAt] = useState("");
+  const [priority, setPriority] = useState<WorkItemPriority>("normal");
+  const [recurrenceUnit, setRecurrenceUnit] = useState<WorkItemRecurrence>("none");
+  const [recurrenceInterval, setRecurrenceInterval] = useState(1);
+  const [decisionStatus, setDecisionStatus] = useState<"proposed" | "recorded">("recorded");
   const [members, setMembers] = useState<User[]>([]);
   const [membersLoading, setMembersLoading] = useState(false);
   const [memberWarning, setMemberWarning] = useState("");
@@ -83,22 +95,27 @@ export function WorkItemCreationProvider({
   const keyRef = useRef("");
 
   const available = Boolean(token && currentUserID);
-  const open = useCallback((post: Post, kind: WorkItemKind) => {
+  const open = useCallback((post: Post, kind: WorkItemKind, options: CreationOptions = {}) => {
     if (!available) return;
     keyRef.current = requestKey();
-    setTarget({ post, kind });
+    setTarget({ post, kind, supersedesID: options.supersedesID });
     setTitle(suggestedTitle(post.message));
     setDescription("");
     setAssigneeID(kind === "task" ? currentUserID : "");
+    setReviewerID("");
     setDueAt("");
+    setPriority("normal");
+    setRecurrenceUnit("none");
+    setRecurrenceInterval(1);
+    setDecisionStatus("recorded");
     setMembers([]);
-    setMembersLoading(kind === "task");
+    setMembersLoading(true);
     setMemberWarning("");
     setError("");
   }, [available, currentUserID]);
 
   useEffect(() => {
-    if (!target || target.kind !== "task") return undefined;
+    if (!target) return undefined;
     const controller = new AbortController();
     setMembersLoading(true);
     void api.listChannelMembers(token, target.post.channel_id)
@@ -107,7 +124,7 @@ export function WorkItemCreationProvider({
         if (!controller.signal.aborted) setMembers(users);
       })
       .catch(() => {
-        if (!controller.signal.aborted) setMemberWarning("담당자 목록을 불러오지 못해 나에게 할당합니다.");
+        if (!controller.signal.aborted) setMemberWarning("채널 멤버 목록을 불러오지 못했습니다.");
       })
       .finally(() => {
         if (!controller.signal.aborted) setMembersLoading(false);
@@ -127,13 +144,23 @@ export function WorkItemCreationProvider({
         setError("마감 시각은 현재보다 뒤여야 합니다.");
         return;
       }
+      if (target.kind === "task" && recurrenceUnit !== "none" && !parsedDueAt) {
+        setError("반복 작업에는 첫 마감 시각이 필요합니다.");
+        return;
+      }
       const result = await workItemsApi.create(token, {
         kind: target.kind,
         title: title.trim(),
         description: description.trim(),
         assignee_id: target.kind === "task" ? (assigneeID || currentUserID) : undefined,
+        reviewer_id: target.kind === "decision" ? reviewerID || undefined : undefined,
         source_post_id: target.post.id,
         due_at: target.kind === "task" ? parsedDueAt : undefined,
+        priority: target.kind === "task" ? priority : undefined,
+        recurrence_unit: target.kind === "task" ? recurrenceUnit : undefined,
+        recurrence_interval: target.kind === "task" && recurrenceUnit !== "none" ? recurrenceInterval : 0,
+        initial_status: target.kind === "decision" ? (target.supersedesID ? "recorded" : decisionStatus) : undefined,
+        supersedes_id: target.kind === "decision" ? target.supersedesID : undefined,
         idempotency_key: keyRef.current,
       });
       setTarget(null);
@@ -205,12 +232,74 @@ export function WorkItemCreationProvider({
                   ))}
                 </TextField>
                 <TextField
+                  select
+                  label="우선순위"
+                  value={priority}
+                  onChange={(event) => setPriority(event.target.value as WorkItemPriority)}
+                >
+                  <MenuItem value="low">낮음</MenuItem>
+                  <MenuItem value="normal">보통</MenuItem>
+                  <MenuItem value="high">높음</MenuItem>
+                  <MenuItem value="urgent">긴급</MenuItem>
+                </TextField>
+                <TextField
                   type="datetime-local"
                   label="마감 시각 (선택)"
                   value={dueAt}
                   onChange={(event) => setDueAt(event.target.value)}
                   slotProps={{ inputLabel: { shrink: true }, htmlInput: { min: localDateTimeValue(Date.now() + 60_000) } }}
                 />
+                <TextField
+                  select
+                  label="반복"
+                  value={recurrenceUnit}
+                  onChange={(event) => setRecurrenceUnit(event.target.value as WorkItemRecurrence)}
+                >
+                  <MenuItem value="none">반복 안 함</MenuItem>
+                  <MenuItem value="daily">일 단위</MenuItem>
+                  <MenuItem value="weekly">주 단위</MenuItem>
+                  <MenuItem value="monthly">월 단위</MenuItem>
+                </TextField>
+                {recurrenceUnit !== "none" && (
+                  <TextField
+                    type="number"
+                    label="반복 간격"
+                    value={recurrenceInterval}
+                    onChange={(event) => setRecurrenceInterval(Math.min(365, Math.max(1, Number(event.target.value) || 1)))}
+                    helperText={recurrenceUnit === "daily" ? "며칠마다" : recurrenceUnit === "weekly" ? "몇 주마다" : "몇 달마다"}
+                    slotProps={{ htmlInput: { min: 1, max: 365 } }}
+                  />
+                )}
+              </>
+            )}
+            {!isTask && (
+              <>
+                <TextField
+                  select
+                  label="검토자 (선택)"
+                  value={reviewerID}
+                  onChange={(event) => setReviewerID(event.target.value)}
+                  disabled={membersLoading}
+                  helperText={membersLoading ? "채널 멤버를 불러오는 중…" : undefined}
+                >
+                  <MenuItem value="">검토자 없음</MenuItem>
+                  {members.map((member) => (
+                    <MenuItem key={member.id} value={member.id}>
+                      {member.id === currentUserID ? `나 · ${member.username}` : member.username}
+                    </MenuItem>
+                  ))}
+                </TextField>
+                <TextField
+                  select
+                  label="초기 상태"
+                  value={target?.supersedesID ? "recorded" : decisionStatus}
+                  onChange={(event) => setDecisionStatus(event.target.value as "proposed" | "recorded")}
+                  disabled={Boolean(target?.supersedesID)}
+                  helperText={target?.supersedesID ? "대체 결정은 즉시 확정되어 기존 결정을 대체합니다." : undefined}
+                >
+                  <MenuItem value="proposed">제안 · 검토 전</MenuItem>
+                  <MenuItem value="recorded">확정 기록</MenuItem>
+                </TextField>
               </>
             )}
             {memberWarning && <Alert severity="warning">{memberWarning}</Alert>}

@@ -184,6 +184,40 @@ func (s *IdentityStore) ResolveOrCreateUser(ctx context.Context, provider string
 	return u, true, nil
 }
 
+// RemoveUnonboardedIdentityAccount compensates a newly-created SSO identity
+// when fail-closed group onboarding could not be applied. The exact provider,
+// subject, and user must still match and no session may exist; those guards
+// prevent a delayed failing callback from deleting an account another callback
+// has already made usable.
+func (s *IdentityStore) RemoveUnonboardedIdentityAccount(ctx context.Context, provider, subject, userID string) error {
+	return removeUnonboardedIdentityAccount(ctx, s.db.Pool, provider, subject, userID)
+}
+
+func removeUnonboardedIdentityAccount(ctx context.Context, executor identityExecutor, provider, subject, userID string) error {
+	provider = strings.TrimSpace(provider)
+	subject = strings.TrimSpace(subject)
+	userID = strings.TrimSpace(userID)
+	if provider == "" || subject == "" || userID == "" {
+		return errors.New("oauth: incomplete onboarding compensation identity")
+	}
+	tag, err := executor.Exec(ctx, `
+		DELETE FROM users u
+		WHERE u.id=$3
+		  AND EXISTS (
+			SELECT 1 FROM user_identities i
+			WHERE i.user_id=u.id AND i.provider=$1 AND i.subject=$2
+		  )
+		  AND NOT EXISTS (SELECT 1 FROM sessions s WHERE s.user_id=u.id)
+	`, provider, subject, userID)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() != 1 {
+		return errors.New("oauth: unonboarded identity account was not safe to remove")
+	}
+	return nil
+}
+
 // linkExistingIdentity serializes the identity insert, ownership check, and
 // optional avatar adoption in one transaction. ON CONFLICT alone is not
 // sufficient: a concurrent callback may have linked the same provider subject

@@ -79,6 +79,27 @@ func TestIssueTokenGeneratesUniqueJWTs(t *testing.T) {
 	}
 }
 
+func TestGuestAccessValidityFailsClosedAtExpiry(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0)
+	tests := []struct {
+		name string
+		user User
+		want bool
+	}{
+		{name: "regular user", user: User{Roles: "system_user"}, want: true},
+		{name: "live guest", user: User{Roles: "system_guest", GuestExpiresAt: now.Add(time.Second).UnixMilli()}, want: true},
+		{name: "expired guest", user: User{Roles: "system_guest", GuestExpiresAt: now.UnixMilli()}, want: false},
+		{name: "guest without expiry", user: User{Roles: "system_guest"}, want: false},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := test.user.GuestAccessValid(now); got != test.want {
+				t.Fatalf("GuestAccessValid() = %v, want %v", got, test.want)
+			}
+		})
+	}
+}
+
 func TestParseRequiresStrictSessionClaims(t *testing.T) {
 	svc, _ := newTokenTestService(t)
 	now := time.Now()

@@ -142,6 +142,7 @@ func main() {
 	go backend.Scheduled.Run(ctx)
 	go backend.Reminders.Run(ctx)
 	go backend.Approvals.Run(ctx)
+	go backend.Automations.Run(ctx)
 
 	srv := &http.Server{
 		Addr:              cfg.Listen,
@@ -193,7 +194,12 @@ func bootstrapDefaults(ctx context.Context, db *store.DB) error {
 		return err
 	}
 
-	rows, err := db.Pool.Query(ctx, `SELECT id FROM users WHERE delete_at = 0`)
+	rows, err := db.Pool.Query(ctx, `
+		SELECT id FROM users
+		WHERE delete_at = 0
+		  AND 'system_user'=ANY(regexp_split_to_array(BTRIM(roles), E'\\s+'))
+		  AND NOT ('system_guest'=ANY(regexp_split_to_array(BTRIM(roles), E'\\s+')))
+	`)
 	if err != nil {
 		return err
 	}

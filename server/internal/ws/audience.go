@@ -6,56 +6,101 @@ import (
 	"github.com/hkjang/moyro/server/internal/store"
 )
 
-// DatabaseAudienceResolver resolves scoped WebSocket events to active members.
-// When channel and team scopes are both present, both must match: the channel
-// must belong to the team and recipients must retain both memberships.
+// DatabaseAudienceResolver resolves scoped WebSocket events to active users.
+// Channel, team, and subject-user scopes are intersected. A subject-user scope
+// is used for presence/profile events: active regular users may see it, while
+// an active guest may only see itself or a subject with whom it shares a live
+// channel. Missing, deleted, and expired subjects fail closed.
 func DatabaseAudienceResolver(db *store.DB) AudienceResolver {
 	return func(ctx context.Context, b Broadcast) (map[string]struct{}, error) {
-		query := ""
-		args := []any{}
-		switch {
-		case b.ChannelID != "":
-			query = `
-				SELECT cm.user_id
-				FROM channel_members AS cm
-				JOIN channels AS c ON c.id = cm.channel_id AND c.delete_at = 0
-				JOIN users AS u ON u.id = cm.user_id
-				WHERE cm.channel_id = $1
-				  AND u.delete_at = 0
-				  AND (
-					COALESCE(c.team_id, '') = '' OR EXISTS (
-						SELECT 1
-						FROM team_members AS channel_tm
-						JOIN teams AS channel_t ON channel_t.id = channel_tm.team_id AND channel_t.delete_at = 0
-						WHERE channel_tm.team_id = c.team_id AND channel_tm.user_id = cm.user_id
-					)
-				  )
-				  AND (
-					$2 = '' OR (
-						c.team_id = $2 AND EXISTS (
-							SELECT 1
-							FROM team_members AS scoped_tm
-							JOIN teams AS scoped_t ON scoped_t.id = scoped_tm.team_id AND scoped_t.delete_at = 0
-							WHERE scoped_tm.team_id = $2 AND scoped_tm.user_id = cm.user_id
-						)
-					)
-				  )
-			`
-			args = append(args, b.ChannelID, b.TeamID)
-		case b.TeamID != "":
-			query = `
-				SELECT tm.user_id
-				FROM team_members AS tm
-				JOIN teams AS t ON t.id = tm.team_id AND t.delete_at = 0
-				JOIN users AS u ON u.id = tm.user_id
-				WHERE tm.team_id = $1 AND u.delete_at = 0
-			`
-			args = append(args, b.TeamID)
-		default:
+		if b.ChannelID == "" && b.TeamID == "" && b.SubjectUserID == "" {
 			return nil, nil
 		}
 
-		rows, err := db.Pool.Query(ctx, query, args...)
+		rows, err := db.Pool.Query(ctx, `
+			SELECT recipient.id
+			FROM users AS recipient
+			WHERE recipient.delete_at = 0
+			  AND (
+				recipient.roles !~ '(^|[[:space:]])system_guest([[:space:]]|$)'
+				OR recipient.guest_expires_at > (EXTRACT(EPOCH FROM clock_timestamp()) * 1000)::BIGINT
+			  )
+			  AND (
+				$1 = '' OR EXISTS (
+					SELECT 1
+					FROM channel_members AS scoped_cm
+					JOIN channels AS scoped_c ON scoped_c.id = scoped_cm.channel_id AND scoped_c.delete_at = 0
+					WHERE scoped_cm.channel_id = $1
+					  AND scoped_cm.user_id = recipient.id
+					  AND (
+						COALESCE(scoped_c.team_id, '') = '' OR EXISTS (
+							SELECT 1
+							FROM team_members AS scoped_channel_tm
+							JOIN teams AS scoped_channel_t
+							  ON scoped_channel_t.id = scoped_channel_tm.team_id AND scoped_channel_t.delete_at = 0
+							WHERE scoped_channel_tm.team_id = scoped_c.team_id
+							  AND scoped_channel_tm.user_id = recipient.id
+						)
+					  )
+				)
+			  )
+			  AND (
+				$2 = '' OR EXISTS (
+					SELECT 1
+					FROM team_members AS scoped_tm
+					JOIN teams AS scoped_t ON scoped_t.id = scoped_tm.team_id AND scoped_t.delete_at = 0
+					WHERE scoped_tm.team_id = $2 AND scoped_tm.user_id = recipient.id
+				)
+			  )
+			  AND (
+				$1 = '' OR $2 = '' OR EXISTS (
+					SELECT 1 FROM channels AS intersected_c
+					WHERE intersected_c.id = $1 AND intersected_c.team_id = $2 AND intersected_c.delete_at = 0
+				)
+			  )
+			  AND (
+				$3 = '' OR EXISTS (
+					SELECT 1
+					FROM users AS subject
+					WHERE subject.id = $3
+					  AND subject.delete_at = 0
+					  AND (
+						subject.roles !~ '(^|[[:space:]])system_guest([[:space:]]|$)'
+						OR subject.guest_expires_at > (EXTRACT(EPOCH FROM clock_timestamp()) * 1000)::BIGINT
+					  )
+					  AND (
+						recipient.id = subject.id
+						OR recipient.roles !~ '(^|[[:space:]])system_guest([[:space:]]|$)'
+						OR EXISTS (
+							SELECT 1
+							FROM channel_members AS subject_cm
+							JOIN channel_members AS recipient_cm
+							  ON recipient_cm.channel_id = subject_cm.channel_id
+							 AND recipient_cm.user_id = recipient.id
+							JOIN channels AS shared_c
+							  ON shared_c.id = subject_cm.channel_id AND shared_c.delete_at = 0
+							WHERE subject_cm.user_id = subject.id
+							  AND (
+								COALESCE(shared_c.team_id, '') = '' OR (
+									EXISTS (
+										SELECT 1 FROM teams AS shared_t
+										WHERE shared_t.id = shared_c.team_id AND shared_t.delete_at = 0
+									)
+									AND EXISTS (
+										SELECT 1 FROM team_members AS subject_tm
+										WHERE subject_tm.team_id = shared_c.team_id AND subject_tm.user_id = subject.id
+									)
+									AND EXISTS (
+										SELECT 1 FROM team_members AS recipient_tm
+										WHERE recipient_tm.team_id = shared_c.team_id AND recipient_tm.user_id = recipient.id
+									)
+								)
+							  )
+						)
+					  )
+				)
+			  )
+		`, b.ChannelID, b.TeamID, b.SubjectUserID)
 		if err != nil {
 			return nil, err
 		}

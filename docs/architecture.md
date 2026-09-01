@@ -13,6 +13,8 @@ flowchart LR
     API --> Command["Post Command pipeline"]
     Command --> Chat["Teams, channels, posts"]
     API --> Files["File service"]
+    API --> Knowledge["Knowledge and documents"]
+    API --> Work["Work items and rules"]
     API --> Ext["Bots, hooks, slash commands"]
     Chat --> DB["PostgreSQL"]
     Files --> FS["Local FS or S3"]
@@ -22,6 +24,9 @@ flowchart LR
     PluginHost --> RPC["Plugin RPC subprocess"]
     Ext --> Outbox["PostgreSQL delivery outbox"]
     Outbox --> Webhooks["Leased webhook workers"]
+    Work --> Automation["Leased automation worker"]
+    Knowledge --> DB
+    Automation --> DB
 ```
 
 ## Server
@@ -31,7 +36,7 @@ Entry point: `server/cmd/moyro/main.go`.
 The process loads config, opens PostgreSQL, runs checksummed versioned
 migrations, bootstraps a default team/channel, starts the WebSocket hub,
 optional Redis fanout, plugin host, configured email digest worker, scheduled
-message worker, reminder worker, and HTTP server.
+message worker, reminder worker, message-automation worker, and HTTP server.
 
 Important packages:
 
@@ -51,6 +56,12 @@ Important packages:
   history, deterministic delivery IDs, and dead-letter state.
 - `internal/pluginhost` and `internal/rpcbridge` implement server plugin hooks.
 - `internal/scheduled` and `internal/reminders` run background delivery loops.
+- `internal/workitems` owns tasks, dependencies, recurrence, and decision
+  lifecycle/history; `internal/automations` owns typed rules and leased runs.
+- `internal/knowledge` and `internal/documents` provide offline PostgreSQL
+  retrieval, citations, and source-watermarked conversation documents.
+- `internal/inboxprefs` centralizes VIP, priority, bundling, snooze, and
+  timezone-aware work-hour policy.
 - `internal/metrics` exposes Prometheus metrics.
 
 ## Webapp
@@ -71,9 +82,8 @@ Important modules:
   first-paint, local-cache, and server-backed theme state.
 - `features/shell/ProductShell.tsx` owns the global rail and mobile bottom
   navigation shared by Flow, workspace, settings, and admin routes.
-- `features/flow` owns Today, unified inbox, My Work, approvals, AI assistant,
-  and team-scoped search. Unsupported task, decision, RAG, and durable
-  per-event inbox contracts are shown as prepared capabilities, not fake data.
+- `features/flow` owns Today, unified inbox, task/decision views, automation,
+  approvals, AI assistant, and permission-scoped knowledge search.
 - `features/workspace` owns the context sidebar, channel header, flat message
   timeline, scoped-draft composer, and thread/summary/file/info context panel.
 - `hooks/useWebsocket.ts` owns reconnect and stale-socket guards.
@@ -89,15 +99,16 @@ Important modules:
    membership, and thread-root validity at the actual send time.
 3. Server plugin `MessageWillBePosted` hooks may modify or reject the post;
    adapter-owned metadata is stripped and then reapplied by the server.
-4. Post service persists the row, associates files, resolves mentions, and
-   updates unread counters.
+4. Post service persists the row and atomically enqueues matching typed
+   automation actions before commit, then associates files, resolves mentions,
+   and updates unread counters.
 5. Server broadcasts `posted`, mention, and unread events over the hub.
 6. `MessageHasBeenPosted` and link previews run asynchronously. Matching
    outgoing webhook callbacks are persisted before the dispatcher returns,
    then leased workers deliver them with stable idempotency headers.
-7. Post persistence and outgoing enqueue are currently separate commits. A
-   crash in that narrow gap can still lose the integration event; a future
-   shared transaction is required for a fully atomic domain outbox.
+7. The message-automation outbox shares the post transaction, then a leased
+   worker applies stable idempotency keys and bounded retry. Outgoing webhook
+   enqueue remains a separate integration commit.
 8. Scheduled delivery prevents duplicate post rows with a unique
    `scheduled_post_id` and repairs file associations on replay. If the original
    post commit succeeds but its response is lost, the worker retrieves that row;

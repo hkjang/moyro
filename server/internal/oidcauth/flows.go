@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/hkjang/moyro/server/internal/secrets"
@@ -24,11 +25,15 @@ var ErrInvalidFlow = errors.New("oidc login flow is invalid or expired")
 // logins without ever turning one request into an unbounded table sweep.
 const expiredFlowCleanupLimit = 256
 
+const maxFlowPolicyBytes = 1 << 20
+
 type Flow struct {
-	Nonce     string `json:"nonce"`
-	Verifier  string `json:"verifier"`
-	ReturnTo  string `json:"return_to"`
-	ExpiresAt int64  `json:"expires_at"`
+	Nonce              string          `json:"nonce"`
+	Verifier           string          `json:"verifier"`
+	ReturnTo           string          `json:"return_to"`
+	ProviderSnapshotID string          `json:"provider_snapshot_id"`
+	ProviderPolicy     json.RawMessage `json:"provider_policy"`
+	ExpiresAt          int64           `json:"expires_at"`
 }
 
 type FlowStore struct {
@@ -45,7 +50,11 @@ func NewFlowStore(db *store.DB, secretManager *secrets.Manager) (*FlowStore, err
 	return &FlowStore{db: db, secrets: secretManager, ttl: 10 * time.Minute, clock: time.Now}, nil
 }
 
-func (s *FlowStore) Create(ctx context.Context, returnTo string) (state string, flow Flow, err error) {
+func (s *FlowStore) Create(ctx context.Context, returnTo, providerSnapshotID string, providerPolicy json.RawMessage) (state string, flow Flow, err error) {
+	providerSnapshotID = strings.TrimSpace(providerSnapshotID)
+	if err := validateFlowProviderBinding(providerSnapshotID, providerPolicy); err != nil {
+		return "", Flow{}, ErrInvalidFlow
+	}
 	// Cleanup failure must not make a valid SSO login unavailable.  The insert
 	// below is still bounded by the primary key and a future login retries the
 	// indexed expiry cleanup.
@@ -61,7 +70,9 @@ func (s *FlowStore) Create(ctx context.Context, returnTo string) (state string, 
 	}
 	flow = Flow{
 		Nonce: nonce, Verifier: oauth2.GenerateVerifier(), ReturnTo: returnTo,
-		ExpiresAt: s.clock().Add(s.ttl).UnixMilli(),
+		ProviderSnapshotID: providerSnapshotID,
+		ProviderPolicy:     append(json.RawMessage(nil), providerPolicy...),
+		ExpiresAt:          s.clock().Add(s.ttl).UnixMilli(),
 	}
 	payload, err := json.Marshal(flow)
 	if err != nil {
@@ -83,6 +94,14 @@ func (s *FlowStore) Create(ctx context.Context, returnTo string) (state string, 
 		return "", Flow{}, fmt.Errorf("oidcauth: store flow: %w", err)
 	}
 	return state, flow, nil
+}
+
+func validateFlowProviderBinding(providerSnapshotID string, providerPolicy json.RawMessage) error {
+	if strings.TrimSpace(providerSnapshotID) == "" || len(providerPolicy) == 0 ||
+		len(providerPolicy) > maxFlowPolicyBytes || !json.Valid(providerPolicy) {
+		return ErrInvalidFlow
+	}
+	return nil
 }
 
 // Consume atomically deletes a one-time state before decryption. A replay sees
@@ -116,7 +135,9 @@ func (s *FlowStore) Consume(ctx context.Context, state string) (Flow, error) {
 		return Flow{}, ErrInvalidFlow
 	}
 	var flow Flow
-	if err := json.Unmarshal(plain, &flow); err != nil || flow.Nonce == "" || flow.Verifier == "" || flow.ExpiresAt != expiresAt {
+	if err := json.Unmarshal(plain, &flow); err != nil || flow.Nonce == "" || flow.Verifier == "" ||
+		flow.ProviderSnapshotID == "" || len(flow.ProviderPolicy) == 0 || len(flow.ProviderPolicy) > maxFlowPolicyBytes ||
+		!json.Valid(flow.ProviderPolicy) || flow.ExpiresAt != expiresAt {
 		return Flow{}, ErrInvalidFlow
 	}
 	return flow, nil

@@ -4,6 +4,7 @@ import AssignmentTurnedInRounded from "@mui/icons-material/AssignmentTurnedInRou
 import AttachFileRounded from "@mui/icons-material/AttachFileRounded";
 import ChatBubbleOutlineRounded from "@mui/icons-material/ChatBubbleOutlineRounded";
 import DeleteOutlineRounded from "@mui/icons-material/DeleteOutlineRounded";
+import DescriptionRounded from "@mui/icons-material/DescriptionRounded";
 import EditOutlined from "@mui/icons-material/EditOutlined";
 import GavelRounded from "@mui/icons-material/GavelRounded";
 import MoreHorizRounded from "@mui/icons-material/MoreHorizRounded";
@@ -21,6 +22,7 @@ import { MessageBody } from "@/components/MessageBody";
 import { useMentionAutocomplete } from "@/components/MentionPicker";
 import { useDraft } from "@/features/workspace/composer/useDraft";
 import { useWorkItemCreation } from "@/features/work-items/WorkItemCreationProvider";
+import { useDocumentCreation } from "@/features/knowledge/DocumentCreationProvider";
 import { WorkspaceAvatar } from "@/features/workspace/sidebar/WorkspaceAvatar";
 import { PluginSurface } from "@/plugins/PluginSurface";
 import { usePluginRegistryState } from "@/plugins/registry";
@@ -87,6 +89,7 @@ export type MessageItemProps = {
 export function MessageItem(props: MessageItemProps) {
   const pluginRegistry = usePluginRegistryState();
   const workItemCreation = useWorkItemCreation();
+  const documentCreation = useDocumentCreation();
   const {
     post,
     isMe,
@@ -403,6 +406,15 @@ export function MessageItem(props: MessageItemProps) {
             >
               <AssignmentTurnedInRounded fontSize="small" aria-hidden />
               <span>작업으로 만들기</span>
+            </MenuItem>
+          )}
+          {documentCreation.available && (
+            <MenuItem
+              className="message-action-menu-item"
+              onClick={() => runMoreAction(() => documentCreation.open(post))}
+            >
+              <DescriptionRounded fontSize="small" aria-hidden />
+              <span>대화에서 문서 만들기</span>
             </MenuItem>
           )}
           {workItemCreation.available && (

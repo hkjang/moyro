@@ -71,6 +71,12 @@ describe("KeycloakSettingsPage", () => {
     });
   }
 
+  it("hydrates a legacy provider without group mappings as an empty list", async () => {
+    await renderPage();
+
+    expect(container.textContent).toContain("매핑이 없으면 신규 SSO 사용자는 기존 기본 공간에 가입합니다.");
+  });
+
   it("clears a stale ready state when a connection field changes", async () => {
     await renderPage();
     expect(container.textContent).toContain("OIDC discovery와 JWKS 서명 키를 확인했습니다.");

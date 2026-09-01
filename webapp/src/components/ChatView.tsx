@@ -52,6 +52,7 @@ import { parseWorkspaceSearchFilters } from "@/features/workspace/model/search";
 import { selectChannelFileEntries } from "@/features/workspace/model/selectors";
 import { useChannelSummary } from "@/features/workspace/model/useChannelSummary";
 import { useTypingExpiry } from "@/features/workspace/model/useTypingExpiry";
+import { useInboxPreferences } from "@/features/workspace/model/useInboxPreferences";
 import {
   handleWorkspaceWebSocketEvent,
   type WorkspaceWebSocketEvent,
@@ -116,6 +117,7 @@ export function ChatView() {
   const [posts, setPosts] = useState<Post[]>([]);
   const [loadingPosts, setLoadingPosts] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const inboxPreferences = useInboxPreferences(token);
 
   const [users, setUsers] = useState<UsersMap>({});
   const [statuses, setStatuses] = useState<StatusMap>({});
@@ -201,22 +203,16 @@ export function ChatView() {
   const avatarFileRef = useRef<HTMLInputElement | null>(null);
   const [uploadingAvatar, setUploadingAvatar] = useState(false);
 
-  // Phase 17 — email digest opt-in. Loaded once at mount; the toggle updates
-  // optimistically and rolls back on server error. `null` = not yet loaded,
-  // which disables the checkbox briefly on first paint.
+  // `null` keeps the digest toggle disabled until its initial load completes.
   const [digestEnabled, setDigestEnabled] = useState<boolean | null>(null);
 
-  // Phase 18 — saved-posts set of post ids. Hydrated lazily per channel
-  // render via `savedPostsByIds` and patched on WS `saved_post_changed`.
-  // A plain Set keeps the MessageItem render O(1) per post.
+  // A Set keeps each saved-post lookup O(1).
   const [savedIds, setSavedIds] = useState<Set<string>>(new Set());
   // Phase 18 — 채널 탐색 modal toggle. Lists public channels not yet
   // joined so users can discover them without an admin invite.
   const [showDiscover, setShowDiscover] = useState(false);
 
-  // Phase 19 — scheduled messages. `scheduledList` keeps the sidebar count
-  // current while the dedicated list lives under the global 내 업무 route.
-  // `scheduleModalFor` remembers which composer and channel opened it.
+  // Scheduled messages stay global while the modal remembers its composer.
   const [scheduledList, setScheduledList] = useState<import("@/api/client").ScheduledPost[]>([]);
   const [scheduleModalFor, setScheduleModalFor] = useState<
     | null
@@ -756,6 +752,7 @@ export function ChatView() {
       currentChannelIdRef,
       threadRootIdRef,
       channelNotifyRef,
+      inboxPreferences,
       showArchived,
       hydrateUsers,
       hydrateFiles,
@@ -779,7 +776,6 @@ export function ChatView() {
 
   useTypingExpiry(setTypingUsers);
 
-  // ---- Derived ----
   const publicChannels = useMemo(() => channels.filter((c) => c.type !== "D"), [channels]);
   const dmChannels = useMemo(() => channels.filter((c) => c.type === "D"), [channels]);
   // Phase 22 — favorites cross both public and DM lists. Channels in the

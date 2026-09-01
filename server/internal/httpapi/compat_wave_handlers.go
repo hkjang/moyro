@@ -137,6 +137,9 @@ type updateTeamReq struct {
 }
 
 func (h *handlers) updateTeamFull(w http.ResponseWriter, r *http.Request) {
+	if h.denyGuestMutation(w, r, "api.team.update.guest_forbidden") {
+		return
+	}
 	teamID := chi.URLParam(r, "teamID")
 	uid := userID(r)
 	// Caller must be team_admin or system_admin to mutate the team row.
@@ -172,6 +175,9 @@ func (h *handlers) updateTeamFull(w http.ResponseWriter, r *http.Request) {
 // already implements partial-update semantics via CASE WHEN, so the two
 // handlers share the same plumbing.
 func (h *handlers) patchTeam(w http.ResponseWriter, r *http.Request) {
+	if h.denyGuestMutation(w, r, "api.team.update.guest_forbidden") {
+		return
+	}
 	h.updateTeamFull(w, r)
 }
 
@@ -181,6 +187,9 @@ type teamPrivacyReq struct {
 }
 
 func (h *handlers) updateTeamPrivacy(w http.ResponseWriter, r *http.Request) {
+	if h.denyGuestMutation(w, r, "api.team.privacy.guest_forbidden") {
+		return
+	}
 	teamID := chi.URLParam(r, "teamID")
 	uid := userID(r)
 	if !h.callerCanAdminTeam(r.Context(), teamID, uid) {
@@ -473,10 +482,8 @@ func (h *handlers) setCustomStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.audit.LogAsync(uid, audit.ActionCustomStatusSet, uid, map[string]any{"emoji": cs.Emoji, "text": cs.Text})
-	h.hub.Broadcast(ws.Event{
-		Event: "custom_status_changed",
-		Data:  map[string]any{"user_id": uid, "custom_status": cs},
-	})
+	h.hub.Broadcast(subjectUserScopedEvent("custom_status_changed", uid,
+		map[string]any{"user_id": uid, "custom_status": cs}))
 	writeJSON(w, 200, cs)
 }
 
@@ -491,10 +498,8 @@ func (h *handlers) clearCustomStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.audit.LogAsync(uid, audit.ActionCustomStatusClear, uid, nil)
-	h.hub.Broadcast(ws.Event{
-		Event: "custom_status_changed",
-		Data:  map[string]any{"user_id": uid, "custom_status": userstatus.CustomStatus{}},
-	})
+	h.hub.Broadcast(subjectUserScopedEvent("custom_status_changed", uid,
+		map[string]any{"user_id": uid, "custom_status": userstatus.CustomStatus{}}))
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -611,6 +616,9 @@ func (h *handlers) callerCanAdminChannel(ctx context.Context, channelID, uid str
 
 // PUT /channels/{channelID}/members/{userID}/roles  (and /schemeRoles alias)
 func (h *handlers) setChannelMemberRoles(w http.ResponseWriter, r *http.Request) {
+	if h.denyGuestMutation(w, r, "api.channel.member.roles.guest_forbidden") {
+		return
+	}
 	channelID := chi.URLParam(r, "channelID")
 	target := chi.URLParam(r, "userID")
 	caller := userID(r)
@@ -655,6 +663,9 @@ func (h *handlers) setChannelMemberRoles(w http.ResponseWriter, r *http.Request)
 // behalf of a teammate — handy for "force everyone to mention-only" when
 // a noisy automation channel gets out of hand.
 func (h *handlers) setChannelMemberNotifyProps(w http.ResponseWriter, r *http.Request) {
+	if chi.URLParam(r, "userID") != userID(r) && h.denyGuestMutation(w, r, "api.channel.member.notify.guest_forbidden") {
+		return
+	}
 	channelID := chi.URLParam(r, "channelID")
 	target := chi.URLParam(r, "userID")
 	caller := userID(r)
@@ -702,6 +713,9 @@ func (h *handlers) setChannelMemberNotifyProps(w http.ResponseWriter, r *http.Re
 
 // PUT /teams/{teamID}/members/{userID}/roles  (and /schemeRoles alias)
 func (h *handlers) setTeamMemberRoles(w http.ResponseWriter, r *http.Request) {
+	if h.denyGuestMutation(w, r, "api.team.member.roles.guest_forbidden") {
+		return
+	}
 	teamID := chi.URLParam(r, "teamID")
 	target := chi.URLParam(r, "userID")
 	caller := userID(r)
@@ -1267,6 +1281,9 @@ type inviteEmailReq struct {
 // when SMTP-based invites land later, this handler grows the actual
 // dispatch logic without a URL change.
 func (h *handlers) inviteTeamMembersByEmail(w http.ResponseWriter, r *http.Request) {
+	if h.denyGuestMutation(w, r, "api.team.invite.guest_forbidden") {
+		return
+	}
 	caller := userID(r)
 	if caller == "" {
 		writeError(w, http.StatusUnauthorized, "api.context.session_expired.app_error", "missing token")
@@ -2455,6 +2472,9 @@ func (h *handlers) checkUserMFA(w http.ResponseWriter, r *http.Request) {
 // Caller must hold channel-admin or system-admin.
 
 func (h *handlers) bulkAddChannelMembers(w http.ResponseWriter, r *http.Request) {
+	if h.denyGuestMutation(w, r, "api.channel.members.bulk_add.guest_forbidden") {
+		return
+	}
 	caller := userID(r)
 	if caller == "" {
 		writeError(w, 401, "api.context.session_expired.app_error", "missing token")
@@ -3064,10 +3084,26 @@ func (h *handlers) searchAutocompleteTeamChannels(w http.ResponseWriter, r *http
 		writeError(w, 401, "api.context.session_expired.app_error", "missing token")
 		return
 	}
+	if h.denyGuestEnumeration(w, r, "api.channels.search_autocomplete.guest_forbidden") {
+		return
+	}
 	tid := chi.URLParam(r, "teamID")
-	term := r.URL.Query().Get("term")
+	isMember, err := h.teams.IsMember(r.Context(), tid, caller)
+	if err != nil {
+		writeError(w, 500, "api.channels.search_autocomplete.member_check", err.Error())
+		return
+	}
+	if !isMember {
+		writeError(w, 403, "api.channels.search_autocomplete.forbidden", "not a team member")
+		return
+	}
+	term := strings.TrimSpace(r.URL.Query().Get("term"))
 	if term == "" {
-		term = r.URL.Query().Get("name")
+		term = strings.TrimSpace(r.URL.Query().Get("name"))
+	}
+	if term == "" {
+		writeJSON(w, 200, []any{})
+		return
 	}
 	rows, err := h.channels.AutocompleteInTeam(r.Context(), tid, caller, term, 25)
 	if err != nil {
@@ -3176,6 +3212,9 @@ func (h *handlers) getProxiedImage(w http.ResponseWriter, r *http.Request) {
 // resolve the team name forever. ?permanent=true is silently ignored —
 // we don't support hard deletes to avoid losing the audit history.
 func (h *handlers) deleteTeam(w http.ResponseWriter, r *http.Request) {
+	if h.denyGuestMutation(w, r, "api.team.delete.guest_forbidden") {
+		return
+	}
 	if !h.callerIsSystemAdmin(r) {
 		writeError(w, 403, "api.context.permissions.app_error", "system_admin required")
 		return
@@ -3202,6 +3241,9 @@ func (h *handlers) deleteTeam(w http.ResponseWriter, r *http.Request) {
 // removing themselves (Leave). Self-removal is allowed because every
 // user can leave any team they're in.
 func (h *handlers) removeTeamMember(w http.ResponseWriter, r *http.Request) {
+	if chi.URLParam(r, "userID") != userID(r) && h.denyGuestMutation(w, r, "api.team.members.remove.guest_forbidden") {
+		return
+	}
 	caller := userID(r)
 	if caller == "" {
 		writeError(w, 401, "api.context.session_expired.app_error", "missing token")
@@ -3237,6 +3279,9 @@ func (h *handlers) removeTeamMember(w http.ResponseWriter, r *http.Request) {
 // Returns 200 with the documented success envelope so the admin
 // console's "Remove team icon" button doesn't error-toast.
 func (h *handlers) deleteTeamImage(w http.ResponseWriter, r *http.Request) {
+	if h.denyGuestMutation(w, r, "api.team.image.guest_forbidden") {
+		return
+	}
 	if !h.callerCanAdminTeam(r.Context(), chi.URLParam(r, "teamID"), userID(r)) {
 		writeError(w, 403, "api.context.permissions.app_error", "team_admin required")
 		return
@@ -3515,7 +3560,22 @@ func (h *handlers) getTeamChannelByName(w http.ResponseWriter, r *http.Request) 
 	channelName := chi.URLParam(r, "channelName")
 	team, err := h.teams.GetByName(r.Context(), teamName)
 	if err != nil || team == nil {
-		writeError(w, 404, "api.team.not_found", "team not found")
+		// This composite lookup must not reveal whether a hidden team slug is
+		// valid, so unknown teams and inaccessible team/channel pairs share the
+		// same response envelope.
+		writeError(w, 404, "api.channel.not_found", "channel not found")
+		return
+	}
+	teamMember, err := h.teams.IsMember(r.Context(), team.ID, caller)
+	if err != nil {
+		writeError(w, 500, "api.channel.lookup.member_check", err.Error())
+		return
+	}
+	isAdmin := h.callerIsSystemAdmin(r)
+	if !teamMember && !isAdmin {
+		// Keep an existing-but-hidden team/channel pair indistinguishable
+		// from an unknown channel name.
+		writeError(w, 404, "api.channel.not_found", "channel not found")
 		return
 	}
 	ch, err := h.channels.GetByName(r.Context(), team.ID, channelName)
@@ -3523,13 +3583,22 @@ func (h *handlers) getTeamChannelByName(w http.ResponseWriter, r *http.Request) 
 		writeError(w, 404, "api.channel.not_found", "channel not found")
 		return
 	}
-	// Membership-gate private channels — visible to members or admins.
-	if ch.Type == "P" {
-		ok, _ := h.channels.IsMember(r.Context(), ch.ID, caller)
-		if !ok && !h.callerIsSystemAdmin(r) {
-			writeError(w, 403, "api.context.permissions.app_error", "not a channel member")
-			return
-		}
+	channelMember, err := h.channels.IsMember(r.Context(), ch.ID, caller)
+	if err != nil {
+		writeError(w, 500, "api.channel.lookup.member_check", err.Error())
+		return
+	}
+	actor, err := h.auth.UserByID(r.Context(), caller)
+	if err != nil {
+		writeError(w, 401, "api.context.session_expired.app_error", "active user session required")
+		return
+	}
+	// Guests may resolve only their explicit channel allow-list. Other
+	// callers may resolve public channels in teams they belong to; private
+	// channels remain member/admin-only. Hidden names always collapse to 404.
+	if (actor.IsGuest() && !channelMember) || (!channelMember && ch.Type != "O" && !isAdmin) {
+		writeError(w, 404, "api.channel.not_found", "channel not found")
+		return
 	}
 	writeJSON(w, 200, ch)
 }
@@ -3858,7 +3927,7 @@ func (h *handlers) searchFiles(w http.ResponseWriter, r *http.Request) {
 		FROM file_infos fi
 		WHERE COALESCE(fi.delete_at, 0) = 0
 		  AND fi.name ILIKE '%' || $1 || '%'
-		  AND (fi.channel_id IS NULL OR fi.channel_id IN (
+		  AND (fi.user_id=$2 OR fi.channel_id IN (
 		      SELECT channel_id FROM channel_members WHERE user_id = $2
 		  ))
 		ORDER BY fi.create_at DESC
@@ -4029,6 +4098,9 @@ type groupChannelReq []string
 // channels.EnsureGroup helper which is idempotent on the sorted-id
 // canonical name.
 func (h *handlers) createGroupChannel(w http.ResponseWriter, r *http.Request) {
+	if h.denyGuestMutation(w, r, "api.channel.group.guest_forbidden") {
+		return
+	}
 	caller := userID(r)
 	if caller == "" {
 		writeError(w, 401, "api.context.session_expired.app_error", "missing token")
@@ -4161,6 +4233,9 @@ func (h *handlers) getChannelMembersMinusGroup(w http.ResponseWriter, r *http.Re
 
 // getTeamMembersMinusGroup — GET /teams/{teamID}/members_minus_group_members
 func (h *handlers) getTeamMembersMinusGroup(w http.ResponseWriter, r *http.Request) {
+	if h.denyGuestEnumeration(w, r, "api.team.members.group.guest_forbidden") {
+		return
+	}
 	if !h.callerIsSystemAdmin(r) {
 		writeError(w, 403, "api.context.permissions.app_error", "system_admin required")
 		return
@@ -5016,6 +5091,9 @@ func (h *handlers) postTeamImport(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *handlers) inviteTeamMembersFromBody(w http.ResponseWriter, r *http.Request) {
+	if h.denyGuestMutation(w, r, "api.team.invite.guest_forbidden") {
+		return
+	}
 	writeJSON(w, 200, map[string]any{"status": "OK"})
 }
 

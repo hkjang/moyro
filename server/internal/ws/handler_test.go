@@ -125,6 +125,34 @@ func TestHandleChallengeRejectsInvalidCredential(t *testing.T) {
 	}
 }
 
+func TestTypingActionRequiresLiveSenderChannelMembership(t *testing.T) {
+	hub := NewHub()
+	hub.SetAudienceResolver(func(_ context.Context, broadcast Broadcast) (map[string]struct{}, error) {
+		if broadcast.ChannelID != "allowed-channel" {
+			return map[string]struct{}{}, nil
+		}
+		return map[string]struct{}{"member": {}}, nil
+	})
+	client := &Client{UserID: "member"}
+
+	handleClientAction(hub, client, []byte(`{"action":"user_typing","data":{"channel_id":"spoofed-channel"}}`))
+	select {
+	case event := <-hub.bcast:
+		t.Fatalf("spoofed typing event was enqueued: %#v", event)
+	default:
+	}
+
+	handleClientAction(hub, client, []byte(`{"action":"user_typing","data":{"channel_id":"allowed-channel"}}`))
+	select {
+	case event := <-hub.bcast:
+		if event.Event != "typing" || event.Broadcast.ChannelID != "allowed-channel" {
+			t.Fatalf("typing event = %#v", event)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("member typing event was not enqueued")
+	}
+}
+
 func TestHandleChallengeRevalidatesLiveCredential(t *testing.T) {
 	hub, stopHub := runningTestHub(t)
 	defer stopHub()

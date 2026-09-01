@@ -380,6 +380,13 @@ func (h *handlers) nativeRequire(permission string) func(http.Handler) http.Hand
 				writeError(w, http.StatusUnauthorized, "api.context.session_expired.app_error", "authentication required")
 				return
 			}
+			if strings.HasPrefix(permission, "manage_") && h.auth != nil {
+				actor, err := h.auth.UserByID(r.Context(), principal.UserID)
+				if err != nil || actor.IsGuest() {
+					writeError(w, http.StatusForbidden, "api.context.permissions.app_error", "guest accounts cannot use management permissions")
+					return
+				}
+			}
 			allowed, err := h.native.rbac.Allowed(r.Context(), principal, permission, rbac.Scope{})
 			if err != nil || !allowed {
 				writeError(w, http.StatusForbidden, "api.context.permissions.app_error", "missing permission: "+permission)

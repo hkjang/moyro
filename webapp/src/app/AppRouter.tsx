@@ -26,6 +26,12 @@ const AIAssistantPage = lazy(() =>
 const GlobalSearchPage = lazy(() =>
   import("@/features/flow/GlobalSearchPage").then((module) => ({ default: module.GlobalSearchPage })),
 );
+const AutomationRulesPage = lazy(() =>
+  import("@/features/flow/AutomationRulesPage").then((module) => ({ default: module.AutomationRulesPage })),
+);
+const KnowledgePage = lazy(() =>
+  import("@/features/knowledge/KnowledgePage").then((module) => ({ default: module.KnowledgePage })),
+);
 const FlowDataLayout = lazy(() =>
   import("@/features/flow/FlowDataProvider").then((module) => ({ default: module.FlowDataLayout })),
 );
@@ -200,6 +206,8 @@ export function AppRouter() {
           <Route path="/my-work/:tab" element={routeElement(MyWorkPage)} />
           <Route path="/approvals" element={<Navigate to="/approvals/mine" replace />} />
           <Route path="/approvals/:tab" element={routeElement(ApprovalCenterPage)} />
+          <Route path="/automations" element={routeElement(AutomationRulesPage)} />
+          <Route path="/knowledge" element={routeElement(KnowledgePage)} />
           <Route path="/search" element={routeElement(GlobalSearchPage)} />
         </Route>
         <Route element={<RequirePermission anyOf={["use_ai"]} fallback="/today" />}>

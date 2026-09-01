@@ -51,7 +51,11 @@ func (h *handlers) getTeamMember(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusForbidden, "api.team.member.get.forbidden", "not a team member")
 		return
 	}
-	m, err := h.teams.GetMember(r.Context(), teamID, chi.URLParam(r, "userID"))
+	targetID := chi.URLParam(r, "userID")
+	if !h.guestMayViewUser(w, r, targetID, "api.team.member.get.guest_forbidden") {
+		return
+	}
+	m, err := h.teams.GetMember(r.Context(), teamID, targetID)
 	if err != nil {
 		writeError(w, http.StatusNotFound, "api.team.member.get.not_found", "member not found")
 		return
@@ -73,6 +77,9 @@ func (h *handlers) listUserTeamMembers(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *handlers) teamMembersByIDs(w http.ResponseWriter, r *http.Request) {
+	if h.denyGuestEnumeration(w, r, "api.team.members.ids.guest_forbidden") {
+		return
+	}
 	teamID := chi.URLParam(r, "teamID")
 	if !h.canViewTeam(r, teamID) {
 		writeError(w, http.StatusForbidden, "api.team.members.ids.forbidden", "not a team member")
@@ -95,6 +102,9 @@ func (h *handlers) teamMembersByIDs(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *handlers) addTeamMember(w http.ResponseWriter, r *http.Request) {
+	if h.denyGuestMutation(w, r, "api.team.members.add.guest_forbidden") {
+		return
+	}
 	teamID := chi.URLParam(r, "teamID")
 	var req struct {
 		TeamID string `json:"team_id"`
@@ -126,6 +136,9 @@ func (h *handlers) addTeamMember(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *handlers) addTeamMembersBatch(w http.ResponseWriter, r *http.Request) {
+	if h.denyGuestMutation(w, r, "api.team.members.add.guest_forbidden") {
+		return
+	}
 	teamID := chi.URLParam(r, "teamID")
 	actorID := userID(r)
 	if !h.canManageTeamInvites(r.Context(), actorID, teamID) {

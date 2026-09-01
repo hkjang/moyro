@@ -16,10 +16,11 @@ type Event struct {
 }
 
 type Broadcast struct {
-	ChannelID string   `json:"channel_id,omitempty"`
-	UserID    string   `json:"user_id,omitempty"`
-	TeamID    string   `json:"team_id,omitempty"`
-	OmitUsers []string `json:"omit_users,omitempty"`
+	ChannelID     string   `json:"channel_id,omitempty"`
+	UserID        string   `json:"user_id,omitempty"`
+	TeamID        string   `json:"team_id,omitempty"`
+	SubjectUserID string   `json:"subject_user_id,omitempty"`
+	OmitUsers     []string `json:"omit_users,omitempty"`
 }
 
 type Client struct {
@@ -43,9 +44,9 @@ type Publisher interface {
 	Publish(ev Event)
 }
 
-// AudienceResolver returns the users allowed to receive a channel- or
-// team-scoped event. Scoped events fail closed when membership cannot be
-// resolved. A user target narrows this audience; it never bypasses it.
+// AudienceResolver returns the users allowed to receive a channel-, team-, or
+// subject-user-scoped event. Scoped events fail closed when authorization
+// cannot be resolved. A user target narrows this audience; it never bypasses it.
 type AudienceResolver func(context.Context, Broadcast) (map[string]struct{}, error)
 
 type Hub struct {
@@ -114,11 +115,36 @@ func (h *Hub) SetAudienceResolver(resolver AudienceResolver) {
 	h.mu.Unlock()
 }
 
+// CanPublish verifies that an actor is currently inside the audience of a
+// scoped event. Client-originated actions use this before enqueueing so an
+// authenticated user cannot spoof a channel id they do not belong to. A
+// missing or failed resolver is denied rather than treated as global access.
+func (h *Hub) CanPublish(ctx context.Context, userID string, broadcast Broadcast) (bool, error) {
+	if userID == "" || (broadcast.ChannelID == "" && broadcast.TeamID == "") {
+		return false, nil
+	}
+	h.mu.RLock()
+	resolver := h.audience
+	h.mu.RUnlock()
+	if resolver == nil {
+		return false, nil
+	}
+	audience, err := resolver(ctx, broadcast)
+	if err != nil {
+		return false, err
+	}
+	_, allowed := audience[userID]
+	return allowed, nil
+}
+
 // InjectEvent pushes an event from an external source (Redis subscriber)
 // onto the local broadcast channel, bypassing the publisher so we don't
 // re-ship it back to Redis and cause a loop. Non-blocking; drops the
 // event if the bcast queue is full (matches the trySend drop policy).
 func (h *Hub) InjectEvent(ev Event) {
+	if !validSensitiveEventScope(ev) {
+		return
+	}
 	select {
 	case h.bcast <- ev:
 	default:
@@ -151,6 +177,9 @@ func (h *Hub) Unregister(c *Client) { h.unreg <- c }
 // Publisher is set) and enqueues it for local fanout. Remote events
 // injected via InjectEvent skip the publish step so we don't loop.
 func (h *Hub) Broadcast(ev Event) {
+	if !validSensitiveEventScope(ev) {
+		return
+	}
 	h.mu.RLock()
 	pub := h.pub
 	h.mu.RUnlock()
@@ -212,12 +241,18 @@ func (h *Hub) Run(ctx context.Context) {
 }
 
 func (h *Hub) fanout(ctx context.Context, ev Event, raw []byte) {
+	// Defense in depth for direct fanout tests and any future internal caller
+	// that bypasses Broadcast/InjectEvent. Presence payloads without an exact
+	// subject scope must never fall back to the empty-Broadcast global meaning.
+	if !validSensitiveEventScope(ev) {
+		return
+	}
 	h.mu.RLock()
 	audienceResolver := h.audience
 	h.mu.RUnlock()
 
 	var audience map[string]struct{}
-	scoped := ev.Broadcast.ChannelID != "" || ev.Broadcast.TeamID != ""
+	scoped := ev.Broadcast.ChannelID != "" || ev.Broadcast.TeamID != "" || ev.Broadcast.SubjectUserID != ""
 	if scoped {
 		if audienceResolver == nil {
 			return
@@ -258,6 +293,16 @@ func (h *Hub) fanout(ctx context.Context, ev Event, raw []byte) {
 			}
 		}
 		trySend(c, raw)
+	}
+}
+
+func validSensitiveEventScope(ev Event) bool {
+	switch ev.Event {
+	case "status_change", "custom_status_changed":
+		subject, ok := ev.Data["user_id"].(string)
+		return ok && subject != "" && subject == ev.Broadcast.SubjectUserID
+	default:
+		return true
 	}
 }
 

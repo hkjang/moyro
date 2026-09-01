@@ -19,6 +19,11 @@ type fakeRegistrationState struct {
 	uses           int
 	maxUses        int
 	committedUsers int
+	inviteKind     invites.Kind
+	channelIDs     []string
+	guestTTL       int64
+	guestDownload  bool
+	defaultQueries int
 }
 
 func (s *fakeRegistrationState) begin(context.Context) (registrationTx, error) {
@@ -43,10 +48,18 @@ func (tx *fakeRegistrationTx) QueryRow(_ context.Context, query string, args ...
 		}
 		tx.state.uses++
 		tx.consumed = true
-		return fakeRegistrationRow{values: []any{"invited-team"}}
+		kind := tx.state.inviteKind
+		if kind == "" {
+			kind = invites.KindMember
+		}
+		return fakeRegistrationRow{values: []any{
+			"invited-team", kind, tx.state.channelIDs, tx.state.guestTTL, tx.state.guestDownload || kind == invites.KindMember,
+		}}
 	case strings.Contains(query, "INSERT INTO teams"):
+		tx.state.defaultQueries++
 		return fakeRegistrationRow{values: []any{"default-team", int64(0)}}
 	case strings.Contains(query, "INSERT INTO channels"):
+		tx.state.defaultQueries++
 		teamID, _ := args[1].(string)
 		return fakeRegistrationRow{values: []any{"general-" + teamID, int64(0)}}
 	default:
@@ -107,6 +120,12 @@ func (row fakeRegistrationRow) Scan(dest ...any) error {
 			*target = value.(string)
 		case *int64:
 			*target = value.(int64)
+		case *invites.Kind:
+			*target = value.(invites.Kind)
+		case *[]string:
+			*target = value.([]string)
+		case *bool:
+			*target = value.(bool)
 		default:
 			return fmt.Errorf("unsupported scan target %T", dest[i])
 		}
@@ -149,5 +168,29 @@ func TestLimitedInviteConcurrentRegistrationCreatesExactlyOneAccount(t *testing.
 	}
 	if succeeded != 1 || exhausted != 1 || state.uses != 1 || state.committedUsers != 1 {
 		t.Fatalf("success=%d exhausted=%d uses=%d users=%d", succeeded, exhausted, state.uses, state.committedUsers)
+	}
+}
+
+func TestGuestInviteRegistrationAppliesRestrictedScopeWithoutDefaultSpace(t *testing.T) {
+	state := &fakeRegistrationState{
+		maxUses: 1, inviteKind: invites.KindGuest, channelIDs: []string{"partner-channel"},
+		guestTTL: int64((24 * time.Hour) / time.Second), guestDownload: false,
+	}
+	service := &Service{begin: state.begin, now: func() time.Time { return time.Unix(100, 0) }}
+	user, teamID, err := service.Register(context.Background(), Input{
+		Username: "external", Email: "external@example.com", Password: "long-test-password", InviteID: "guest-seat",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if teamID != "invited-team" || user.Roles != "system_guest" || user.GuestFileDownload {
+		t.Fatalf("guest result = team %q user %#v", teamID, user)
+	}
+	wantExpiry := time.Unix(100, 0).UnixMilli() + (24 * time.Hour).Milliseconds()
+	if user.GuestExpiresAt != wantExpiry {
+		t.Fatalf("guest expiry = %d, want %d", user.GuestExpiresAt, wantExpiry)
+	}
+	if state.defaultQueries != 0 || state.committedUsers != 1 || state.uses != 1 {
+		t.Fatalf("default queries=%d committed=%d uses=%d", state.defaultQueries, state.committedUsers, state.uses)
 	}
 }

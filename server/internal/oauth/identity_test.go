@@ -158,6 +158,38 @@ func TestCreateIdentityAccountRollsBackUserWhenIdentityInsertFails(t *testing.T)
 	}
 }
 
+type compensationExecutor struct {
+	rows int64
+	args []any
+}
+
+func (e *compensationExecutor) Exec(_ context.Context, query string, args ...any) (pgconn.CommandTag, error) {
+	if !strings.Contains(query, "DELETE FROM users") || !strings.Contains(query, "NOT EXISTS (SELECT 1 FROM sessions") {
+		return pgconn.CommandTag{}, fmt.Errorf("unsafe compensation query: %s", query)
+	}
+	e.args = args
+	return pgconn.NewCommandTag(fmt.Sprintf("DELETE %d", e.rows)), nil
+}
+
+func (*compensationExecutor) QueryRow(context.Context, string, ...any) pgx.Row {
+	return fakeIdentityRow{err: errors.New("unexpected query")}
+}
+
+func TestRemoveUnonboardedIdentityAccountUsesExactIdentityAndRequiresOneDeletion(t *testing.T) {
+	executor := &compensationExecutor{rows: 1}
+	if err := removeUnonboardedIdentityAccount(context.Background(), executor, "keycloak:issuer", "subject-1", "user-1"); err != nil {
+		t.Fatal(err)
+	}
+	if got := fmt.Sprint(executor.args); got != "[keycloak:issuer subject-1 user-1]" {
+		t.Fatalf("compensation args = %s", got)
+	}
+
+	executor.rows = 0
+	if err := removeUnonboardedIdentityAccount(context.Background(), executor, "keycloak:issuer", "subject-1", "user-1"); err == nil {
+		t.Fatal("expected fail-closed error when no safe row was removed")
+	}
+}
+
 func TestCreateIdentityAccountCommitsUserAndIdentityTogether(t *testing.T) {
 	tx := &fakeIdentityTx{}
 	begin := func(context.Context) (identityTx, error) { return tx, nil }

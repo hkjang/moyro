@@ -168,3 +168,30 @@ func TestLoginHandoffRejectsExpiredAndConcurrentReplayPostgres(t *testing.T) {
 		t.Fatalf("concurrent exchange created %d sessions, want 1", sessionCount)
 	}
 }
+
+func TestCreateLoginHandoffRejectsExpiredGuestExplicitlyPostgres(t *testing.T) {
+	db := newAuthTestDB(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	manager, err := secrets.New(bytes.Repeat([]byte{0x65}, secrets.MasterKeySize))
+	if err != nil {
+		t.Fatal(err)
+	}
+	service := New(db, testJWTSecret, time.Hour, manager)
+	user, err := service.Register(ctx, "expired-handoff-guest", "expired-handoff-guest@example.test", "long-test-password")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Pool.Exec(ctx, `
+		UPDATE users SET roles='system_guest', guest_expires_at=$2 WHERE id=$1
+	`, user.ID, time.Now().Add(-time.Minute).UnixMilli()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.CreateLoginHandoff(ctx, user.ID); !errors.Is(err, ErrInvalidSession) {
+		t.Fatalf("expired guest handoff error = %v, want ErrInvalidSession", err)
+	}
+	var count int
+	if err := db.Pool.QueryRow(ctx, `SELECT count(*) FROM login_handoffs WHERE user_id=$1`, user.ID).Scan(&count); err != nil || count != 0 {
+		t.Fatalf("expired guest handoff rows = (%d, %v), want zero", count, err)
+	}
+}

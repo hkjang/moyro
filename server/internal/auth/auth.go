@@ -90,6 +90,11 @@ type User struct {
 	LastName  string `json:"last_name,omitempty"`
 	Nickname  string `json:"nickname,omitempty"`
 	Position  string `json:"position,omitempty"`
+	// Guest access is account-wide in the first collaboration-control release.
+	// Channel memberships provide the resource allow-list; this timestamp makes
+	// every HTTP and WebSocket credential fail closed after the access window.
+	GuestExpiresAt    int64 `json:"guest_expires_at,omitempty"`
+	GuestFileDownload bool  `json:"guest_file_download"`
 	// DeleteAt is zero for active users and a unix-millis timestamp for
 	// deactivated ones. Most lookups filter `delete_at = 0` on the DB
 	// side so the field stays zero; the admin `ListUsersIncludingDeleted`
@@ -104,14 +109,16 @@ type User struct {
 // during the transitional moment.
 const userColumns = `id, username, email, roles, COALESCE(picture,''),
        COALESCE(first_name,''), COALESCE(last_name,''),
-       COALESCE(nickname,''),  COALESCE(position,'')`
+	   COALESCE(nickname,''), COALESCE(position,''),
+	   COALESCE(guest_expires_at,0), COALESCE(guest_file_download,TRUE)`
 
 func scanUser(row interface {
 	Scan(...any) error
 }) (*User, error) {
 	var u User
 	if err := row.Scan(&u.ID, &u.Username, &u.Email, &u.Roles, &u.Picture,
-		&u.FirstName, &u.LastName, &u.Nickname, &u.Position); err != nil {
+		&u.FirstName, &u.LastName, &u.Nickname, &u.Position,
+		&u.GuestExpiresAt, &u.GuestFileDownload); err != nil {
 		return nil, err
 	}
 	return &u, nil
@@ -123,7 +130,8 @@ func scanUser(row interface {
 func scanUserRow(rows pgx.Rows) (User, error) {
 	var u User
 	err := rows.Scan(&u.ID, &u.Username, &u.Email, &u.Roles, &u.Picture,
-		&u.FirstName, &u.LastName, &u.Nickname, &u.Position)
+		&u.FirstName, &u.LastName, &u.Nickname, &u.Position,
+		&u.GuestExpiresAt, &u.GuestFileDownload)
 	return u, err
 }
 
@@ -162,7 +170,7 @@ func (s *Service) Register(ctx context.Context, username, email, password string
 		}
 		return nil, err
 	}
-	return &User{ID: id, Username: username, Email: email, Roles: "system_user"}, nil
+	return &User{ID: id, Username: username, Email: email, Roles: "system_user", GuestFileDownload: true}, nil
 }
 
 func (s *Service) Login(ctx context.Context, loginID, password string) (*User, string, error) {
@@ -189,7 +197,8 @@ func (s *Service) LoginWithDevice(ctx context.Context, loginID, password, device
 		FROM users WHERE (LOWER(username)=LOWER($1) OR LOWER(email)=LOWER($1)) AND delete_at=0
 		FOR SHARE
 	`, loginID).Scan(&u.ID, &u.Username, &u.Email, &u.Roles, &u.Picture,
-		&u.FirstName, &u.LastName, &u.Nickname, &u.Position, &hash, &isBot)
+		&u.FirstName, &u.LastName, &u.Nickname, &u.Position,
+		&u.GuestExpiresAt, &u.GuestFileDownload, &hash, &isBot)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, "", ErrInvalidCredentials
 	}
@@ -200,6 +209,9 @@ func (s *Service) LoginWithDevice(ctx context.Context, loginID, password, device
 	// blanket-block password login here so a leaked PAT can't be turned
 	// into a session that survives token revocation.
 	if isBot {
+		return nil, "", ErrInvalidCredentials
+	}
+	if !u.GuestAccessValid(time.Now()) {
 		return nil, "", ErrInvalidCredentials
 	}
 	if err := bcrypt.CompareHashAndPassword([]byte(hash), []byte(password)); err != nil {
@@ -247,6 +259,13 @@ func (s *Service) Revoke(ctx context.Context, token string) error {
 // row, exactly like the end of Login. Exposed so sibling packages (OAuth
 // callback) can complete a sign-in without re-implementing token minting.
 func (s *Service) IssueSession(ctx context.Context, userID string) (string, error) {
+	u, err := s.UserByID(ctx, userID)
+	if errors.Is(err, pgx.ErrNoRows) || (err == nil && !u.GuestAccessValid(time.Now())) {
+		return "", ErrInvalidSession
+	}
+	if err != nil {
+		return "", err
+	}
 	issued, err := s.issueToken(userID)
 	if err != nil {
 		return "", err
@@ -349,6 +368,10 @@ func (s *Service) Authenticate(ctx context.Context, tokenStr string) (*Claims, e
 			  AND s.user_id = $3
 			  AND s.expires_at > $4
 			  AND u.delete_at = 0
+			  AND (
+				NOT ('system_guest'=ANY(regexp_split_to_array(BTRIM(u.roles), E'\\s+')))
+				OR u.guest_expires_at > $4
+			  )
 			LIMIT 1
 		`, digest, tokenStr, claims.UserID, time.Now().UnixMilli()).Scan(&sessionID, &hasDigest)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -418,7 +441,8 @@ func (s *Service) listUsersPaginated(ctx context.Context, page, perPage int, inc
 	for rows.Next() {
 		var u User
 		if err := rows.Scan(&u.ID, &u.Username, &u.Email, &u.Roles, &u.Picture,
-			&u.FirstName, &u.LastName, &u.Nickname, &u.Position, &u.DeleteAt); err != nil {
+			&u.FirstName, &u.LastName, &u.Nickname, &u.Position,
+			&u.GuestExpiresAt, &u.GuestFileDownload, &u.DeleteAt); err != nil {
 			return nil, err
 		}
 		out = append(out, u)
@@ -542,6 +566,187 @@ func (s *Service) SearchUsers(ctx context.Context, term string, limit int) ([]Us
 		out = append(out, u)
 	}
 	return out, rows.Err()
+}
+
+// ListUsersVisibleToGuest restricts the directory to the caller and users who
+// share at least one active, explicitly granted channel. This prevents a guest
+// from using the general directory to enumerate unrelated internal accounts.
+func (s *Service) ListUsersVisibleToGuest(ctx context.Context, guestID string, page, perPage int) ([]User, error) {
+	if perPage <= 0 || perPage > 200 {
+		perPage = 60
+	}
+	if page < 0 {
+		page = 0
+	}
+	return s.queryUsersVisibleToGuest(ctx, guestID, "", perPage, page*perPage)
+}
+
+// SearchUsersVisibleToGuest is the search counterpart of
+// ListUsersVisibleToGuest and applies the same shared-channel boundary.
+func (s *Service) SearchUsersVisibleToGuest(ctx context.Context, guestID, term string, limit int) ([]User, error) {
+	if limit <= 0 || limit > 100 {
+		limit = 25
+	}
+	return s.queryUsersVisibleToGuest(ctx, guestID, strings.TrimSpace(term), limit, 0)
+}
+
+func (s *Service) queryUsersVisibleToGuest(ctx context.Context, guestID, term string, limit, offset int) ([]User, error) {
+	like := "%" + term + "%"
+	rows, err := s.db.Pool.Query(ctx, `
+		SELECT `+userColumns+` FROM users u
+		WHERE u.delete_at=0
+		  AND ($2='' OR u.username ILIKE $3 OR u.email ILIKE $3)
+		  AND (
+			u.id=$1 OR EXISTS (
+				SELECT 1
+				FROM channel_members mine
+				JOIN channel_members peer ON peer.channel_id=mine.channel_id AND peer.user_id=u.id
+				JOIN channels c ON c.id=mine.channel_id AND c.delete_at=0
+				WHERE mine.user_id=$1
+				  AND (
+					COALESCE(c.team_id, '') = '' OR (
+						EXISTS (
+							SELECT 1 FROM teams shared_team
+							WHERE shared_team.id=c.team_id AND shared_team.delete_at=0
+						)
+						AND EXISTS (
+							SELECT 1 FROM team_members guest_team_member
+							WHERE guest_team_member.team_id=c.team_id AND guest_team_member.user_id=$1
+						)
+						AND EXISTS (
+							SELECT 1 FROM team_members peer_team_member
+							WHERE peer_team_member.team_id=c.team_id AND peer_team_member.user_id=u.id
+						)
+					)
+				  )
+			)
+		  )
+		  AND (
+			NOT ('system_guest'=ANY(regexp_split_to_array(BTRIM(u.roles), E'\\s+')))
+			OR u.guest_expires_at > $6
+		  )
+		ORDER BY u.username ASC
+		LIMIT $4 OFFSET $5
+	`, guestID, term, like, limit, offset, time.Now().UnixMilli())
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []User{}
+	for rows.Next() {
+		u, err := scanUserRow(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, u)
+	}
+	return out, rows.Err()
+}
+
+// FilterUsersVisibleToGuest preserves input order while removing candidates
+// who do not share an active channel with the guest. It is used by bulk
+// compatibility hydration endpoints whose requested IDs are attacker-chosen.
+func (s *Service) FilterUsersVisibleToGuest(ctx context.Context, guestID string, candidates []User) ([]User, error) {
+	if len(candidates) == 0 {
+		return []User{}, nil
+	}
+	ids := make([]string, 0, len(candidates))
+	for _, candidate := range candidates {
+		ids = append(ids, candidate.ID)
+	}
+	rows, err := s.db.Pool.Query(ctx, `
+		SELECT DISTINCT candidate.user_id
+		FROM unnest($2::text[]) AS candidate(user_id)
+		JOIN users candidate_user ON candidate_user.id=candidate.user_id
+		  AND candidate_user.delete_at=0
+		  AND (
+			candidate_user.roles !~ '(^|[[:space:]])system_guest([[:space:]]|$)'
+			OR candidate_user.guest_expires_at > $3
+		  )
+		WHERE candidate.user_id=$1 OR EXISTS (
+			SELECT 1
+			FROM channel_members mine
+			JOIN channel_members peer ON peer.channel_id=mine.channel_id
+			JOIN channels c ON c.id=mine.channel_id AND c.delete_at=0
+			WHERE mine.user_id=$1 AND peer.user_id=candidate.user_id
+			  AND (
+				COALESCE(c.team_id, '') = '' OR (
+					EXISTS (
+						SELECT 1 FROM teams shared_team
+						WHERE shared_team.id=c.team_id AND shared_team.delete_at=0
+					)
+					AND EXISTS (
+						SELECT 1 FROM team_members guest_team_member
+						WHERE guest_team_member.team_id=c.team_id AND guest_team_member.user_id=$1
+					)
+					AND EXISTS (
+						SELECT 1 FROM team_members peer_team_member
+						WHERE peer_team_member.team_id=c.team_id AND peer_team_member.user_id=candidate.user_id
+					)
+				)
+			  )
+		)
+	`, guestID, ids, time.Now().UnixMilli())
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	visible := map[string]struct{}{guestID: {}}
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		visible[id] = struct{}{}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	out := make([]User, 0, len(candidates))
+	for _, candidate := range candidates {
+		if _, ok := visible[candidate.ID]; ok {
+			out = append(out, candidate)
+		}
+	}
+	return out, nil
+}
+
+func (s *Service) CanGuestSeeUser(ctx context.Context, guestID, targetID string) (bool, error) {
+	if guestID == targetID {
+		return true, nil
+	}
+	var visible bool
+	err := s.db.Pool.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1
+			FROM users target
+			JOIN channel_members mine ON mine.user_id=$1
+			JOIN channel_members peer ON peer.channel_id=mine.channel_id AND peer.user_id=$2
+			JOIN channels c ON c.id=mine.channel_id AND c.delete_at=0
+			WHERE target.id=$2 AND target.delete_at=0
+			  AND (
+				target.roles !~ '(^|[[:space:]])system_guest([[:space:]]|$)'
+				OR target.guest_expires_at > $3
+			  )
+			  AND (
+				COALESCE(c.team_id, '') = '' OR (
+					EXISTS (
+						SELECT 1 FROM teams shared_team
+						WHERE shared_team.id=c.team_id AND shared_team.delete_at=0
+					)
+					AND EXISTS (
+						SELECT 1 FROM team_members guest_team_member
+						WHERE guest_team_member.team_id=c.team_id AND guest_team_member.user_id=$1
+					)
+					AND EXISTS (
+						SELECT 1 FROM team_members target_team_member
+						WHERE target_team_member.team_id=c.team_id AND target_team_member.user_id=$2
+					)
+				)
+			  )
+		)
+	`, guestID, targetID, time.Now().UnixMilli()).Scan(&visible)
+	return visible, err
 }
 
 // Deactivate soft-deletes the target user and drops all of their active
@@ -1031,6 +1236,35 @@ func splitRoles(s string) []string {
 	return out
 }
 
+func (u User) IsGuest() bool {
+	for _, role := range splitRoles(u.Roles) {
+		if role == "system_guest" {
+			return true
+		}
+	}
+	return false
+}
+
+// GuestAccessValid is evaluated at every session issuance and authentication
+// boundary. Regular users do not depend on the guest metadata columns.
+func (u User) GuestAccessValid(now time.Time) bool {
+	return !u.IsGuest() || (u.GuestExpiresAt > 0 && u.GuestExpiresAt > now.UnixMilli())
+}
+
+// CanDownloadFiles applies the guest-only original-file restriction. Bounded
+// thumbnails remain available for collaboration, while direct downloads and
+// any preview fallback that would return original bytes call this guard.
+func (s *Service) CanDownloadFiles(ctx context.Context, userID string) (bool, error) {
+	u, err := s.UserByID(ctx, userID)
+	if err != nil {
+		return false, err
+	}
+	if !u.GuestAccessValid(time.Now()) {
+		return false, ErrInvalidSession
+	}
+	return !u.IsGuest() || u.GuestFileDownload, nil
+}
+
 // HasAnySystemAdmin reports whether any active user already holds the
 // system_admin role. Used by the bootstrap path to decide if the first
 // registration should be auto-promoted.
@@ -1046,12 +1280,8 @@ func (s *Service) HasAnySystemAdmin(ctx context.Context) (bool, error) {
 	return exists, err
 }
 
-// PromoteToUser swaps system_guest for system_user on the role string.
-// Mirrors Mattermost's `POST /users/{id}/promote`. We don't actually treat
-// system_guest specially anywhere in the codebase, so this is a contract-
-// shape implementation: it round-trips correctly so an official admin tool
-// that flips users back-and-forth gets the same string it sent. Idempotent
-// — promoting an already-promoted user is a no-op.
+// PromoteToUser swaps system_guest for system_user and clears bounded guest
+// metadata. Idempotent — promoting an already-promoted user is a no-op.
 func (s *Service) PromoteToUser(ctx context.Context, userID string) error {
 	var roles string
 	if err := s.db.Pool.QueryRow(ctx, `SELECT roles FROM users WHERE id=$1 AND delete_at=0`, userID).Scan(&roles); err != nil {
@@ -1072,13 +1302,16 @@ func (s *Service) PromoteToUser(ctx context.Context, userID string) error {
 	if !hasUser {
 		out = append([]string{"system_user"}, out...)
 	}
-	_, err := s.db.Pool.Exec(ctx, `UPDATE users SET roles=$1, update_at=$2 WHERE id=$3`,
-		stringsJoinSpace(out), time.Now().UnixMilli(), userID)
+	_, err := s.db.Pool.Exec(ctx, `
+		UPDATE users
+		SET roles=$1, guest_expires_at=0, guest_file_download=TRUE, update_at=$2
+		WHERE id=$3
+	`, stringsJoinSpace(out), time.Now().UnixMilli(), userID)
 	return err
 }
 
-// DemoteToGuest swaps system_user for system_guest on the role string.
-// Mirrors Mattermost's `POST /users/{id}/demote`. Idempotent.
+// DemoteToGuest swaps regular/admin account roles for system_guest and starts
+// a bounded, download-restricted access window. Idempotent.
 func (s *Service) DemoteToGuest(ctx context.Context, userID string) error {
 	var roles string
 	if err := s.db.Pool.QueryRow(ctx, `SELECT roles FROM users WHERE id=$1 AND delete_at=0`, userID).Scan(&roles); err != nil {
@@ -1088,7 +1321,7 @@ func (s *Service) DemoteToGuest(ctx context.Context, userID string) error {
 	out := make([]string, 0, len(parts)+1)
 	hasGuest := false
 	for _, p := range parts {
-		if p == "system_user" {
+		if p == "system_user" || p == "system_admin" {
 			continue
 		}
 		if p == "system_guest" {
@@ -1099,8 +1332,12 @@ func (s *Service) DemoteToGuest(ctx context.Context, userID string) error {
 	if !hasGuest {
 		out = append([]string{"system_guest"}, out...)
 	}
-	_, err := s.db.Pool.Exec(ctx, `UPDATE users SET roles=$1, update_at=$2 WHERE id=$3`,
-		stringsJoinSpace(out), time.Now().UnixMilli(), userID)
+	now := time.Now()
+	_, err := s.db.Pool.Exec(ctx, `
+		UPDATE users
+		SET roles=$1, guest_expires_at=$2, guest_file_download=FALSE, update_at=$3
+		WHERE id=$4
+	`, stringsJoinSpace(out), now.Add(30*24*time.Hour).UnixMilli(), now.UnixMilli(), userID)
 	return err
 }
 

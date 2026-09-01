@@ -11,6 +11,8 @@ func TestResolveTokenQueryRejectsInactiveUsersAtomically(t *testing.T) {
 		"SELECT pat.id, pat.user_id, pat.revoked_at",
 		"JOIN users AS u ON u.id = pat.user_id",
 		"u.delete_at = 0",
+		"system_guest",
+		"u.guest_expires_at >",
 		"WHERE pat.token_hash = $1",
 	} {
 		if !strings.Contains(canonical, required) {

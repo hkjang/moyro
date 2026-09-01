@@ -2,11 +2,15 @@ package httpapi
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"testing"
 	"time"
 
+	"github.com/go-chi/chi/v5"
+	"github.com/hkjang/moyro/server/internal/auth"
 	"github.com/hkjang/moyro/server/internal/oidcauth"
 )
 
@@ -125,6 +129,57 @@ func TestOIDCProviderConfigMapsInsecureBackchannelOptIn(t *testing.T) {
 	}
 }
 
+func TestNormalizeOIDCProviderViewReturnsArrayForLegacyJSON(t *testing.T) {
+	t.Parallel()
+
+	view := defaultOIDCProvider()
+	if err := json.Unmarshal([]byte(`{"id":"keycloak","kind":"keycloak"}`), &view); err != nil {
+		t.Fatal(err)
+	}
+	view = normalizeOIDCProviderView(view)
+	encoded, err := json.Marshal(view)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(encoded, &payload); err != nil {
+		t.Fatal(err)
+	}
+	if mappings, ok := payload["group_mappings"].([]any); !ok || len(mappings) != 0 {
+		t.Fatalf("legacy group_mappings = %#v, want empty JSON array", payload["group_mappings"])
+	}
+
+	view.GroupMappings = nil
+	if normalized := normalizeOIDCProviderView(view); normalized.GroupMappings == nil {
+		t.Fatal("explicit legacy null group_mappings was not normalized")
+	}
+}
+
+func TestSaveNativeOIDCProviderRejectsUnknownRouteProvider(t *testing.T) {
+	t.Parallel()
+
+	for _, providerID := range []string{"not-keycloak", " keycloak"} {
+		r := httptest.NewRequest(http.MethodPatch, "/api/moyro/v1/admin/oidc/providers/not-keycloak", nil)
+		routeCtx := chi.NewRouteContext()
+		routeCtx.URLParams.Add("providerID", providerID)
+		r = r.WithContext(context.WithValue(r.Context(), chi.RouteCtxKey, routeCtx))
+		w := httptest.NewRecorder()
+
+		(&handlers{}).saveNativeOIDCProvider(w, r)
+
+		if w.Code != http.StatusNotFound {
+			t.Fatalf("provider %q status = %d, want 404; body=%s", providerID, w.Code, w.Body.String())
+		}
+		var got apiError
+		if err := json.NewDecoder(w.Body).Decode(&got); err != nil {
+			t.Fatal(err)
+		}
+		if got.ID != "api.moyro.oidc.not_found" {
+			t.Fatalf("provider %q error id = %q, want api.moyro.oidc.not_found", providerID, got.ID)
+		}
+	}
+}
+
 type recordingOIDCFlowConsumer struct {
 	flow   oidcauth.Flow
 	err    error
@@ -213,7 +268,7 @@ func TestConsumeOIDCCallbackTransactionReturnsFlowOnBoundSuccess(t *testing.T) {
 	w := httptest.NewRecorder()
 
 	got, code := consumeOIDCCallbackTransaction(w, r, store, false)
-	if code != "" || got != want {
+	if code != "" || !reflect.DeepEqual(got, want) {
 		t.Fatalf("callback = (%+v, %q), want (%+v, empty)", got, code, want)
 	}
 }
@@ -299,5 +354,20 @@ func TestSanitizeProviderError(t *testing.T) {
 		if got := sanitizeProviderError(value); got != "error" {
 			t.Errorf("sanitizeProviderError(%q) = %q, want error", value, got)
 		}
+	}
+}
+
+func TestShouldBootstrapOIDCDefaultRetriesRegularButNeverExpandsGuestScope(t *testing.T) {
+	if !shouldBootstrapOIDCDefault(false, auth.User{Roles: "system_user"}) {
+		t.Fatal("unmapped regular account should receive or repair default membership")
+	}
+	if shouldBootstrapOIDCDefault(true, auth.User{Roles: "system_user"}) {
+		t.Fatal("mapped account should not receive default membership")
+	}
+	if !shouldBootstrapOIDCDefault(false, auth.User{Roles: "system_admin system_user"}) {
+		t.Fatal("account-role-only admin mapping should still receive default membership")
+	}
+	if shouldBootstrapOIDCDefault(false, auth.User{Roles: "system_guest", GuestExpiresAt: time.Now().Add(time.Hour).UnixMilli()}) {
+		t.Fatal("guest without a current group mapping must not escape into the default space")
 	}
 }

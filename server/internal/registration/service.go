@@ -76,6 +76,10 @@ func (s *Service) Register(ctx context.Context, input Input) (*auth.User, string
 
 	now := s.now().UnixMilli()
 	inviteTeamID := ""
+	inviteKind := invites.KindMember
+	inviteChannelIDs := []string{}
+	guestExpiresAfterSeconds := int64(0)
+	guestFileDownload := true
 	if input.InviteID != "" {
 		err = tx.QueryRow(ctx, `
 			UPDATE invite_tokens AS invite
@@ -87,8 +91,23 @@ func (s *Service) Register(ctx context.Context, input Input) (*auth.User, string
 			  AND invite.revoked_at = 0
 			  AND invite.expires_at > $2
 			  AND (invite.max_uses = 0 OR invite.use_count < invite.max_uses)
-			RETURNING invite.team_id
-		`, input.InviteID, now).Scan(&inviteTeamID)
+			  AND (
+				invite.invite_kind = 'member'
+				OR (
+					cardinality(invite.channel_ids) > 0
+					AND NOT EXISTS (
+						SELECT 1
+						FROM unnest(invite.channel_ids) AS requested(channel_id)
+						LEFT JOIN channels c ON c.id=requested.channel_id
+							AND c.team_id=invite.team_id AND c.delete_at=0 AND c.type IN ('O','P')
+						WHERE c.id IS NULL
+					)
+				)
+			  )
+			RETURNING invite.team_id, invite.invite_kind, invite.channel_ids,
+			          invite.guest_expires_after_seconds, invite.guest_file_download
+		`, input.InviteID, now).Scan(&inviteTeamID, &inviteKind, &inviteChannelIDs,
+			&guestExpiresAfterSeconds, &guestFileDownload)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, "", invites.ErrInvalidInvite
 		}
@@ -97,13 +116,23 @@ func (s *Service) Register(ctx context.Context, input Input) (*auth.User, string
 		}
 	}
 
+	roles := "system_user"
+	guestExpiresAt := int64(0)
+	if inviteKind == invites.KindGuest {
+		roles = "system_guest"
+		guestExpiresAt = now + guestExpiresAfterSeconds*1000
+	}
 	user := &auth.User{
-		ID: uuid.NewString(), Username: input.Username, Email: input.Email, Roles: "system_user",
+		ID: uuid.NewString(), Username: input.Username, Email: input.Email, Roles: roles,
+		GuestExpiresAt: guestExpiresAt, GuestFileDownload: guestFileDownload,
 	}
 	if _, err := tx.Exec(ctx, `
-		INSERT INTO users (id, username, email, password_hash, roles, create_at, update_at)
-		VALUES ($1,$2,$3,$4,'system_user',$5,$5)
-	`, user.ID, user.Username, user.Email, string(hash), now); err != nil {
+		INSERT INTO users (
+			id, username, email, password_hash, roles, guest_expires_at,
+			guest_file_download, create_at, update_at
+		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$8)
+	`, user.ID, user.Username, user.Email, string(hash), user.Roles,
+		user.GuestExpiresAt, user.GuestFileDownload, now); err != nil {
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
 			return nil, "", auth.ErrUserExists
@@ -111,16 +140,25 @@ func (s *Service) Register(ctx context.Context, input Input) (*auth.User, string
 		return nil, "", err
 	}
 
-	defaultTeamID, err := ensureTeam(ctx, tx, now)
-	if err != nil {
-		return nil, "", err
-	}
-	if err := joinTeamAndGeneral(ctx, tx, defaultTeamID, user.ID, now); err != nil {
-		return nil, "", err
-	}
-	if inviteTeamID != "" && inviteTeamID != defaultTeamID {
-		if err := joinTeamAndGeneral(ctx, tx, inviteTeamID, user.ID, now); err != nil {
+	if inviteKind == invites.KindGuest {
+		if inviteTeamID == "" || len(inviteChannelIDs) == 0 || guestExpiresAfterSeconds <= 0 {
+			return nil, "", invites.ErrInvalidInvite
+		}
+		if err := joinGuestScope(ctx, tx, inviteTeamID, inviteChannelIDs, user.ID, now); err != nil {
 			return nil, "", err
+		}
+	} else {
+		defaultTeamID, err := ensureTeam(ctx, tx, now)
+		if err != nil {
+			return nil, "", err
+		}
+		if err := joinTeamAndGeneral(ctx, tx, defaultTeamID, user.ID, now); err != nil {
+			return nil, "", err
+		}
+		if inviteTeamID != "" && inviteTeamID != defaultTeamID {
+			if err := joinTeamAndGeneral(ctx, tx, inviteTeamID, user.ID, now); err != nil {
+				return nil, "", err
+			}
 		}
 	}
 
@@ -128,6 +166,30 @@ func (s *Service) Register(ctx context.Context, input Input) (*auth.User, string
 		return nil, "", err
 	}
 	return user, inviteTeamID, nil
+}
+
+func joinGuestScope(ctx context.Context, tx registrationTx, teamID string, channelIDs []string, userID string, now int64) error {
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO team_members (team_id, user_id, roles, create_at)
+		VALUES ($1,$2,'team_user',$3)
+		ON CONFLICT (team_id, user_id) DO NOTHING
+	`, teamID, userID, now); err != nil {
+		return err
+	}
+	tag, err := tx.Exec(ctx, `
+		INSERT INTO channel_members (channel_id, user_id, roles, create_at)
+		SELECT c.id, $2, 'channel_user', $3
+		FROM channels c
+		WHERE c.id=ANY($1::text[]) AND c.team_id=$4 AND c.delete_at=0 AND c.type IN ('O','P')
+		ON CONFLICT (channel_id, user_id) DO NOTHING
+	`, channelIDs, userID, now, teamID)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() != int64(len(channelIDs)) {
+		return invites.ErrInvalidInvite
+	}
+	return nil
 }
 
 func ensureTeam(ctx context.Context, tx registrationTx, now int64) (string, error) {

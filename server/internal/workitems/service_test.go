@@ -6,6 +6,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestWorkItemKindAndStatusMatrix(t *testing.T) {
@@ -19,6 +20,8 @@ func TestWorkItemKindAndStatusMatrix(t *testing.T) {
 		{KindTask, StatusDone, true},
 		{KindTask, StatusCancelled, true},
 		{KindTask, StatusRecorded, false},
+		{KindDecision, StatusProposed, true},
+		{KindDecision, StatusUnderReview, true},
 		{KindDecision, StatusRecorded, true},
 		{KindDecision, StatusSuperseded, true},
 		{KindDecision, StatusCancelled, true},
@@ -29,6 +32,52 @@ func TestWorkItemKindAndStatusMatrix(t *testing.T) {
 		if got := validStatus(test.kind, test.status); got != test.want {
 			t.Errorf("validStatus(%q, %q) = %v, want %v", test.kind, test.status, got, test.want)
 		}
+	}
+}
+
+func TestWorkItemTransitionsRequireAnAtomicReplacement(t *testing.T) {
+	t.Parallel()
+	if !validTransition(KindDecision, StatusProposed, StatusUnderReview) ||
+		!validTransition(KindDecision, StatusUnderReview, StatusRecorded) ||
+		!validTransition(KindDecision, StatusRecorded, StatusCancelled) {
+		t.Fatal("expected forward decision lifecycle transitions")
+	}
+	if validTransition(KindDecision, StatusRecorded, StatusSuperseded) {
+		t.Fatal("a status patch must not supersede a decision without a replacement")
+	}
+	if validTransition(KindDecision, StatusSuperseded, StatusRecorded) {
+		t.Fatal("a superseded decision with a successor must not be reactivated")
+	}
+}
+
+func TestNextDueAtSkipsPastOccurrences(t *testing.T) {
+	t.Parallel()
+	current := time.Date(2026, time.January, 1, 9, 0, 0, 0, time.UTC).UnixMilli()
+	now := time.Date(2026, time.January, 4, 10, 0, 0, 0, time.UTC).UnixMilli()
+	want := time.Date(2026, time.January, 5, 9, 0, 0, 0, time.UTC).UnixMilli()
+	if got := nextDueAt(current, RecurrenceDaily, 1, now); got != want {
+		t.Fatalf("next daily occurrence = %d, want %d", got, want)
+	}
+	if got := nextDueAt(current, RecurrenceNone, 0, now); got != 0 {
+		t.Fatalf("non-recurring next occurrence = %d, want 0", got)
+	}
+	monthEnd := time.Date(2025, time.January, 31, 9, 0, 0, 0, time.UTC).UnixMilli()
+	wantMonthEnd := time.Date(2025, time.February, 28, 9, 0, 0, 0, time.UTC).UnixMilli()
+	if got := nextDueAt(monthEnd, RecurrenceMonthly, 1, monthEnd-1); got != wantMonthEnd {
+		t.Fatalf("clamped monthly occurrence = %d, want %d", got, wantMonthEnd)
+	}
+}
+
+func TestWorkItemPriorityAndRecurrenceValidation(t *testing.T) {
+	t.Parallel()
+	for _, priority := range []string{PriorityLow, PriorityNormal, PriorityHigh, PriorityUrgent} {
+		if !validPriority(priority) {
+			t.Fatalf("priority %q should be valid", priority)
+		}
+	}
+	if validPriority("critical") || !validRecurrence(RecurrenceWeekly, 2) ||
+		validRecurrence(RecurrenceNone, 1) || validRecurrence(RecurrenceDaily, 0) {
+		t.Fatal("priority or recurrence validation accepted an invalid value")
 	}
 }
 
@@ -61,7 +110,7 @@ func TestSameCreateRequestChecksEveryDurableInput(t *testing.T) {
 	base := &Item{
 		Kind: KindTask, Title: "제목", Description: "본문", AssigneeID: "user-1",
 		TeamID: "team-1", ChannelID: "channel-1", SourcePostID: "post-1",
-		SourceThreadID: "root-1", DueAt: 123,
+		SourceThreadID: "root-1", DueAt: 123, Status: StatusOpen,
 	}
 	clone := *base
 	if !sameCreateRequest(base, &clone) {
@@ -69,6 +118,7 @@ func TestSameCreateRequestChecksEveryDurableInput(t *testing.T) {
 	}
 	for name, mutate := range map[string]func(*Item){
 		"kind":        func(item *Item) { item.Kind = KindDecision },
+		"status":      func(item *Item) { item.Status = StatusDone },
 		"title":       func(item *Item) { item.Title = "다른 제목" },
 		"description": func(item *Item) { item.Description = "다른 본문" },
 		"assignee":    func(item *Item) { item.AssigneeID = "user-2" },
@@ -88,17 +138,46 @@ func TestSameCreateRequestChecksEveryDurableInput(t *testing.T) {
 	}
 }
 
+func TestCreateFingerprintIsImmutableAndIncludesInitialStatus(t *testing.T) {
+	t.Parallel()
+	original := &Item{
+		Kind: KindDecision, Status: StatusProposed, Title: "검토 제안", CreatedBy: "user-1",
+		TeamID: "team-1", ChannelID: "channel-1", SourcePostID: "post-1",
+		Priority: PriorityNormal, RecurrenceUnit: RecurrenceNone,
+		ImpactTaskIDs: []string{"task-b", "task-a"},
+	}
+	original.CreateFingerprint = createRequestFingerprint(original)
+	mutated := *original
+	mutated.Title = "나중에 수정한 제목"
+	mutated.Status = StatusRecorded
+	if !sameCreateRequest(original, &mutated) {
+		t.Fatal("mutable fields must not invalidate a stored create fingerprint")
+	}
+	differentRequest := *original
+	differentRequest.Status = StatusRecorded
+	differentRequest.CreateFingerprint = createRequestFingerprint(&differentRequest)
+	if sameCreateRequest(original, &differentRequest) {
+		t.Fatal("different initial decision status reused an idempotency fingerprint")
+	}
+	reordered := *original
+	reordered.ImpactTaskIDs = []string{"task-a", "task-b"}
+	if createRequestFingerprint(&reordered) != original.CreateFingerprint {
+		t.Fatal("relation input order should not change the create fingerprint")
+	}
+}
+
 func TestWorkItemJSONOmitsIdempotencyKey(t *testing.T) {
 	t.Parallel()
 	raw, err := json.Marshal(Item{
-		ID: "work-1", IdempotencyKey: "private-replay-key", PreviousAssigneeID: "former-private-assignee", AssigneeChanged: true,
+		ID: "work-1", IdempotencyKey: "private-replay-key", CreateFingerprint: "private-fingerprint",
+		PreviousAssigneeID: "former-private-assignee", AssigneeChanged: true,
 	})
 	if err != nil {
 		t.Fatalf("marshal work item: %v", err)
 	}
 	if strings.Contains(string(raw), "idempotency") || strings.Contains(string(raw), "private-replay-key") ||
 		strings.Contains(string(raw), "previous_assignee") || strings.Contains(string(raw), "former-private-assignee") ||
-		strings.Contains(string(raw), "assignee_changed") {
+		strings.Contains(string(raw), "assignee_changed") || strings.Contains(string(raw), "private-fingerprint") {
 		t.Fatalf("work item JSON leaked request-control metadata: %s", raw)
 	}
 }

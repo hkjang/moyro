@@ -67,11 +67,18 @@ func (s *Service) CreateLoginHandoff(ctx context.Context, userID string) (LoginH
 		SELECT $1, $2, id, $4, $5
 		FROM users
 		WHERE id=$3 AND delete_at=0
+		  AND (
+			NOT ('system_guest'=ANY(regexp_split_to_array(BTRIM(roles), E'\\s+')))
+			OR guest_expires_at > $5
+		  )
 	`, codeDigest[:], bindingDigest[:], userID, expiresAt, now.UnixMilli())
 	if err != nil {
 		return LoginHandoff{}, fmt.Errorf("auth: store login handoff: %w", err)
 	}
 	if tag.RowsAffected() != 1 {
+		if u, lookupErr := s.UserByID(ctx, userID); lookupErr == nil && !u.GuestAccessValid(now) {
+			return LoginHandoff{}, ErrInvalidSession
+		}
 		return LoginHandoff{}, ErrNotFound
 	}
 	return LoginHandoff{Code: code, BrowserBinding: binding, ExpiresAt: expiresAt}, nil
@@ -132,6 +139,9 @@ func (s *Service) ExchangeLoginHandoff(ctx context.Context, code, browserBinding
 	}
 	if err != nil {
 		return nil, "", err
+	}
+	if !u.GuestAccessValid(now) {
+		return nil, "", ErrInvalidLoginHandoff
 	}
 
 	var token string

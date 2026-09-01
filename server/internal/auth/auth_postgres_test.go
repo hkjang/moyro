@@ -132,6 +132,115 @@ func TestSessionJTIHashRollingUpgradePostgres(t *testing.T) {
 	}
 }
 
+func TestGuestBulkDirectoryFiltersExpiredSharedGuestPostgres(t *testing.T) {
+	db := newAuthTestDB(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	now := time.Now().UnixMilli()
+	if _, err := db.Pool.Exec(ctx, `
+		INSERT INTO users (id, username, email, password_hash, roles, create_at, update_at, guest_expires_at)
+		VALUES
+			('directory-actor', 'directory-actor', 'directory-actor@example.test', 'unused', 'system_guest', $1, $1, $2),
+			('directory-regular', 'directory-regular', 'directory-regular@example.test', 'unused', 'system_user', $1, $1, 0),
+			('directory-live-guest', 'directory-live-guest', 'directory-live-guest@example.test', 'unused', 'system_guest', $1, $1, $2),
+			('directory-expired-guest', 'directory-expired-guest', 'directory-expired-guest@example.test', 'unused', 'system_guest', $1, $1, $3)
+	`, now, now+int64(time.Hour/time.Millisecond), now-1); err != nil {
+		t.Fatalf("seed guest directory users: %v", err)
+	}
+	if _, err := db.Pool.Exec(ctx, `
+		INSERT INTO teams (id, display_name, name, type, create_at, update_at)
+		VALUES ('directory-team', 'Directory Team', 'directory-team', 'O', $1, $1)
+	`, now); err != nil {
+		t.Fatalf("seed guest directory team: %v", err)
+	}
+	if _, err := db.Pool.Exec(ctx, `
+		INSERT INTO team_members (team_id, user_id, roles, create_at)
+		SELECT 'directory-team', id, 'team_user', $1 FROM users WHERE id LIKE 'directory-%'
+	`, now); err != nil {
+		t.Fatalf("seed guest directory team memberships: %v", err)
+	}
+	if _, err := db.Pool.Exec(ctx, `
+		INSERT INTO channels (id, team_id, type, display_name, name, create_at, update_at)
+		VALUES ('directory-channel', 'directory-team', 'P', 'Directory Channel', 'directory-channel', $1, $1)
+	`, now); err != nil {
+		t.Fatalf("seed guest directory channel: %v", err)
+	}
+	if _, err := db.Pool.Exec(ctx, `
+		INSERT INTO channel_members (channel_id, user_id, roles, create_at)
+		SELECT 'directory-channel', id, 'channel_user', $1 FROM users WHERE id LIKE 'directory-%'
+	`, now); err != nil {
+		t.Fatalf("seed guest directory channel memberships: %v", err)
+	}
+
+	service := New(db, testJWTSecret, time.Hour, nil)
+	candidates := []User{
+		{ID: "directory-regular"},
+		{ID: "directory-live-guest", Roles: "system_guest"},
+		{ID: "directory-expired-guest", Roles: "system_guest"},
+	}
+	filtered, err := service.FilterUsersVisibleToGuest(ctx, "directory-actor", candidates)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(filtered) != 2 || filtered[0].ID != "directory-regular" || filtered[1].ID != "directory-live-guest" {
+		t.Fatalf("filtered guest directory = %#v", filtered)
+	}
+	if visible, err := service.CanGuestSeeUser(ctx, "directory-actor", "directory-expired-guest"); err != nil || visible {
+		t.Fatalf("expired shared guest visibility = (%v, %v), want false", visible, err)
+	}
+	if visible, err := service.CanGuestSeeUser(ctx, "directory-actor", "directory-regular"); err != nil || !visible {
+		t.Fatalf("live shared regular visibility = (%v, %v), want true", visible, err)
+	}
+
+	// A stale channel_members pair must not retain directory visibility after
+	// either side loses its team membership or the parent team is archived.
+	if _, err := db.Pool.Exec(ctx, `DELETE FROM team_members WHERE team_id='directory-team' AND user_id='directory-regular'`); err != nil {
+		t.Fatalf("revoke target team membership: %v", err)
+	}
+	if visible, err := service.CanGuestSeeUser(ctx, "directory-actor", "directory-regular"); err != nil || visible {
+		t.Fatalf("target without team membership visibility = (%v, %v), want false", visible, err)
+	}
+	filtered, err = service.FilterUsersVisibleToGuest(ctx, "directory-actor", candidates)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(filtered) != 1 || filtered[0].ID != "directory-live-guest" {
+		t.Fatalf("filtered after target team revoke = %#v", filtered)
+	}
+	if _, err := db.Pool.Exec(ctx, `INSERT INTO team_members (team_id,user_id,roles,create_at) VALUES ('directory-team','directory-regular','team_user',$1)`, now); err != nil {
+		t.Fatalf("restore target team membership: %v", err)
+	}
+	if _, err := db.Pool.Exec(ctx, `UPDATE teams SET delete_at=$1 WHERE id='directory-team'`, now); err != nil {
+		t.Fatalf("archive shared team: %v", err)
+	}
+	if visible, err := service.CanGuestSeeUser(ctx, "directory-actor", "directory-regular"); err != nil || visible {
+		t.Fatalf("archived team visibility = (%v, %v), want false", visible, err)
+	}
+	if _, err := db.Pool.Exec(ctx, `UPDATE teams SET delete_at=0 WHERE id='directory-team'`); err != nil {
+		t.Fatalf("restore shared team: %v", err)
+	}
+	if _, err := db.Pool.Exec(ctx, `DELETE FROM team_members WHERE team_id='directory-team' AND user_id='directory-actor'`); err != nil {
+		t.Fatalf("revoke actor team membership: %v", err)
+	}
+	if visible, err := service.CanGuestSeeUser(ctx, "directory-actor", "directory-regular"); err != nil || visible {
+		t.Fatalf("actor without team membership visibility = (%v, %v), want false", visible, err)
+	}
+	listed, err := service.ListUsersVisibleToGuest(ctx, "directory-actor", 0, 20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(listed) != 1 || listed[0].ID != "directory-actor" {
+		t.Fatalf("directory after actor team revoke = %#v, want self only", listed)
+	}
+	searched, err := service.SearchUsersVisibleToGuest(ctx, "directory-actor", "directory-regular", 20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(searched) != 0 {
+		t.Fatalf("search after actor team revoke = %#v, want empty", searched)
+	}
+}
+
 func newAuthTestDB(t *testing.T) *store.DB {
 	t.Helper()
 	dsn := strings.TrimSpace(os.Getenv(authTestPostgresDSN))

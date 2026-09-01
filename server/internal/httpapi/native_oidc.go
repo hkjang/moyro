@@ -13,11 +13,13 @@ import (
 	"strings"
 	"time"
 
+	"github.com/go-chi/chi/v5"
 	"github.com/hkjang/moyro/server/internal/audit"
 	"github.com/hkjang/moyro/server/internal/auth"
 	"github.com/hkjang/moyro/server/internal/metrics"
 	"github.com/hkjang/moyro/server/internal/oauth"
 	"github.com/hkjang/moyro/server/internal/oidcauth"
+	"github.com/hkjang/moyro/server/internal/onboarding"
 	"github.com/hkjang/moyro/server/internal/rbac"
 	"github.com/hkjang/moyro/server/internal/settings"
 )
@@ -40,33 +42,48 @@ type secretConfiguredView struct {
 }
 
 type oidcProviderView struct {
-	ID                       string                `json:"id,omitempty"`
-	Kind                     string                `json:"kind"`
-	Name                     string                `json:"name"`
-	Enabled                  bool                  `json:"enabled"`
-	IssuerURL                string                `json:"issuer_url"`
-	ClientID                 string                `json:"client_id"`
-	ClientSecret             string                `json:"client_secret,omitempty"`
-	ClientSecretState        *secretConfiguredView `json:"client_secret_state,omitempty"`
-	Scopes                   []string              `json:"scopes"`
-	UsernameClaim            string                `json:"username_claim"`
-	EmailClaim               string                `json:"email_claim"`
-	CACertificatePEM         string                `json:"ca_certificate_pem,omitempty"`
-	AllowSignup              bool                  `json:"allow_signup"`
-	RequireVerifiedEmail     bool                  `json:"require_verified_email"`
-	AllowInsecureBackchannel bool                  `json:"allow_insecure_backchannel"`
-	RedirectURL              string                `json:"redirect_url,omitempty"`
-	DiscoveryStatus          string                `json:"discovery_status,omitempty"`
-	LastTestedAt             int64                 `json:"last_tested_at,omitempty"`
+	ID                       string                    `json:"id,omitempty"`
+	Kind                     string                    `json:"kind"`
+	Name                     string                    `json:"name"`
+	Enabled                  bool                      `json:"enabled"`
+	IssuerURL                string                    `json:"issuer_url"`
+	ClientID                 string                    `json:"client_id"`
+	ClientSecret             string                    `json:"client_secret,omitempty"`
+	ClientSecretState        *secretConfiguredView     `json:"client_secret_state,omitempty"`
+	Scopes                   []string                  `json:"scopes"`
+	UsernameClaim            string                    `json:"username_claim"`
+	EmailClaim               string                    `json:"email_claim"`
+	GroupsClaim              string                    `json:"groups_claim"`
+	GroupMappings            []onboarding.GroupMapping `json:"group_mappings"`
+	CACertificatePEM         string                    `json:"ca_certificate_pem,omitempty"`
+	AllowSignup              bool                      `json:"allow_signup"`
+	RequireVerifiedEmail     bool                      `json:"require_verified_email"`
+	AllowInsecureBackchannel bool                      `json:"allow_insecure_backchannel"`
+	RedirectURL              string                    `json:"redirect_url,omitempty"`
+	DiscoveryStatus          string                    `json:"discovery_status,omitempty"`
+	LastTestedAt             int64                     `json:"last_tested_at,omitempty"`
+}
+
+type oidcFlowPolicy struct {
+	AllowSignup   bool                      `json:"allow_signup"`
+	GroupMappings []onboarding.GroupMapping `json:"group_mappings"`
 }
 
 func defaultOIDCProvider() oidcProviderView {
 	return oidcProviderView{
 		ID: "keycloak", Kind: "keycloak", Name: "Keycloak",
 		Scopes:        []string{"openid", "profile", "email"},
-		UsernameClaim: "preferred_username", EmailClaim: "email",
-		AllowSignup: true, RequireVerifiedEmail: true, DiscoveryStatus: "unknown",
+		UsernameClaim: "preferred_username", EmailClaim: "email", GroupsClaim: "groups",
+		GroupMappings: []onboarding.GroupMapping{},
+		AllowSignup:   true, RequireVerifiedEmail: true, DiscoveryStatus: "unknown",
 	}
+}
+
+func normalizeOIDCProviderView(view oidcProviderView) oidcProviderView {
+	if view.GroupMappings == nil {
+		view.GroupMappings = []onboarding.GroupMapping{}
+	}
+	return view
 }
 
 func (n *nativeServices) reloadOIDC(ctx context.Context, fallbackBaseURL string) error {
@@ -124,7 +141,7 @@ func (v oidcProviderView) oidcConfig(secret string) oidcauth.Config {
 	return oidcauth.Config{
 		Enabled: v.Enabled, DisplayName: v.Name, IssuerURL: v.IssuerURL,
 		ClientID: v.ClientID, ClientSecret: secret, RedirectURL: v.RedirectURL,
-		Scopes: v.Scopes, UsernameClaim: v.UsernameClaim, EmailClaim: v.EmailClaim,
+		Scopes: v.Scopes, UsernameClaim: v.UsernameClaim, EmailClaim: v.EmailClaim, GroupsClaim: v.GroupsClaim,
 		AllowSignup:              v.AllowSignup,
 		RequireVerifiedEmail:     v.RequireVerifiedEmail,
 		AllowInsecureBackchannel: v.AllowInsecureBackchannel,
@@ -163,6 +180,7 @@ func (h *handlers) readOIDCProvider(ctx context.Context) (oidcProviderView, erro
 	if err := h.native.loadJSON(ctx, oidcSettingsSection, oidcSettingsKey, &view); err != nil {
 		return oidcProviderView{}, err
 	}
+	view = normalizeOIDCProviderView(view)
 	view.ClientSecret = ""
 	if _, _, err := h.native.settings.RevealSecret(ctx, oidcSettingsSection, oidcSecretKey); err == nil {
 		view.ClientSecretState = &secretConfiguredView{Configured: true}
@@ -173,8 +191,12 @@ func (h *handlers) readOIDCProvider(ctx context.Context) (oidcProviderView, erro
 }
 
 func (h *handlers) saveNativeOIDCProvider(w http.ResponseWriter, r *http.Request) {
+	if providerID := chi.URLParam(r, "providerID"); providerID != "" && providerID != oidcSettingsKey {
+		writeError(w, http.StatusNotFound, "api.moyro.oidc.not_found", "OIDC provider not found")
+		return
+	}
 	view := defaultOIDCProvider()
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 256<<10)).Decode(&view); err != nil {
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&view); err != nil {
 		writeError(w, http.StatusBadRequest, "api.moyro.oidc.body", err.Error())
 		return
 	}
@@ -197,6 +219,15 @@ func (h *handlers) saveNativeOIDCProvider(w http.ResponseWriter, r *http.Request
 	if view.EmailClaim == "" {
 		view.EmailClaim = defaults.EmailClaim
 	}
+	if view.GroupsClaim == "" {
+		view.GroupsClaim = defaults.GroupsClaim
+	}
+	validatedMappings, err := onboarding.New(h.auth.DB()).ValidateMappings(r.Context(), view.GroupMappings)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "api.moyro.oidc.group_mapping", err.Error())
+		return
+	}
+	view.GroupMappings = validatedMappings
 	unlock := h.native.beginSettingsUpdate()
 	defer unlock()
 
@@ -236,6 +267,18 @@ func (h *handlers) saveNativeOIDCProvider(w http.ResponseWriter, r *http.Request
 		view.IssuerURL = prepared.IssuerURL()
 		view.DiscoveryStatus = "ready"
 		view.LastTestedAt = time.Now().UnixMilli()
+		// This check runs while settingsUpdateMu is held, so no competing
+		// settings activation can consume the last retained-snapshot slot
+		// between the durable commit below and Activate. Never evict an
+		// in-flight login merely to accept another rapid settings rotation.
+		if err := h.native.oidc.CheckActivationCapacity(prepared); err != nil {
+			if errors.Is(err, oidcauth.ErrSnapshotCapacity) {
+				writeError(w, http.StatusConflict, "api.moyro.oidc.snapshot_capacity", "too many recent OIDC settings changes; wait for in-flight sign-ins to finish")
+				return
+			}
+			writeError(w, http.StatusInternalServerError, "api.moyro.oidc.activate", err.Error())
+			return
+		}
 	}
 	view.ClientSecret = ""
 	if _, err := h.native.settings.PutJSONAndOptionalSecret(
@@ -262,7 +305,7 @@ func (h *handlers) saveNativeOIDCProvider(w http.ResponseWriter, r *http.Request
 
 func (h *handlers) testNativeOIDCProvider(w http.ResponseWriter, r *http.Request) {
 	view := defaultOIDCProvider()
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 256<<10)).Decode(&view); err != nil {
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&view); err != nil {
 		writeError(w, http.StatusBadRequest, "api.moyro.oidc.body", err.Error())
 		return
 	}
@@ -283,18 +326,41 @@ func (h *handlers) nativeOIDCLogin(w http.ResponseWriter, r *http.Request) {
 	result := "internal_error"
 	defer func() { metrics.ObserveSSOStage("keycloak", "login", result, time.Since(started)) }()
 	w.Header().Set("Cache-Control", "no-store")
-	if h.native == nil || !h.native.oidc.Enabled() {
+	if h.native == nil || h.native.oidc == nil || h.native.oidcFlows == nil {
 		result = "disabled"
 		writeError(w, http.StatusNotFound, "api.moyro.oidc.disabled", "Keycloak login is not enabled")
 		return
 	}
-	returnTo := sanitizeReturnTo(r.URL.Query().Get("return_to"))
-	state, flow, err := h.native.oidcFlows.Create(r.Context(), returnTo)
+	// Serialize snapshot capture with durable settings commit + activation.
+	// The encrypted one-time flow then carries the exact onboarding policy
+	// paired with this immutable provider snapshot through the callback.
+	unlock := h.native.beginSettingsUpdate()
+	defer unlock()
+	binding, ok := h.native.oidc.CurrentSnapshot()
+	if !ok {
+		result = "disabled"
+		writeError(w, http.StatusNotFound, "api.moyro.oidc.disabled", "Keycloak login is not enabled")
+		return
+	}
+	storedView := defaultOIDCProvider()
+	if err := h.native.loadJSON(r.Context(), oidcSettingsSection, oidcSettingsKey, &storedView); err != nil ||
+		!storedView.Enabled || storedView.IssuerURL != binding.Config.IssuerURL || storedView.ClientID != binding.Config.ClientID {
+		result = "disabled"
+		writeError(w, http.StatusServiceUnavailable, "api.moyro.oidc.snapshot", "Keycloak settings snapshot is unavailable")
+		return
+	}
+	policy, err := json.Marshal(oidcFlowPolicy{AllowSignup: storedView.AllowSignup, GroupMappings: storedView.GroupMappings})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "api.moyro.oidc.flow", err.Error())
 		return
 	}
-	authURL, err := h.native.oidc.AuthCodeURL(state, flow.Nonce, flow.Verifier)
+	returnTo := sanitizeReturnTo(r.URL.Query().Get("return_to"))
+	state, flow, err := h.native.oidcFlows.Create(r.Context(), returnTo, binding.ID, policy)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "api.moyro.oidc.flow", err.Error())
+		return
+	}
+	authURL, err := h.native.oidc.AuthCodeURLFor(binding.ID, state, flow.Nonce, flow.Verifier)
 	if err != nil {
 		// The row was already created. Consume it now so a transient manager
 		// failure cannot leave a usable, unbound authorization transaction.
@@ -303,7 +369,7 @@ func (h *handlers) nativeOIDCLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	result = "success"
-	setOIDCTransactionCookie(w, state, flow.ExpiresAt, oidcCookieSecure(r, h.native.oidc))
+	setOIDCTransactionCookie(w, state, flow.ExpiresAt, oidcConfigCookieSecure(r, binding.Config))
 	http.Redirect(w, r, authURL, http.StatusFound)
 }
 
@@ -326,21 +392,22 @@ func (h *handlers) nativeOIDCCallback(w http.ResponseWriter, r *http.Request) {
 		h.nativeOIDCRedirectError(w, r, callbackErr)
 		return
 	}
-	identity, err := h.native.oidc.Exchange(r.Context(), r.URL.Query().Get("code"), flow.Verifier, flow.Nonce)
+	exchange, err := h.native.oidc.ExchangeFor(r.Context(), flow.ProviderSnapshotID, r.URL.Query().Get("code"), flow.Verifier, flow.Nonce)
 	if err != nil {
 		result = "exchange_error"
 		h.logger.Warn("Keycloak exchange failed", "err", err)
 		h.nativeOIDCRedirectError(w, r, "exchange_failed")
 		return
 	}
-	publicCfg, ok := h.native.oidc.PublicConfig()
-	if !ok {
-		result = "disabled"
-		h.nativeOIDCRedirectError(w, r, "provider_disabled")
+	identity := exchange.Identity
+	var flowPolicy oidcFlowPolicy
+	if err := json.Unmarshal(flow.ProviderPolicy, &flowPolicy); err != nil {
+		result = "onboarding_error"
+		h.nativeOIDCRedirectError(w, r, "onboarding_failed")
 		return
 	}
-	providerKey := keycloakProviderKey(publicCfg.IssuerURL)
-	if !publicCfg.AllowSignup {
+	providerKey := keycloakProviderKey(exchange.Config.IssuerURL)
+	if !flowPolicy.AllowSignup {
 		canResolve, err := h.oidcCanResolveExisting(r.Context(), providerKey, identity)
 		if err != nil || !canResolve {
 			result = "resolve_error"
@@ -364,10 +431,48 @@ func (h *handlers) nativeOIDCCallback(w http.ResponseWriter, r *http.Request) {
 		h.nativeOIDCRedirectError(w, r, "resolve_failed")
 		return
 	}
-	if created {
-		if err := h.bootstrapMembership(r.Context(), u.ID); err != nil {
-			h.logger.Warn("Keycloak default membership failed", "user", u.ID, "err", err)
+	collaborationAssigned, err := onboarding.New(h.auth.DB()).Apply(r.Context(), u.ID, identity.Groups, flowPolicy.GroupMappings, created)
+	if err != nil {
+		result = "onboarding_error"
+		h.logger.Error("Keycloak group onboarding failed", "user", u.ID, "err", err)
+		if created {
+			if cleanupErr := h.oauthIdent.RemoveUnonboardedIdentityAccount(r.Context(), providerKey, identity.Subject, u.ID); cleanupErr != nil {
+				h.logger.Error("Keycloak failed onboarding compensation failed", "user", u.ID, "err", cleanupErr)
+			}
 		}
+		h.nativeOIDCRedirectError(w, r, "onboarding_failed")
+		return
+	}
+	// Apply can promote a previously restricted guest through an account-role
+	// mapping. Reload before deciding whether default collaboration access is
+	// appropriate; the identity object predates that transaction.
+	onboardedUserID := u.ID
+	u, err = h.auth.UserByID(r.Context(), onboardedUserID)
+	if err != nil {
+		result = "onboarding_error"
+		h.logger.Error("Keycloak onboarded account reload failed", "user", onboardedUserID, "err", err)
+		if created {
+			if cleanupErr := h.oauthIdent.RemoveUnonboardedIdentityAccount(r.Context(), providerKey, identity.Subject, onboardedUserID); cleanupErr != nil {
+				h.logger.Error("Keycloak failed onboarding compensation failed", "user", onboardedUserID, "err", cleanupErr)
+			}
+		}
+		h.nativeOIDCRedirectError(w, r, "onboarding_failed")
+		return
+	}
+	if shouldBootstrapOIDCDefault(collaborationAssigned, *u) {
+		if err := h.bootstrapMembership(r.Context(), u.ID); err != nil {
+			result = "onboarding_error"
+			h.logger.Error("Keycloak default membership failed", "user", u.ID, "err", err)
+			if created {
+				if cleanupErr := h.oauthIdent.RemoveUnonboardedIdentityAccount(r.Context(), providerKey, identity.Subject, u.ID); cleanupErr != nil {
+					h.logger.Error("Keycloak default onboarding compensation failed", "user", u.ID, "err", cleanupErr)
+				}
+			}
+			h.nativeOIDCRedirectError(w, r, "onboarding_failed")
+			return
+		}
+	}
+	if created {
 		if h.audit != nil {
 			h.audit.LogAsync(u.ID, audit.ActionUserRegister, u.Username, map[string]any{"oauth_provider": "keycloak", "email": u.Email})
 		}
@@ -389,6 +494,10 @@ func (h *handlers) nativeOIDCCallback(w http.ResponseWriter, r *http.Request) {
 		destination = "/"
 	}
 	http.Redirect(w, r, destination+"#sso_code="+url.QueryEscape(handoff.Code), http.StatusFound)
+}
+
+func shouldBootstrapOIDCDefault(collaborationAssigned bool, user auth.User) bool {
+	return !collaborationAssigned && !user.IsGuest()
 }
 
 type ssoSessionExchangeRequest struct {
@@ -663,11 +772,18 @@ func oidcCookieSecure(r *http.Request, manager *oidcauth.Manager) bool {
 	}
 	if manager != nil {
 		if cfg, ok := manager.PublicConfig(); ok {
-			callback, err := url.Parse(cfg.RedirectURL)
-			return err == nil && callback.Scheme == "https"
+			return oidcConfigCookieSecure(r, cfg)
 		}
 	}
 	return false
+}
+
+func oidcConfigCookieSecure(r *http.Request, cfg oidcauth.Config) bool {
+	if r.TLS != nil {
+		return true
+	}
+	callback, err := url.Parse(cfg.RedirectURL)
+	return err == nil && callback.Scheme == "https"
 }
 
 // Keep a direct reference so the compiler catches permission renames used by

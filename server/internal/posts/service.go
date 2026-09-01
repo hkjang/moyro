@@ -71,11 +71,43 @@ type SearchResult struct {
 	Page      int              `json:"page"`
 }
 
-type Service struct{ db *store.DB }
+// TransactionalEnqueuer persists post-derived work in the same transaction as
+// the post INSERT. Returning an error aborts both writes, preventing a
+// committed message from silently losing an enabled automation.
+type TransactionalEnqueuer interface {
+	EnqueuePost(context.Context, pgx.Tx, *Post) error
+}
+
+type Service struct {
+	db       *store.DB
+	enqueuer TransactionalEnqueuer
+}
 
 func New(db *store.DB) *Service { return &Service{db: db} }
 
+// SetTransactionalEnqueuer is intended for application composition before
+// the HTTP server starts accepting requests. A nil value preserves the
+// original post path for tests and deployments without workflow automation.
+func (s *Service) SetTransactionalEnqueuer(enqueuer TransactionalEnqueuer) {
+	s.enqueuer = enqueuer
+}
+
 var ErrInvalidRoot = errors.New("post root must be a live root post in the same channel")
+
+// This value and SQL key derivation are deliberately identical to the
+// documents package. Every message-thread content/scope mutation is ordered
+// with conversation-to-document snapshot creation and refresh.
+const sourceThreadLockNamespace int32 = 1297041746 // "MOYR"
+
+func lockSourceThread(ctx context.Context, tx pgx.Tx, threadID string) error {
+	_, err := tx.Exec(ctx, `
+		SELECT pg_advisory_xact_lock(
+			$1::integer,
+			hashtext(COALESCE(current_schema(),'') || ':' || $2::text)
+		)
+	`, sourceThreadLockNamespace, threadID)
+	return err
+}
 
 // allPostColumns lists every column we hydrate into a Post — kept in one
 // place so adding a column only touches this constant and scanRow.
@@ -156,6 +188,13 @@ func (s *Service) create(ctx context.Context, channelID, userID, rootID, message
 		return nil, err
 	}
 	defer tx.Rollback(ctx)
+	canonicalThreadID := rootID
+	if canonicalThreadID == "" {
+		canonicalThreadID = p.ID
+	}
+	if err := lockSourceThread(ctx, tx, canonicalThreadID); err != nil {
+		return nil, err
+	}
 
 	// Validate replies at the persistence boundary so every caller (REST,
 	// scheduled posts, MCP, and integrations) gets the same channel-isolation
@@ -189,6 +228,11 @@ func (s *Service) create(ctx context.Context, channelID, userID, rootID, message
 	`, p.ID, p.ChannelID, p.UserID, p.RootID, p.Message, rawProps, rawFileIDs, now, scheduledID)
 	if err != nil {
 		return nil, err
+	}
+	if s.enqueuer != nil {
+		if err := s.enqueuer.EnqueuePost(ctx, tx, p); err != nil {
+			return nil, fmt.Errorf("enqueue post automation: %w", err)
+		}
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return nil, err
@@ -385,11 +429,34 @@ func (s *Service) ListForChannelPaged(ctx context.Context, channelID string, opt
 
 func (s *Service) Delete(ctx context.Context, postID, userID string) (bool, error) {
 	now := time.Now().UnixMilli()
-	tag, err := s.db.Pool.Exec(ctx, `
+	tx, err := s.db.Pool.Begin(ctx)
+	if err != nil {
+		return false, err
+	}
+	defer tx.Rollback(ctx)
+	var threadID string
+	err = tx.QueryRow(ctx, `
+		SELECT CASE WHEN COALESCE(root_id,'')='' THEN id ELSE root_id END
+		FROM posts
+		WHERE id=$1 AND user_id=$2 AND delete_at=0
+	`, postID, userID).Scan(&threadID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	if err := lockSourceThread(ctx, tx, threadID); err != nil {
+		return false, err
+	}
+	tag, err := tx.Exec(ctx, `
 		UPDATE posts SET delete_at=$1, update_at=$1
 		WHERE id=$2 AND user_id=$3 AND delete_at=0
 	`, now, postID, userID)
 	if err != nil {
+		return false, err
+	}
+	if err := tx.Commit(ctx); err != nil {
 		return false, err
 	}
 	return tag.RowsAffected() > 0, nil
@@ -578,7 +645,27 @@ func (s *Service) Update(ctx context.Context, postID, userID, message string, pr
 	}
 	rawProps, _ := json.Marshal(props)
 	now := time.Now().UnixMilli()
-	tag, err := s.db.Pool.Exec(ctx, `
+	tx, err := s.db.Pool.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback(ctx)
+	var threadID string
+	err = tx.QueryRow(ctx, `
+		SELECT CASE WHEN COALESCE(root_id,'')='' THEN id ELSE root_id END
+		FROM posts
+		WHERE id=$1 AND user_id=$2 AND delete_at=0
+	`, postID, userID).Scan(&threadID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	if err := lockSourceThread(ctx, tx, threadID); err != nil {
+		return nil, err
+	}
+	tag, err := tx.Exec(ctx, `
 		UPDATE posts SET message=$1, props=$2, update_at=$3
 		WHERE id=$4 AND user_id=$5 AND delete_at=0
 	`, message, rawProps, now, postID, userID)
@@ -588,7 +675,14 @@ func (s *Service) Update(ctx context.Context, postID, userID, message string, pr
 	if tag.RowsAffected() == 0 {
 		return nil, nil
 	}
-	return s.Get(ctx, postID)
+	updated, err := scanPost(tx.QueryRow(ctx, `SELECT `+allPostColumns+` FROM posts WHERE id=$1`, postID))
+	if err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, err
+	}
+	return updated, nil
 }
 
 // ListByIDs hydrates an ordered list of posts from an ID slice. Used by
@@ -601,11 +695,34 @@ func (s *Service) Update(ctx context.Context, postID, userID, message string, pr
 // restoring the root — Mattermost behaves the same way.
 func (s *Service) Restore(ctx context.Context, postID string) (bool, error) {
 	now := time.Now().UnixMilli()
-	tag, err := s.db.Pool.Exec(ctx, `
+	tx, err := s.db.Pool.Begin(ctx)
+	if err != nil {
+		return false, err
+	}
+	defer tx.Rollback(ctx)
+	var threadID string
+	err = tx.QueryRow(ctx, `
+		SELECT CASE WHEN COALESCE(root_id,'')='' THEN id ELSE root_id END
+		FROM posts
+		WHERE id=$1 AND delete_at<>0
+	`, postID).Scan(&threadID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	if err := lockSourceThread(ctx, tx, threadID); err != nil {
+		return false, err
+	}
+	tag, err := tx.Exec(ctx, `
 		UPDATE posts SET delete_at = 0, update_at = $2
 		WHERE id = $1 AND delete_at != 0
 	`, postID, now)
 	if err != nil {
+		return false, err
+	}
+	if err := tx.Commit(ctx); err != nil {
 		return false, err
 	}
 	return tag.RowsAffected() > 0, nil
@@ -624,9 +741,24 @@ func (s *Service) MoveThread(ctx context.Context, postID, destChannelID string) 
 		return 0, err
 	}
 	defer tx.Rollback(ctx)
-	// Move the root + every direct reply (root_id = postID) in one UPDATE
-	// using a CTE so we don't hit the table twice. Reply rows have
-	// root_id = postID; the root has root_id = '' (or NULL — handled by COALESCE).
+	var threadID string
+	err = tx.QueryRow(ctx, `
+		SELECT CASE WHEN COALESCE(root_id,'')='' THEN id ELSE root_id END
+		FROM posts
+		WHERE id=$1 AND delete_at=0
+	`, postID).Scan(&threadID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, err
+	}
+	if err := lockSourceThread(ctx, tx, threadID); err != nil {
+		return 0, err
+	}
+	// Move the canonical root + every direct reply in one UPDATE. Accepting a
+	// reply ID here still moves the complete thread; otherwise the reply could
+	// be split from its root and invalidate channel-scoped authorization.
 	tag, err := tx.Exec(ctx, `
 		UPDATE posts
 		   SET channel_id = $2,
@@ -634,7 +766,7 @@ func (s *Service) MoveThread(ctx context.Context, postID, destChannelID string) 
 		 WHERE (id = $1 OR root_id = $1)
 		   AND channel_id <> $2
 		   AND delete_at = 0
-	`, postID, destChannelID, now)
+	`, threadID, destChannelID, now)
 	if err != nil {
 		return 0, err
 	}

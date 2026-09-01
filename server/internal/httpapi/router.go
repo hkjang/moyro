@@ -15,6 +15,7 @@ import (
 	"github.com/hkjang/moyro/server/internal/application/postcommand"
 	"github.com/hkjang/moyro/server/internal/audit"
 	"github.com/hkjang/moyro/server/internal/auth"
+	"github.com/hkjang/moyro/server/internal/automations"
 	"github.com/hkjang/moyro/server/internal/bookmarks"
 	"github.com/hkjang/moyro/server/internal/bots"
 	"github.com/hkjang/moyro/server/internal/channels"
@@ -60,10 +61,11 @@ import (
 // server. Keeping the construction here means `main.go` doesn't have to
 // duplicate the fs-vs-s3 storage switch or re-instantiate shared services.
 type Backend struct {
-	Router    http.Handler
-	Scheduled *scheduled.Worker
-	Reminders *reminders.Worker
-	Approvals *ApprovalExecutor
+	Router      http.Handler
+	Scheduled   *scheduled.Worker
+	Reminders   *reminders.Worker
+	Approvals   *ApprovalExecutor
+	Automations *automations.Worker
 }
 
 // NewRouter is the legacy entry point — returns just the http.Handler.
@@ -131,6 +133,8 @@ func New(cfg *config.Config, db *store.DB, hub *ws.Hub, host *pluginhost.Host, l
 	scheduledSvc := scheduled.New(db)
 	reminderSvc := reminders.New(db)
 	workItemSvc := workitems.New(db)
+	automationSvc := automations.New(db)
+	postSvc.SetTransactionalEnqueuer(automationSvc)
 	activitySvc := activityevents.New(db)
 	activityEmitter := &realtimeActivityEmitter{next: activitySvc, events: hub}
 	// Phase 21: Mattermost-shaped preferences. Pure DB CRUD; no worker.
@@ -307,14 +311,11 @@ func New(cfg *config.Config, db *store.DB, hub *ws.Hub, host *pluginhost.Host, l
 			return
 		}
 		raw, _ := json.Marshal(st)
-		hub.Broadcast(ws.Event{
-			Event: "status_change",
-			Data: map[string]any{
-				"user_id": st.UserID,
-				"status":  st.Status,
-				"payload": string(raw),
-			},
-		})
+		hub.Broadcast(subjectUserScopedEvent("status_change", st.UserID, map[string]any{
+			"user_id": st.UserID,
+			"status":  st.Status,
+			"payload": string(raw),
+		}))
 	}
 	hub.OnDisconnect = func(userID string) {
 		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
@@ -324,14 +325,11 @@ func New(cfg *config.Config, db *store.DB, hub *ws.Hub, host *pluginhost.Host, l
 			return
 		}
 		raw, _ := json.Marshal(st)
-		hub.Broadcast(ws.Event{
-			Event: "status_change",
-			Data: map[string]any{
-				"user_id": st.UserID,
-				"status":  st.Status,
-				"payload": string(raw),
-			},
-		})
+		hub.Broadcast(subjectUserScopedEvent("status_change", st.UserID, map[string]any{
+			"user_id": st.UserID,
+			"status":  st.Status,
+			"payload": string(raw),
+		}))
 	}
 
 	// Per-user write limiter: 30 req/s sustained, burst 60. Generous for
@@ -450,8 +448,8 @@ func New(cfg *config.Config, db *store.DB, hub *ws.Hub, host *pluginhost.Host, l
 			r.Put("/users/me", h.updateProfile)
 			r.Put("/users/me/password", h.updatePassword)
 			// Profile picture: POST /users/me/image (self-upload only).
-			// GET /users/{userID}/image is readable by any authenticated
-			// user so every peer's avatar renders in message rows.
+			// GET /users/{userID}/image is readable by authenticated peers;
+			// restricted guests are limited to users in shared live channels.
 			r.Post("/users/me/image", h.uploadProfileImage)
 			r.Post("/users/logout", h.logout)
 			// Phase 17: email digest preferences (opt-out toggle).
@@ -1448,6 +1446,21 @@ func New(cfg *config.Config, db *store.DB, hub *ws.Hub, host *pluginhost.Host, l
 				r.Post("/me/work-items", h.createNativeWorkItem)
 				r.Patch("/me/work-items/{workItemID}", h.patchNativeWorkItem)
 				r.Delete("/me/work-items/{workItemID}", h.deleteNativeWorkItem)
+				r.Get("/me/work-items/{workItemID}/events", h.listNativeWorkItemEvents)
+				r.Post("/me/work-items/{workItemID}/dependencies/{dependencyID}", h.addNativeWorkItemDependency)
+				r.Delete("/me/work-items/{workItemID}/dependencies/{dependencyID}", h.removeNativeWorkItemDependency)
+				r.Post("/me/work-items/{workItemID}/impacts/{taskID}", h.addNativeWorkItemImpact)
+				r.Delete("/me/work-items/{workItemID}/impacts/{taskID}", h.removeNativeWorkItemImpact)
+				mountNativeAutomationRoutes(r, h, automationSvc)
+				r.Post("/me/knowledge/search", h.searchNativeKnowledge)
+				r.Get("/me/documents", h.listNativeDocuments)
+				r.Post("/me/documents", h.createNativeDocument)
+				r.Get("/me/documents/{documentID}", h.getNativeDocument)
+				r.Patch("/me/documents/{documentID}", h.patchNativeDocument)
+				r.Delete("/me/documents/{documentID}", h.deleteNativeDocument)
+				r.Get("/me/document-sources/{postID}", h.getNativeDocumentSource)
+				r.Get("/me/inbox-preferences", h.getNativeInboxPreferences)
+				r.Patch("/me/inbox-preferences", h.patchNativeInboxPreferences)
 				r.Get("/me/activity-events", h.listNativeActivityEvents)
 				r.Patch("/me/activity-events/{eventID}", h.patchNativeActivityEvent)
 				r.Post("/me/activity-events/mark-read", h.markNativeActivityEventsRead)
@@ -1472,6 +1485,7 @@ func New(cfg *config.Config, db *store.DB, hub *ws.Hub, host *pluginhost.Host, l
 				r.With(h.nativeRequire("manage_oidc")).Post("/admin/oidc/providers", h.saveNativeOIDCProvider)
 				r.With(h.nativeRequire("manage_oidc")).Patch("/admin/oidc/providers/{providerID}", h.saveNativeOIDCProvider)
 				r.With(h.nativeRequire("manage_oidc")).Post("/admin/oidc/providers/test", h.testNativeOIDCProvider)
+				r.With(h.nativeRequire("manage_oidc")).Get("/admin/oidc/onboarding-targets", h.listNativeOIDCOnboardingTargets)
 				r.With(h.nativeRequire("manage_ai")).Get("/admin/ai/providers", h.listNativeAIProviders)
 				r.With(h.nativeRequire("manage_ai")).Post("/admin/ai/providers", h.saveNativeAIProvider)
 				r.With(h.nativeRequire("manage_ai")).Patch("/admin/ai/providers/{providerID}", h.saveNativeAIProvider)
@@ -1507,8 +1521,12 @@ func New(cfg *config.Config, db *store.DB, hub *ws.Hub, host *pluginhost.Host, l
 	scheduledWorker := scheduled.NewWorker(scheduledSvc, postSvc, postCommandSvc, fileSvc, hub, logger)
 	remindersWorker := reminders.NewWorker(reminderSvc, postSvc, hub, logger)
 	remindersWorker.SetActivityEmitter(activityEmitter)
+	automationWorker := automations.NewWorker(automationSvc, postSvc, workItemSvc, hub, logger)
 
-	return &Backend{Router: r, Scheduled: scheduledWorker, Reminders: remindersWorker, Approvals: newApprovalExecutor(h.native, logger)}
+	return &Backend{
+		Router: r, Scheduled: scheduledWorker, Reminders: remindersWorker,
+		Approvals: newApprovalExecutor(h.native, logger), Automations: automationWorker,
+	}
 }
 
 func requestLog(logger *slog.Logger) func(http.Handler) http.Handler {

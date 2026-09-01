@@ -8,6 +8,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"math/big"
 	"net/http"
 	"net/http/httptest"
@@ -18,6 +19,7 @@ import (
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
+	"golang.org/x/oauth2"
 )
 
 var testJWKS = map[string]any{"keys": []map[string]any{{
@@ -530,6 +532,190 @@ func TestExchangeValidatesAuthorizedPartyAndAccessTokenHash(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestExchangeForRemainsBoundToAuthorizationSnapshotAcrossActivation(t *testing.T) {
+	manager := exchangeTestManager(t, map[string]any{"aud": "moyro"})
+	manager.mu.RLock()
+	firstActivatedAt := manager.current.activated
+	manager.mu.RUnlock()
+	clock := firstActivatedAt.Add(20 * time.Minute)
+	manager.now = func() time.Time { return clock }
+	// Model a flow captured after A has already been current for longer than
+	// the retention interval. Its validity begins when A is retired, not when A
+	// was originally activated.
+	original, ok := manager.CurrentSnapshot()
+	if !ok || original.ID == "" {
+		t.Fatal("original provider snapshot is unavailable")
+	}
+	if _, err := manager.AuthCodeURLFor(original.ID, "state", "nonce", "verifier"); err != nil {
+		t.Fatalf("create flow against long-running current snapshot: %v", err)
+	}
+
+	var replacementServer *httptest.Server
+	replacementServer = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case discoveryDocumentSuffix:
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"issuer": replacementServer.URL, "authorization_endpoint": replacementServer.URL + "/auth",
+				"token_endpoint": replacementServer.URL + "/token", "jwks_uri": replacementServer.URL + "/certs",
+				"id_token_signing_alg_values_supported": []string{"RS256"},
+			})
+		case "/certs":
+			_ = json.NewEncoder(w).Encode(testJWKS)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer replacementServer.Close()
+	prepared, err := manager.Prepare(context.Background(), Config{
+		Enabled: true, IssuerURL: replacementServer.URL, ClientID: "replacement-client", ClientSecret: "secret",
+		RedirectURL: "https://moyro.example/callback", RequireVerifiedEmail: true,
+	})
+	if err != nil {
+		t.Fatalf("prepare replacement provider: %v", err)
+	}
+	if err := manager.Activate(prepared); err != nil {
+		t.Fatalf("activate replacement provider: %v", err)
+	}
+	current, ok := manager.CurrentSnapshot()
+	if !ok || current.ID == original.ID || current.Config.IssuerURL != replacementServer.URL {
+		t.Fatalf("current snapshot = %#v", current)
+	}
+
+	result, err := manager.ExchangeFor(context.Background(), original.ID, "code", "verifier", "expected-nonce")
+	if err != nil {
+		t.Fatalf("exchange against retained snapshot: %v", err)
+	}
+	if result.SnapshotID != original.ID || result.Config.IssuerURL != original.Config.IssuerURL || result.Identity.Subject != "subject-1" {
+		t.Fatalf("exchange result crossed provider snapshots: %#v", result)
+	}
+	manager.mu.RLock()
+	originalRetiredAt := manager.snapshots[original.ID].retiredAt
+	manager.mu.RUnlock()
+	if !originalRetiredAt.Equal(clock) {
+		t.Fatalf("original retired_at = %v, want replacement time %v", originalRetiredAt, clock)
+	}
+	clock = originalRetiredAt.Add(snapshotRetention - time.Millisecond)
+	if _, err := manager.loadSnapshot(original.ID); err != nil {
+		t.Fatalf("snapshot expired before retirement retention elapsed: %v", err)
+	}
+	clock = originalRetiredAt.Add(snapshotRetention)
+	if _, err := manager.loadSnapshot(original.ID); !errors.Is(err, ErrInvalidFlow) {
+		t.Fatalf("expired retained snapshot error = %v, want ErrInvalidFlow", err)
+	}
+	manager.mu.RLock()
+	_, retained := manager.snapshots[original.ID]
+	manager.mu.RUnlock()
+	if retained {
+		t.Fatal("expired non-current snapshot and client secret remained retained")
+	}
+}
+
+func TestActivationCapacityNeverEvictsUnexpiredFlows(t *testing.T) {
+	clock := time.Unix(1_700_000_000, 0)
+	manager := NewManager(nil)
+	manager.now = func() time.Time { return clock }
+
+	ids := make([]string, 0, maxRetainedSnapshots)
+	for index := 0; index < maxRetainedSnapshots; index++ {
+		id := fmt.Sprintf("snapshot-%02d", index)
+		ids = append(ids, id)
+		prepared := preparedSnapshotForRetentionTest(manager, id, fmt.Sprintf("secret-%02d", index))
+		if err := manager.CheckActivationCapacity(prepared); err != nil {
+			t.Fatalf("capacity preflight %d: %v", index, err)
+		}
+		if err := manager.Activate(prepared); err != nil {
+			t.Fatalf("activate %d: %v", index, err)
+		}
+		clock = clock.Add(time.Second)
+	}
+
+	manager.mu.RLock()
+	oldest := manager.snapshots[ids[0]]
+	currentID := manager.current.id
+	count := len(manager.snapshots)
+	manager.mu.RUnlock()
+	if count != maxRetainedSnapshots || oldest == nil || oldest.config.ClientSecret != "secret-00" {
+		t.Fatalf("retained snapshots = %d, oldest=%#v", count, oldest)
+	}
+
+	blocked := preparedSnapshotForRetentionTest(manager, "snapshot-blocked", "secret-blocked")
+	if err := manager.CheckActivationCapacity(blocked); !errors.Is(err, ErrSnapshotCapacity) {
+		t.Fatalf("capacity preflight error = %v, want ErrSnapshotCapacity", err)
+	}
+	if err := manager.Activate(blocked); !errors.Is(err, ErrSnapshotCapacity) {
+		t.Fatalf("capacity activation error = %v, want ErrSnapshotCapacity", err)
+	}
+	manager.mu.RLock()
+	_, oldestRetained := manager.snapshots[ids[0]]
+	_, blockedPublished := manager.snapshots["snapshot-blocked"]
+	unchangedCurrentID := manager.current.id
+	unchangedCount := len(manager.snapshots)
+	manager.mu.RUnlock()
+	if !oldestRetained || blockedPublished || unchangedCurrentID != currentID || unchangedCount != maxRetainedSnapshots {
+		t.Fatalf("capacity rejection mutated live snapshots: oldest=%v blocked=%v current=%q count=%d", oldestRetained, blockedPublished, unchangedCurrentID, unchangedCount)
+	}
+
+	clock = oldest.retiredAt.Add(snapshotRetention)
+	if err := manager.CheckActivationCapacity(blocked); err != nil {
+		t.Fatalf("capacity did not recover after oldest retirement expired: %v", err)
+	}
+	if err := manager.Activate(blocked); err != nil {
+		t.Fatalf("activate after retention expiry: %v", err)
+	}
+	manager.mu.RLock()
+	_, oldestRetained = manager.snapshots[ids[0]]
+	_, blockedPublished = manager.snapshots["snapshot-blocked"]
+	count = len(manager.snapshots)
+	manager.mu.RUnlock()
+	if oldestRetained || !blockedPublished || count > maxRetainedSnapshots {
+		t.Fatalf("expired secret cleanup/publish = oldest:%v blocked:%v count:%d", oldestRetained, blockedPublished, count)
+	}
+}
+
+func TestCurrentSnapshotRedactsSecretAndDisableDropsRetainedSnapshots(t *testing.T) {
+	manager := NewManager(nil)
+	first := preparedSnapshotForRetentionTest(manager, "first", "first-secret")
+	second := preparedSnapshotForRetentionTest(manager, "second", "second-secret")
+	if err := manager.Activate(first); err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.Activate(second); err != nil {
+		t.Fatal(err)
+	}
+	binding, ok := manager.CurrentSnapshot()
+	if !ok || binding.ID != "second" || binding.Config.ClientSecret != "" {
+		t.Fatalf("public current snapshot leaked secret or identity: %#v", binding)
+	}
+	manager.Disable()
+	if manager.Enabled() {
+		t.Fatal("manager remained enabled after Disable")
+	}
+	if _, ok := manager.CurrentSnapshot(); ok {
+		t.Fatal("disabled manager returned a current snapshot")
+	}
+	manager.mu.RLock()
+	current := manager.current
+	snapshots := manager.snapshots
+	manager.mu.RUnlock()
+	if current != nil || snapshots != nil {
+		t.Fatalf("Disable retained snapshot/secret references: current=%v snapshots=%v", current != nil, snapshots != nil)
+	}
+	if _, err := manager.loadSnapshot("first"); !errors.Is(err, ErrInvalidFlow) {
+		t.Fatalf("disabled retained snapshot lookup error = %v, want ErrInvalidFlow", err)
+	}
+}
+
+func preparedSnapshotForRetentionTest(manager *Manager, id, secret string) *Prepared {
+	return &Prepared{owner: manager, next: &snapshot{
+		id: id,
+		config: Config{
+			Enabled: true, IssuerURL: "https://issuer.example/" + id,
+			ClientID: "client-" + id, ClientSecret: secret,
+		},
+		oauth2: oauth2.Config{ClientSecret: secret},
+	}}
 }
 
 func exchangeTestManager(t *testing.T, extraClaims map[string]any) *Manager {

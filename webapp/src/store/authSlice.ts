@@ -10,6 +10,8 @@ export type AuthUser = {
   username: string;
   email: string;
   roles?: string;
+  guest_expires_at?: number;
+  guest_file_download?: boolean;
   picture?: string;
   update_at?: number;
 };

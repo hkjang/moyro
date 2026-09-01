@@ -404,6 +404,10 @@ const resolveTokenSQL = `
 		SELECT pat.id, pat.user_id, pat.revoked_at
 		FROM personal_access_tokens AS pat
 		JOIN users AS u ON u.id = pat.user_id AND u.delete_at = 0
+		  AND (
+			u.roles !~ '(^|[[:space:]])system_guest([[:space:]]|$)'
+			OR u.guest_expires_at > (EXTRACT(EPOCH FROM clock_timestamp()) * 1000)::BIGINT
+		  )
 		WHERE pat.token_hash = $1
 `
 

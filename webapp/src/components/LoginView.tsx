@@ -6,6 +6,12 @@ import { displayVersion, useSystemInfo } from "@/features/system/SystemInfoConte
 import { BrandMark } from "@/components/brand/BrandMark";
 
 type Mode = "login" | "register";
+type CollaborationInvitePreview = InvitePreview & {
+  kind?: "member" | "guest";
+  channel_ids?: string[];
+  guest_expires_after_seconds?: number;
+  guest_file_download?: boolean;
+};
 
 // Messages for the handful of server-side OAuth failures the callback
 // surfaces via #oauth_error=... Everything else falls back to "login error".
@@ -17,6 +23,7 @@ const OAUTH_ERROR_MESSAGES: Record<string, string> = {
   session_failed: "SSO 로그인 세션을 완료하지 못했습니다. 다시 로그인해 주세요.",
   sso_restart_required: "로그인 세션을 완료할 수 없습니다. 아래 버튼으로 SSO 로그인을 새로 시작해 주세요.",
   resolve_failed: "계정을 처리하지 못했습니다. 관리자에게 문의해 주세요.",
+  onboarding_failed: "SSO 그룹 기반 팀·채널 권한을 안전하게 적용하지 못했습니다. 관리자에게 문의한 뒤 다시 시도해 주세요.",
   unverified_email:
     "이메일이 확인되지 않아 기존 계정과 자동 연결할 수 없습니다. 기존 비밀번호로 먼저 로그인해 주세요.",
 };
@@ -63,7 +70,7 @@ export function LoginView() {
   // team attached. `inviteId` is retained on failure so we can round-trip
   // the value to the backend if the admin re-activates the invite mid-flow,
   // but UI-wise we don't show the banner unless we have a preview.
-  const [invite, setInvite] = useState<InvitePreview | null>(null);
+  const [invite, setInvite] = useState<CollaborationInvitePreview | null>(null);
   const [inviteId, setInviteId] = useState("");
   const [inviteError, setInviteError] = useState<string | null>(null);
   const devAutoLoginStartedRef = useRef(false);
@@ -249,7 +256,9 @@ export function LoginView() {
           <div className="invite-banner" role="status">
             <strong>{invite.team_display_name}</strong> 팀에 초대되었습니다.
             <br />
-            계정을 만들면 자동으로 팀에 합류합니다.
+            {invite.kind === "guest"
+              ? `외부 게스트로 허용 채널 ${invite.channel_ids?.length ?? 0}개에만 가입합니다${invite.guest_file_download === false ? ". 원본 파일 다운로드는 제한됩니다." : "."}`
+              : "계정을 만들면 자동으로 팀에 합류합니다."}
           </div>
         )}
         {!invite && inviteError && (

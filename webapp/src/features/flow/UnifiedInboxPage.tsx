@@ -4,7 +4,7 @@ import DoneAllRounded from "@mui/icons-material/DoneAllRounded";
 import MarkEmailReadOutlined from "@mui/icons-material/MarkEmailReadOutlined";
 import RefreshRounded from "@mui/icons-material/RefreshRounded";
 import ScheduleRounded from "@mui/icons-material/ScheduleRounded";
-import { Alert, Button, Chip, Typography } from "@mui/material";
+import { Alert, Button, Chip, MenuItem, TextField, Typography } from "@mui/material";
 import { useEffect, useMemo, useState } from "react";
 import { useSelector } from "react-redux";
 import { useNavigate, useParams } from "react-router-dom";
@@ -24,6 +24,12 @@ import {
   type ActivityEventType,
   type ActivityStatePatch,
 } from "@/api/activity";
+import {
+  DEFAULT_INBOX_PREFERENCES,
+  arrangeActivities,
+  inboxPreferencesApi,
+  type InboxPreferences,
+} from "@/api/inbox-preferences";
 import type { RootState } from "@/store";
 import {
   FlowEmpty,
@@ -122,6 +128,7 @@ export function UnifiedInboxPage() {
   const [feedback, setFeedback] = useState("");
   const [actionError, setActionError] = useState("");
   const [revision, setRevision] = useState(0);
+  const [inboxPreferences, setInboxPreferences] = useState<InboxPreferences>(DEFAULT_INBOX_PREFERENCES);
 
   useEffect(() => {
     if (params.tab !== undefined && !validTab(params.tab)) {
@@ -204,6 +211,16 @@ export function UnifiedInboxPage() {
   }, [revision, token, workspace.activityRevision]);
 
   useEffect(() => {
+    if (!token) {
+      setInboxPreferences(DEFAULT_INBOX_PREFERENCES);
+      return undefined;
+    }
+    const controller = new AbortController();
+    void inboxPreferencesApi.get(token, controller.signal).then(setInboxPreferences).catch(() => undefined);
+    return () => controller.abort();
+  }, [token]);
+
+  useEffect(() => {
     const current = Date.now();
     setActivityNow(current);
     const nextWakeAt = activityPage.events
@@ -237,6 +254,7 @@ export function UnifiedInboxPage() {
     if (!showSnoozed && event.completed_at === 0 && event.snoozed_until > activityNow) return false;
     return true;
   });
+  const arrangedActivityEvents = arrangeActivities(visibleActivityEvents, inboxPreferences);
   const unreadActivityIDs = visibleActivityEvents
     .filter((event) => event.read_at === 0 && event.completed_at === 0)
     .map((event) => event.id);
@@ -416,21 +434,28 @@ export function UnifiedInboxPage() {
               />
             ) : (
               <div className="flow-list" aria-live="polite">
-                {visibleActivityEvents.map((event) => {
+                {arrangedActivityEvents.map(({ event, priority, startsBundle, bundleKey }) => {
                   const entry = event.channel_id ? workspace.channelById[event.channel_id] : undefined;
                   const source = activitySource(event, Boolean(entry));
                   const busy = activityActionIds.has(event.id);
                   const completed = event.completed_at > 0;
                   const snoozed = !completed && event.snoozed_until > activityNow;
+                  const bundleLabel = bundleKey.startsWith("channel:")
+                    ? (event.channel_id ? workspace.channelById[event.channel_id]?.channel.display_name ?? "채널" : "채널 없는 업데이트")
+                    : ACTIVITY_TYPE_LABELS[event.type];
                   return (
+                    <div key={event.id}>
+                      {startsBundle && inboxPreferences.bundle_by !== "none" && (
+                        <Typography variant="overline" color="text.secondary">{bundleLabel} 묶음</Typography>
+                      )}
                     <article
                       className={`flow-list-row flow-activity-row ${event.read_at === 0 ? "flow-activity-unread" : ""}`.trim()}
-                      key={event.id}
                     >
                       <div className="flow-list-main">
                         <div className="flow-badges">
                           <FlowStatusBadge label={ACTIVITY_TYPE_LABELS[event.type]} tone={activityTone(event.type)} />
                           {event.read_at === 0 && <Chip size="small" label="새 항목" color="primary" />}
+                          {priority && <Chip size="small" label="우선순위" color="warning" />}
                           {completed && <FlowStatusBadge label="완료" tone="success" />}
                           {snoozed && <Chip size="small" variant="outlined" label={`${formatDateTime(event.snoozed_until)}까지 미룸`} />}
                         </div>
@@ -451,19 +476,55 @@ export function UnifiedInboxPage() {
                         >
                           {event.read_at === 0 ? "읽음" : "읽지 않음"}
                         </Button>
-                        {!completed && (
+                        {!completed && snoozed && (
                           <Button
                             variant="outlined"
                             startIcon={<ScheduleRounded />}
                             disabled={busy}
                             onClick={() => void patchActivity(
                               event,
-                              { snoozed_until: snoozed ? 0 : Date.now() + 60 * 60 * 1_000 },
-                              snoozed ? "업데이트를 다시 표시했습니다." : "1시간 뒤에 다시 표시합니다.",
+                              { snoozed_until: 0 },
+                              "업데이트를 다시 표시했습니다.",
                             )}
                           >
-                            {snoozed ? "지금 보기" : "1시간 미루기"}
+                            지금 보기
                           </Button>
+                        )}
+                        {!completed && !snoozed && (
+                          <>
+                            <Button
+                              variant="outlined"
+                              startIcon={<ScheduleRounded />}
+                              disabled={busy}
+                              onClick={() => {
+                                const minutes = inboxPreferences.snooze_presets_minutes[0] ?? 60;
+                                void patchActivity(event, { snoozed_until: Date.now() + minutes * 60_000 }, `${minutes}분 뒤에 다시 표시합니다.`);
+                              }}
+                            >
+                              {(() => {
+                                const minutes = inboxPreferences.snooze_presets_minutes[0] ?? 60;
+                                return minutes >= 1440 && minutes % 1440 === 0 ? `${minutes / 1440}일 미루기` : minutes >= 60 && minutes % 60 === 0 ? `${minutes / 60}시간 미루기` : `${minutes}분 미루기`;
+                              })()}
+                            </Button>
+                            {inboxPreferences.snooze_presets_minutes.length > 1 && (
+                              <TextField
+                                select
+                                size="small"
+                                label="다른 시간"
+                                value=""
+                                disabled={busy}
+                                onChange={(selectEvent) => {
+                                  const minutes = Number(selectEvent.target.value);
+                                  void patchActivity(event, { snoozed_until: Date.now() + minutes * 60_000 }, `${minutes}분 뒤에 다시 표시합니다.`);
+                                }}
+                                sx={{ minWidth: 120 }}
+                              >
+                                {inboxPreferences.snooze_presets_minutes.slice(1).map((minutes) => (
+                                  <MenuItem key={minutes} value={minutes}>{minutes >= 1440 && minutes % 1440 === 0 ? `${minutes / 1440}일` : minutes >= 60 && minutes % 60 === 0 ? `${minutes / 60}시간` : `${minutes}분`}</MenuItem>
+                                ))}
+                              </TextField>
+                            )}
+                          </>
                         )}
                         <Button
                           variant={completed ? "outlined" : "contained"}
@@ -481,6 +542,7 @@ export function UnifiedInboxPage() {
                         </Button>
                       </div>
                     </article>
+                    </div>
                   );
                 })}
                 {activityPage.next_cursor && (

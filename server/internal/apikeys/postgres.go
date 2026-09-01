@@ -37,7 +37,14 @@ func (r *PostgresRepository) Create(ctx context.Context, key Key, digest []byte)
 }
 
 func (r *PostgresRepository) GetForOwner(ctx context.Context, keyID, ownerID string) (Key, error) {
-	key, err := scanKey(r.pool.QueryRow(ctx, keyQuery+` WHERE k.id=$1 AND k.owner_user_id=$2 GROUP BY k.id`, keyID, ownerID))
+	key, err := scanKey(r.pool.QueryRow(ctx, keyQuery+`
+		JOIN users u ON u.id=k.owner_user_id AND u.delete_at=0
+		  AND (
+			u.roles !~ '(^|[[:space:]])system_guest([[:space:]]|$)'
+			OR u.guest_expires_at > (EXTRACT(EPOCH FROM clock_timestamp()) * 1000)::BIGINT
+		  )
+		WHERE k.id=$1 AND k.owner_user_id=$2 GROUP BY k.id
+	`, keyID, ownerID))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Key{}, ErrNotFound
 	}
@@ -64,6 +71,10 @@ func (r *PostgresRepository) ListForOwner(ctx context.Context, ownerID string) (
 func (r *PostgresRepository) ResolveByDigest(ctx context.Context, digest []byte) (Key, error) {
 	key, err := scanKey(r.pool.QueryRow(ctx, keyQuery+`
 		JOIN users u ON u.id=k.owner_user_id AND u.delete_at=0
+		  AND (
+			u.roles !~ '(^|[[:space:]])system_guest([[:space:]]|$)'
+			OR u.guest_expires_at > (EXTRACT(EPOCH FROM clock_timestamp()) * 1000)::BIGINT
+		  )
 		WHERE k.secret_hash=$1 GROUP BY k.id
 	`, digest))
 	if errors.Is(err, pgx.ErrNoRows) {

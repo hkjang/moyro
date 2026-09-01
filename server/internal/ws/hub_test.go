@@ -70,6 +70,102 @@ func TestFanoutFailsClosedForScopedEvent(t *testing.T) {
 	}
 }
 
+func TestFanoutFiltersSubjectUserEventsByAudience(t *testing.T) {
+	h := NewHub()
+	regular := testClient("regular", 1)
+	sharedGuest := testClient("shared-guest", 1)
+	unsharedGuest := testClient("unshared-guest", 1)
+	attachTestClient(h, regular)
+	attachTestClient(h, sharedGuest)
+	attachTestClient(h, unsharedGuest)
+	h.SetAudienceResolver(func(_ context.Context, scope Broadcast) (map[string]struct{}, error) {
+		if scope.SubjectUserID != "subject" {
+			t.Fatalf("subject scope = %#v", scope)
+		}
+		return map[string]struct{}{"regular": {}, "shared-guest": {}}, nil
+	})
+
+	h.fanout(context.Background(), Event{
+		Event:     "status_change",
+		Data:      map[string]any{"user_id": "subject"},
+		Broadcast: Broadcast{SubjectUserID: "subject"},
+	}, []byte("presence"))
+
+	for _, client := range []*Client{regular, sharedGuest} {
+		select {
+		case got := <-client.Send:
+			if string(got) != "presence" {
+				t.Fatalf("payload = %q", got)
+			}
+		default:
+			t.Fatalf("allowed user %q did not receive subject event", client.UserID)
+		}
+	}
+	select {
+	case <-unsharedGuest.Send:
+		t.Fatal("unshared guest received subject event")
+	default:
+	}
+}
+
+func TestFanoutFailsClosedForSubjectUserEvent(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		resolver AudienceResolver
+	}{
+		{name: "missing resolver"},
+		{name: "nil audience", resolver: func(context.Context, Broadcast) (map[string]struct{}, error) {
+			return nil, nil
+		}},
+		{name: "resolver error", resolver: func(context.Context, Broadcast) (map[string]struct{}, error) {
+			return nil, errors.New("database unavailable")
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := NewHub()
+			client := testClient("regular", 1)
+			attachTestClient(h, client)
+			if tc.resolver != nil {
+				h.SetAudienceResolver(tc.resolver)
+			}
+
+			h.fanout(context.Background(), Event{
+				Event: "status_change", Data: map[string]any{"user_id": "subject"},
+				Broadcast: Broadcast{SubjectUserID: "subject"},
+			}, []byte("event"))
+			select {
+			case <-client.Send:
+				t.Fatal("subject event was delivered without a valid audience")
+			default:
+			}
+		})
+	}
+}
+
+func TestFanoutRejectsSensitiveEventWithoutMatchingSubjectScope(t *testing.T) {
+	h := NewHub()
+	client := testClient("regular", 2)
+	attachTestClient(h, client)
+	h.SetAudienceResolver(func(context.Context, Broadcast) (map[string]struct{}, error) {
+		return map[string]struct{}{"regular": {}}, nil
+	})
+
+	for _, event := range []Event{
+		{Event: "status_change", Data: map[string]any{"user_id": "subject"}},
+		{
+			Event: "custom_status_changed", Data: map[string]any{"user_id": "different-subject"},
+			Broadcast: Broadcast{SubjectUserID: "subject"},
+		},
+	} {
+		h.fanout(context.Background(), event, []byte("sensitive"))
+	}
+	select {
+	case got := <-client.Send:
+		t.Fatalf("invalid sensitive event was delivered: %q", got)
+	default:
+	}
+}
+
 func TestFanoutKeepsUserTargetedAndGlobalSemantics(t *testing.T) {
 	h := NewHub()
 	first := testClient("first", 2)

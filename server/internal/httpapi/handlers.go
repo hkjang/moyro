@@ -135,12 +135,25 @@ func channelScopedEvent(event, channelID string, data map[string]any) ws.Event {
 	return ws.Event{Event: event, Data: data, Broadcast: ws.Broadcast{ChannelID: channelID}}
 }
 
+// subjectUserScopedEvent protects presence/profile payloads. Regular active
+// users retain the product-wide directory experience; restricted guests only
+// receive subjects visible through a shared live channel.
+func subjectUserScopedEvent(event, subjectUserID string, data map[string]any) ws.Event {
+	return ws.Event{Event: event, Data: data, Broadcast: ws.Broadcast{SubjectUserID: subjectUserID}}
+}
+
 func (h *handlers) requireAuth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Short-circuit if an upstream middleware (e.g. PAT) already set the
-		// user id — re-parsing a PAT as a JWT would hard-fail and swallow
-		// the successful bot auth.
+		// user id — re-parsing a PAT as a JWT would hard-fail. The owning
+		// account is still reloaded here so guest expiry/deactivation applies
+		// equally to JWT, PAT, and managed-credential principals.
 		if v, _ := r.Context().Value(userIDKey).(string); v != "" {
+			u, err := h.auth.UserByID(r.Context(), v)
+			if err != nil || !u.GuestAccessValid(time.Now()) {
+				writeError(w, http.StatusUnauthorized, "api.context.session_expired.app_error", "invalid credential owner")
+				return
+			}
 			next.ServeHTTP(w, r.WithContext(ensureUserPrincipal(r.Context(), v)))
 			return
 		}
@@ -526,7 +539,14 @@ func (h *handlers) listUsers(w http.ResponseWriter, r *http.Request) {
 		list []auth.User
 		err  error
 	)
-	if includeDeleted {
+	actor, actorErr := h.auth.UserByID(r.Context(), userID(r))
+	if actorErr != nil {
+		writeError(w, http.StatusUnauthorized, "api.user.list.session", "active user session required")
+		return
+	}
+	if actor.IsGuest() {
+		list, err = h.auth.ListUsersVisibleToGuest(r.Context(), actor.ID, page, perPage)
+	} else if includeDeleted {
 		list, err = h.auth.ListUsersIncludingDeleted(r.Context(), page, perPage)
 	} else {
 		list, err = h.auth.ListUsers(r.Context(), page, perPage)
@@ -539,7 +559,11 @@ func (h *handlers) listUsers(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *handlers) getUser(w http.ResponseWriter, r *http.Request) {
-	u, err := h.auth.UserByID(r.Context(), chi.URLParam(r, "userID"))
+	targetID := chi.URLParam(r, "userID")
+	if !h.guestMayViewUser(w, r, targetID, "api.user.get.guest_forbidden") {
+		return
+	}
+	u, err := h.auth.UserByID(r.Context(), targetID)
 	if err != nil {
 		writeError(w, 404, "api.user.get.not_found", err.Error())
 		return
@@ -550,7 +574,10 @@ func (h *handlers) getUser(w http.ResponseWriter, r *http.Request) {
 func (h *handlers) getUserByUsername(w http.ResponseWriter, r *http.Request) {
 	u, err := h.auth.UserByUsername(r.Context(), chi.URLParam(r, "username"))
 	if err != nil {
-		writeError(w, 404, "api.user.get.not_found", err.Error())
+		writeError(w, http.StatusNotFound, "api.user.get.not_found", "user not found")
+		return
+	}
+	if !h.guestMayViewNamedUser(w, r, u.ID, "api.user.get.not_found") {
 		return
 	}
 	writeJSON(w, 200, u)
@@ -571,7 +598,18 @@ func (h *handlers) searchUsers(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 400, "api.user.search.empty_term", "term required")
 		return
 	}
-	list, err := h.auth.SearchUsers(r.Context(), req.Term, req.Limit)
+	actor, actorErr := h.auth.UserByID(r.Context(), userID(r))
+	if actorErr != nil {
+		writeError(w, http.StatusUnauthorized, "api.user.search.session", "active user session required")
+		return
+	}
+	var list []auth.User
+	var err error
+	if actor.IsGuest() {
+		list, err = h.auth.SearchUsersVisibleToGuest(r.Context(), actor.ID, req.Term, req.Limit)
+	} else {
+		list, err = h.auth.SearchUsers(r.Context(), req.Term, req.Limit)
+	}
 	if err != nil {
 		writeError(w, 500, "api.user.search.app_error", err.Error())
 		return
@@ -888,6 +926,9 @@ func (h *handlers) getUserImage(w http.ResponseWriter, r *http.Request) {
 	if targetID == "me" {
 		targetID = userID(r)
 	}
+	if !h.guestMayViewNamedUser(w, r, targetID, "api.user.image.not_found") {
+		return
+	}
 	u, err := h.auth.UserByID(r.Context(), targetID)
 	if err != nil {
 		writeError(w, 404, "api.user.image.not_found", "user not found")
@@ -936,6 +977,9 @@ func (h *handlers) getDefaultProfileImage(w http.ResponseWriter, r *http.Request
 	if targetID == "me" {
 		targetID = userID(r)
 	}
+	if !h.guestMayViewNamedUser(w, r, targetID, "api.user.image.default.not_found") {
+		return
+	}
 	u, err := h.auth.UserByID(r.Context(), targetID)
 	if err != nil {
 		writeError(w, 404, "api.user.image.default.not_found", "user not found")
@@ -965,7 +1009,14 @@ func (h *handlers) getDefaultProfileImage(w http.ResponseWriter, r *http.Request
 // ---- User status ----
 
 func (h *handlers) getUserStatus(w http.ResponseWriter, r *http.Request) {
-	st, err := h.status.Get(r.Context(), chi.URLParam(r, "userID"))
+	targetID := chi.URLParam(r, "userID")
+	if targetID == "me" {
+		targetID = userID(r)
+	}
+	if !h.guestMayViewNamedUser(w, r, targetID, "api.user.status.get.not_found") {
+		return
+	}
+	st, err := h.status.Get(r.Context(), targetID)
 	if err != nil {
 		writeError(w, 500, "api.user.status.get.app_error", err.Error())
 		return
@@ -978,6 +1029,26 @@ func (h *handlers) getUserStatusesByIDs(w http.ResponseWriter, r *http.Request) 
 	if err := json.NewDecoder(r.Body).Decode(&ids); err != nil {
 		writeError(w, 400, "api.user.status.ids.invalid_body", err.Error())
 		return
+	}
+	actor, err := h.auth.UserByID(r.Context(), userID(r))
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, "api.user.status.ids.session", "active user session required")
+		return
+	}
+	if actor.IsGuest() {
+		candidates := make([]auth.User, 0, len(ids))
+		for _, id := range ids {
+			candidates = append(candidates, auth.User{ID: id})
+		}
+		visible, err := h.auth.FilterUsersVisibleToGuest(r.Context(), actor.ID, candidates)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "api.user.status.ids.visibility", "guest visibility could not be checked")
+			return
+		}
+		ids = ids[:0]
+		for _, candidate := range visible {
+			ids = append(ids, candidate.ID)
+		}
 	}
 	list, err := h.status.GetMany(r.Context(), ids)
 	if err != nil {
@@ -1027,15 +1098,11 @@ func (h *handlers) writeStatusUpdate(w http.ResponseWriter, r *http.Request, tar
 		return
 	}
 	raw, _ := json.Marshal(st)
-	// Broadcast globally — any client with the user in view wants this.
-	h.hub.Broadcast(ws.Event{
-		Event: "status_change",
-		Data: map[string]any{
-			"user_id": st.UserID,
-			"status":  st.Status,
-			"payload": string(raw),
-		},
-	})
+	h.hub.Broadcast(subjectUserScopedEvent("status_change", st.UserID, map[string]any{
+		"user_id": st.UserID,
+		"status":  st.Status,
+		"payload": string(raw),
+	}))
 	writeJSON(w, 200, st)
 }
 
@@ -1048,6 +1115,9 @@ type createTeamReq struct {
 }
 
 func (h *handlers) createTeam(w http.ResponseWriter, r *http.Request) {
+	if h.denyGuestMutation(w, r, "api.team.create.guest_forbidden") {
+		return
+	}
 	var req createTeamReq
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, 400, "api.team.create.invalid_body", err.Error())
@@ -1079,6 +1149,10 @@ func (h *handlers) listTeams(w http.ResponseWriter, r *http.Request) {
 // canManageTeamInvites is a shared guard: system_admin always passes,
 // team_admin passes for their own team, anyone else gets 403.
 func (h *handlers) canManageTeamInvites(ctx context.Context, actorID, teamID string) bool {
+	actor, err := h.auth.UserByID(ctx, actorID)
+	if err != nil || actor.IsGuest() {
+		return false
+	}
 	if ok, _ := h.auth.HasRole(ctx, actorID, "system_admin"); ok {
 		return true
 	}
@@ -1089,19 +1163,27 @@ func (h *handlers) canManageTeamInvites(ctx context.Context, actorID, teamID str
 }
 
 type createInviteReq struct {
-	MaxUses    int   `json:"max_uses"`    // 0 = unlimited within TTL
-	TTLSeconds int64 `json:"ttl_seconds"` // defaults to 7 days if <= 0
+	MaxUses                  int          `json:"max_uses"`    // 0 = unlimited within TTL
+	TTLSeconds               int64        `json:"ttl_seconds"` // defaults to 7 days if <= 0
+	Kind                     invites.Kind `json:"kind"`
+	ChannelIDs               []string     `json:"channel_ids"`
+	GuestExpiresAfterSeconds int64        `json:"guest_expires_after_seconds"`
+	GuestFileDownload        bool         `json:"guest_file_download"`
 }
 
 type inviteView struct {
-	ID        string `json:"id"`
-	TeamID    string `json:"team_id"`
-	CreatedBy string `json:"created_by"`
-	MaxUses   int    `json:"max_uses"`
-	UseCount  int    `json:"use_count"`
-	ExpiresAt int64  `json:"expires_at"`
-	CreateAt  int64  `json:"create_at"`
-	URL       string `json:"url"`
+	ID                       string       `json:"id"`
+	TeamID                   string       `json:"team_id"`
+	CreatedBy                string       `json:"created_by"`
+	MaxUses                  int          `json:"max_uses"`
+	UseCount                 int          `json:"use_count"`
+	ExpiresAt                int64        `json:"expires_at"`
+	CreateAt                 int64        `json:"create_at"`
+	URL                      string       `json:"url"`
+	Kind                     invites.Kind `json:"kind"`
+	ChannelIDs               []string     `json:"channel_ids"`
+	GuestExpiresAfterSeconds int64        `json:"guest_expires_after_seconds"`
+	GuestFileDownload        bool         `json:"guest_file_download"`
 }
 
 // inviteURL builds the shareable URL. PublicBaseURL may be unset during
@@ -1134,8 +1216,21 @@ func (h *handlers) createInvite(w http.ResponseWriter, r *http.Request) {
 	if req.TTLSeconds > 0 {
 		ttl = req.TTLSeconds
 	}
-	inv, err := h.invites.Create(r.Context(), teamID, uid, req.MaxUses, secondsDuration(ttl))
+	kind := req.Kind
+	if kind == "" {
+		kind = invites.KindMember
+	}
+	inv, err := h.invites.CreateWithOptions(r.Context(), teamID, uid, invites.CreateOptions{
+		MaxUses: req.MaxUses, TTL: secondsDuration(ttl), Kind: kind,
+		ChannelIDs:        req.ChannelIDs,
+		GuestAccessTTL:    secondsDuration(req.GuestExpiresAfterSeconds),
+		GuestFileDownload: req.GuestFileDownload,
+	})
 	if err != nil {
+		if errors.Is(err, invites.ErrInvalidScope) {
+			writeError(w, http.StatusBadRequest, "api.invite.create.invalid_scope", err.Error())
+			return
+		}
 		writeError(w, 500, "api.invite.create.save", err.Error())
 		return
 	}
@@ -1150,7 +1245,10 @@ func (h *handlers) createInvite(w http.ResponseWriter, r *http.Request) {
 		ID: inv.ID, TeamID: inv.TeamID, CreatedBy: inv.CreatedBy,
 		MaxUses: inv.MaxUses, UseCount: inv.UseCount,
 		ExpiresAt: inv.ExpiresAt, CreateAt: inv.CreateAt,
-		URL: h.inviteURL(r, inv.ID),
+		URL:  h.inviteURL(r, inv.ID),
+		Kind: inv.Kind, ChannelIDs: inv.ChannelIDs,
+		GuestExpiresAfterSeconds: inv.GuestExpiresAfterSeconds,
+		GuestFileDownload:        inv.GuestFileDownload,
 	})
 }
 
@@ -1176,7 +1274,10 @@ func (h *handlers) listInvites(w http.ResponseWriter, r *http.Request) {
 			ID: inv.ID, TeamID: inv.TeamID, CreatedBy: inv.CreatedBy,
 			MaxUses: inv.MaxUses, UseCount: inv.UseCount,
 			ExpiresAt: inv.ExpiresAt, CreateAt: inv.CreateAt,
-			URL: h.inviteURL(r, inv.ID),
+			URL:  h.inviteURL(r, inv.ID),
+			Kind: inv.Kind, ChannelIDs: inv.ChannelIDs,
+			GuestExpiresAfterSeconds: inv.GuestExpiresAfterSeconds,
+			GuestFileDownload:        inv.GuestFileDownload,
 		})
 	}
 	writeJSON(w, 200, out)
@@ -1226,11 +1327,15 @@ func (h *handlers) getInvite(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, 200, map[string]any{
-		"id":                inv.ID,
-		"team_id":           inv.TeamID,
-		"team_display_name": t.DisplayName,
-		"team_name":         t.Name,
-		"expires_at":        inv.ExpiresAt,
+		"id":                          inv.ID,
+		"team_id":                     inv.TeamID,
+		"team_display_name":           t.DisplayName,
+		"team_name":                   t.Name,
+		"expires_at":                  inv.ExpiresAt,
+		"kind":                        inv.Kind,
+		"channel_ids":                 inv.ChannelIDs,
+		"guest_expires_after_seconds": inv.GuestExpiresAfterSeconds,
+		"guest_file_download":         inv.GuestFileDownload,
 	})
 }
 
@@ -1248,6 +1353,9 @@ type createChannelReq struct {
 }
 
 func (h *handlers) createChannel(w http.ResponseWriter, r *http.Request) {
+	if h.denyGuestMutation(w, r, "api.channel.create.guest_forbidden") {
+		return
+	}
 	var req createChannelReq
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, 400, "api.channel.create.invalid_body", err.Error())
@@ -1355,6 +1463,9 @@ type patchChannelReq struct {
 }
 
 func (h *handlers) patchChannel(w http.ResponseWriter, r *http.Request) {
+	if h.denyGuestMutation(w, r, "api.channel.patch.guest_forbidden") {
+		return
+	}
 	channelID := chi.URLParam(r, "channelID")
 	isMember, err := h.channels.IsMember(r.Context(), channelID, userID(r))
 	if err != nil || !isMember {
@@ -1402,6 +1513,9 @@ func (h *handlers) patchChannel(w http.ResponseWriter, r *http.Request) {
 type directChannelReq []string
 
 func (h *handlers) createDirectChannel(w http.ResponseWriter, r *http.Request) {
+	if h.denyGuestMutation(w, r, "api.channel.direct.guest_forbidden") {
+		return
+	}
 	var req directChannelReq
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, 400, "api.channel.direct.invalid_body", err.Error())
@@ -1822,6 +1936,9 @@ func (h *handlers) unsavePost(w http.ResponseWriter, r *http.Request) {
 // yet joined. Member-gated so outsiders can't enumerate channel names in
 // teams they don't belong to.
 func (h *handlers) discoverChannels(w http.ResponseWriter, r *http.Request) {
+	if h.denyGuestMutation(w, r, "api.channel.discover.guest_forbidden") {
+		return
+	}
 	teamID := chi.URLParam(r, "teamID")
 	uid := userID(r)
 	isMember, err := h.teams.IsMember(r.Context(), teamID, uid)
@@ -1858,6 +1975,9 @@ func (h *handlers) discoverChannels(w http.ResponseWriter, r *http.Request) {
 // for the Phase 18 channel-discovery flow. Private ('P') / direct ('D') /
 // group ('G') channels still require invite via addChannelMember.
 func (h *handlers) selfJoinChannel(w http.ResponseWriter, r *http.Request) {
+	if h.denyGuestMutation(w, r, "api.channel.join.guest_forbidden") {
+		return
+	}
 	channelID := chi.URLParam(r, "channelID")
 	uid := userID(r)
 	ch, err := h.channels.Get(r.Context(), channelID)
@@ -2212,6 +2332,9 @@ type addChannelMemberReq struct {
 }
 
 func (h *handlers) addChannelMember(w http.ResponseWriter, r *http.Request) {
+	if h.denyGuestMutation(w, r, "api.channel.members.add.guest_forbidden") {
+		return
+	}
 	channelID := chi.URLParam(r, "channelID")
 	uid := userID(r)
 	isMember, err := h.channels.IsMember(r.Context(), channelID, uid)
@@ -2252,6 +2375,9 @@ func (h *handlers) removeChannelMember(w http.ResponseWriter, r *http.Request) {
 	channelID := chi.URLParam(r, "channelID")
 	targetUser := chi.URLParam(r, "userID")
 	uid := userID(r)
+	if targetUser != uid && h.denyGuestMutation(w, r, "api.channel.members.remove.guest_forbidden") {
+		return
+	}
 	// Allow self-leave or any member removing another (simple policy for MVP).
 	isMember, err := h.channels.IsMember(r.Context(), channelID, uid)
 	if err != nil || !isMember {
@@ -2537,7 +2663,7 @@ func (h *handlers) downloadFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer rc.Close()
-	if err := h.authorizeFile(r, fi); err != nil {
+	if err := h.authorizeOriginalFile(r, fi); err != nil {
 		writeError(w, 403, "api.file.get.forbidden", err.Error())
 		return
 	}
@@ -2559,7 +2685,7 @@ func (h *handlers) fileLink(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 404, "api.file.link.not_found", err.Error())
 		return
 	}
-	if err := h.authorizeFile(r, fi); err != nil {
+	if err := h.authorizeOriginalFile(r, fi); err != nil {
 		writeError(w, 403, "api.file.link.forbidden", err.Error())
 		return
 	}
@@ -3297,8 +3423,11 @@ func (h *handlers) getEmojiByName(w http.ResponseWriter, r *http.Request) {
 }
 
 // fileThumbnail streams the pre-generated thumbnail or 404s if one hasn't
-// been produced yet (client should fall back to the full-size file).
+// been produced yet. Authenticated file bytes must never be stored by a
+// shared cache because membership and guest access can be revoked at any
+// time.
 func (h *handlers) fileThumbnail(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "private, no-store")
 	rc, fi, err := h.files.OpenThumbnail(r.Context(), chi.URLParam(r, "fileID"))
 	if err != nil {
 		writeError(w, 404, "api.file.thumbnail.not_found", err.Error())
@@ -3310,14 +3439,15 @@ func (h *handlers) fileThumbnail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "image/jpeg")
-	w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
 	w.WriteHeader(200)
 	_, _ = io.Copy(w, rc)
 }
 
 func (h *handlers) filePreview(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "private, no-store")
 	fileID := chi.URLParam(r, "fileID")
 	rc, fi, err := h.files.OpenThumbnail(r.Context(), fileID)
+	thumbnail := err == nil
 	if err != nil {
 		rc, fi, err = h.files.Open(r.Context(), fileID)
 		if err != nil {
@@ -3333,14 +3463,22 @@ func (h *handlers) filePreview(w http.ResponseWriter, r *http.Request) {
 		fi.MimeType = "image/jpeg"
 	}
 	defer rc.Close()
-	if err := h.authorizeFile(r, fi); err != nil {
-		writeError(w, 403, "api.file.preview.forbidden", err.Error())
+	var authorizeErr error
+	if thumbnail {
+		authorizeErr = h.authorizeFile(r, fi)
+	} else {
+		// A preview fallback is byte-for-byte the original image. Apply the
+		// guest download grant here as well so /preview cannot bypass a
+		// guest_file_download=false policy when thumbnail generation failed.
+		authorizeErr = h.authorizeOriginalFile(r, fi)
+	}
+	if authorizeErr != nil {
+		writeError(w, 403, "api.file.preview.forbidden", authorizeErr.Error())
 		return
 	}
 	if fi.MimeType != "" {
 		w.Header().Set("Content-Type", fi.MimeType)
 	}
-	w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
 	w.WriteHeader(200)
 	_, _ = io.Copy(w, rc)
 }
@@ -3656,6 +3794,18 @@ func (h *handlers) autocompleteUsers(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 500, "api.user.autocomplete.app_error", err.Error())
 		return
 	}
+	actor, actorErr := h.auth.UserByID(r.Context(), userID(r))
+	if actorErr != nil {
+		writeError(w, http.StatusUnauthorized, "api.user.autocomplete.session", "active user session required")
+		return
+	}
+	if actor.IsGuest() {
+		list, err = h.auth.FilterUsersVisibleToGuest(r.Context(), actor.ID, list)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "api.user.autocomplete.visibility", err.Error())
+			return
+		}
+	}
 	writeJSON(w, 200, map[string]any{"users": list, "out_of_channel": []any{}})
 }
 
@@ -3675,6 +3825,18 @@ func (h *handlers) usersByIDs(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 500, "api.user.ids.app_error", err.Error())
 		return
 	}
+	actor, actorErr := h.auth.UserByID(r.Context(), userID(r))
+	if actorErr != nil {
+		writeError(w, http.StatusUnauthorized, "api.user.ids.session", "active user session required")
+		return
+	}
+	if actor.IsGuest() {
+		list, err = h.auth.FilterUsersVisibleToGuest(r.Context(), actor.ID, list)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "api.user.ids.visibility", err.Error())
+			return
+		}
+	}
 	writeJSON(w, 200, list)
 }
 
@@ -3693,6 +3855,18 @@ func (h *handlers) usersByUsernames(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 500, "api.user.usernames.app_error", err.Error())
 		return
 	}
+	actor, actorErr := h.auth.UserByID(r.Context(), userID(r))
+	if actorErr != nil {
+		writeError(w, http.StatusUnauthorized, "api.user.usernames.session", "active user session required")
+		return
+	}
+	if actor.IsGuest() {
+		list, err = h.auth.FilterUsersVisibleToGuest(r.Context(), actor.ID, list)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "api.user.usernames.visibility", err.Error())
+			return
+		}
+	}
 	writeJSON(w, 200, list)
 }
 
@@ -3701,7 +3875,10 @@ func (h *handlers) getUserByEmail(w http.ResponseWriter, r *http.Request) {
 	email := chi.URLParam(r, "email")
 	u, err := h.auth.UserByEmail(r.Context(), email)
 	if err != nil {
-		writeError(w, 404, "api.user.get_by_email.not_found", err.Error())
+		writeError(w, http.StatusNotFound, "api.user.get_by_email.not_found", "user not found")
+		return
+	}
+	if !h.guestMayViewNamedUser(w, r, u.ID, "api.user.get_by_email.not_found") {
 		return
 	}
 	writeJSON(w, 200, u)
@@ -3753,6 +3930,9 @@ func (h *handlers) getTeamStats(w http.ResponseWriter, r *http.Request) {
 // listTeamMembers mirrors GET /api/v4/teams/{team_id}/members?page=&per_page=.
 // Paginated; member-gated.
 func (h *handlers) listTeamMembers(w http.ResponseWriter, r *http.Request) {
+	if h.denyGuestEnumeration(w, r, "api.team.members.guest_forbidden") {
+		return
+	}
 	teamID := chi.URLParam(r, "teamID")
 	uid := userID(r)
 	isMember, _ := h.teams.IsMember(r.Context(), teamID, uid)
@@ -3789,6 +3969,9 @@ func (h *handlers) getChannelByName(w http.ResponseWriter, r *http.Request) {
 	uid := userID(r)
 	isMember, _ := h.channels.IsMember(r.Context(), c.ID, uid)
 	if !isMember {
+		if h.denyGuestEnumeration(w, r, "api.channel.get_by_name.guest_forbidden") {
+			return
+		}
 		if c.Type != "O" {
 			writeError(w, 403, "api.channel.get_by_name.forbidden", "not a channel member")
 			return
@@ -3827,6 +4010,9 @@ type channelSearchReq struct {
 }
 
 func (h *handlers) searchChannelsInTeam(w http.ResponseWriter, r *http.Request) {
+	if h.denyGuestEnumeration(w, r, "api.channel.search.guest_forbidden") {
+		return
+	}
 	teamID := chi.URLParam(r, "teamID")
 	uid := userID(r)
 	isMember, _ := h.teams.IsMember(r.Context(), teamID, uid)
@@ -3854,6 +4040,9 @@ func (h *handlers) searchChannelsInTeam(w http.ResponseWriter, r *http.Request) 
 // autocompleteChannelsInTeam mirrors
 // GET /api/v4/teams/{team_id}/channels/autocomplete?name=xxx.
 func (h *handlers) autocompleteChannelsInTeam(w http.ResponseWriter, r *http.Request) {
+	if h.denyGuestEnumeration(w, r, "api.channel.autocomplete.guest_forbidden") {
+		return
+	}
 	teamID := chi.URLParam(r, "teamID")
 	uid := userID(r)
 	isMember, _ := h.teams.IsMember(r.Context(), teamID, uid)
@@ -4225,6 +4414,9 @@ func (h *handlers) putUserNotifyProps(w http.ResponseWriter, r *http.Request) {
 // searchTeams mirrors POST /api/v4/teams/search. Body is `{term, page, per_page}`.
 // Only public teams are returned.
 func (h *handlers) searchTeams(w http.ResponseWriter, r *http.Request) {
+	if h.denyGuestEnumeration(w, r, "api.team.search.guest_forbidden") {
+		return
+	}
 	var req struct {
 		Term    string `json:"term"`
 		Page    int    `json:"page"`
@@ -4473,6 +4665,9 @@ type patchChannelExtendedReq struct {
 }
 
 func (h *handlers) patchChannelExtended(w http.ResponseWriter, r *http.Request) {
+	if h.denyGuestMutation(w, r, "api.channel.patch.guest_forbidden") {
+		return
+	}
 	channelID := chi.URLParam(r, "channelID")
 	isMember, err := h.channels.IsMember(r.Context(), channelID, userID(r))
 	if err != nil || !isMember {
@@ -4543,6 +4738,9 @@ type updateChannelPrivacyReq struct {
 }
 
 func (h *handlers) updateChannelPrivacy(w http.ResponseWriter, r *http.Request) {
+	if h.denyGuestMutation(w, r, "api.channel.privacy.guest_forbidden") {
+		return
+	}
 	channelID := chi.URLParam(r, "channelID")
 	isMember, err := h.channels.IsMember(r.Context(), channelID, userID(r))
 	if err != nil || !isMember {

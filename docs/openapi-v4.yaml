@@ -1,9 +1,9 @@
 openapi: 3.1.0
 info:
   title: moyro MM Compatibility API
-  version: 0.2.5
+  version: 0.2.6
   description: |
-    moyro v0.2.5의 Mattermost v4 호환 API 계약. 필드명과 경로는 Mattermost REST
+    moyro v0.2.6의 Mattermost v4 호환 API 계약. 필드명과 경로는 Mattermost REST
     API v4와 최대한 일치시켜 기존 클라이언트·봇·플러그인의 이식성을 높인다.
     이 문서는 구현된 핵심 workflow를 명세하며 전체 route-shape 목록은
     mattermost-api-compatibility.md에서 별도로 관리한다. Moyro-native 관리·AI·MCP
@@ -31,12 +31,147 @@ components:
         status_code: { type: integer }
     User:
       type: object
-      required: [id, username, email]
+      additionalProperties: false
+      required: [id, username, email, roles, picture, guest_file_download]
       properties:
         id: { type: string, format: uuid }
         username: { type: string }
         email: { type: string, format: email }
         roles: { type: string }
+        picture: { type: string }
+        first_name: { type: string }
+        last_name: { type: string }
+        nickname: { type: string }
+        position: { type: string }
+        guest_expires_at:
+          type: integer
+          format: int64
+          minimum: 1
+          description: 제한 게스트 계정의 Unix 밀리초 만료 시각. 일반 사용자는 생략된다.
+        guest_file_download:
+          type: boolean
+          description: 제한 게스트가 원본 파일 바이트를 다운로드할 수 있는지 여부.
+        delete_at: { type: integer, format: int64, minimum: 1 }
+    RegisterUserRequest:
+      type: object
+      additionalProperties: false
+      required: [username, email, password]
+      properties:
+        username:
+          type: string
+          minLength: 3
+          maxLength: 64
+          description: 공백을 제거하고 소문자로 정규화한 뒤 ASCII 사용자 이름 규칙을 적용한다.
+        email: { type: string, format: email, maxLength: 254 }
+        password:
+          type: string
+          format: password
+          description: UTF-8 기준 12–72바이트여야 한다.
+        invite_id:
+          type: string
+          maxLength: 128
+          description: 선택한 member 또는 restricted guest 초대를 원자적으로 소비한다.
+    InviteKind:
+      type: string
+      enum: [member, guest]
+    CreateTeamInvite:
+      type: object
+      additionalProperties: false
+      properties:
+        max_uses:
+          type: integer
+          maximum: 10000
+          default: 0
+          description: 0 이하 값은 만료 전까지 무제한 사용으로 정규화된다.
+        ttl_seconds:
+          type: integer
+          maximum: 31536000
+          default: 604800
+          description: 0 이하 값은 기본 7일로 정규화된다.
+        kind: { $ref: "#/components/schemas/InviteKind" }
+        channel_ids:
+          type: array
+          maxItems: 100
+          uniqueItems: true
+          items: { type: string, minLength: 1, maxLength: 128 }
+        guest_expires_after_seconds:
+          type: integer
+          format: int64
+          minimum: 0
+          maximum: 31536000
+        guest_file_download: { type: boolean, default: false }
+      allOf:
+        - if:
+            properties:
+              kind: { const: guest }
+            required: [kind]
+          then:
+            required: [channel_ids, guest_expires_after_seconds]
+            properties:
+              channel_ids: { type: array, minItems: 1, maxItems: 100 }
+              guest_expires_after_seconds:
+                type: integer
+                format: int64
+                minimum: 3600
+                maximum: 31536000
+    TeamInvite:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - team_id
+        - created_by
+        - max_uses
+        - use_count
+        - expires_at
+        - create_at
+        - url
+        - kind
+        - channel_ids
+        - guest_expires_after_seconds
+        - guest_file_download
+      properties:
+        id: { type: string }
+        team_id: { type: string }
+        created_by: { type: string }
+        max_uses: { type: integer, minimum: 0, maximum: 10000 }
+        use_count: { type: integer, minimum: 0 }
+        expires_at: { type: integer, format: int64, minimum: 1 }
+        create_at: { type: integer, format: int64, minimum: 1 }
+        url: { type: string }
+        kind: { $ref: "#/components/schemas/InviteKind" }
+        channel_ids:
+          type: array
+          maxItems: 100
+          items: { type: string }
+        guest_expires_after_seconds: { type: integer, format: int64, minimum: 0, maximum: 31536000 }
+        guest_file_download: { type: boolean }
+    PublicTeamInvite:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - team_id
+        - team_display_name
+        - team_name
+        - expires_at
+        - kind
+        - channel_ids
+        - guest_expires_after_seconds
+        - guest_file_download
+      properties:
+        id: { type: string }
+        team_id: { type: string }
+        team_display_name: { type: string }
+        team_name: { type: string }
+        expires_at: { type: integer, format: int64, minimum: 1 }
+        kind: { $ref: "#/components/schemas/InviteKind" }
+        channel_ids:
+          type: array
+          maxItems: 100
+          items: { type: string }
+        guest_expires_after_seconds: { type: integer, format: int64, minimum: 0, maximum: 31536000 }
+        guest_file_download: { type: boolean }
     LoginRequest:
       type: object
       required: [login_id, password]
@@ -321,24 +456,94 @@ paths:
     post:
       operationId: createUser
       security: []
-      summary: Create (register) a user
+      summary: Register a member or restricted guest account
+      description: |
+        Without `invite_id`, local signup must be enabled. With an invitation,
+        invite consumption, user creation, account role, and invited team/channel
+        memberships commit atomically; a race for the last use returns `400`
+        without leaving a user row. Guest expiry and file-download policy come
+        only from the validated invitation and are returned on the user object.
       requestBody:
         required: true
         content:
           application/json:
-            schema:
-              type: object
-              required: [username, email, password]
-              properties:
-                username: { type: string }
-                email: { type: string }
-                password: { type: string }
+            schema: { $ref: "#/components/schemas/RegisterUserRequest" }
       responses:
         "201":
           description: Created
           content:
             application/json:
               schema: { $ref: "#/components/schemas/User" }
+        "400":
+          description: Invalid registration input or invitation
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "403":
+          description: Local registration is disabled and no invitation was supplied
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "409":
+          description: Username or email already exists
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "500":
+          description: Account could not be created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "503":
+          description: Registration service is unavailable
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /invites/{inviteID}:
+    parameters:
+      - name: inviteID
+        in: path
+        required: true
+        schema: { type: string, minLength: 1, maxLength: 128 }
+    get:
+      operationId: previewTeamInvite
+      security: []
+      summary: Preview a live member or restricted guest invitation
+      description: Returns only signup-safe team and access metadata; creator and usage counters are not exposed.
+      responses:
+        "200":
+          description: Live invitation preview
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PublicTeamInvite" }
+        "404":
+          description: Invitation is absent, revoked, expired, exhausted, or its team is unavailable
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /teams/invite/{inviteID}:
+    parameters:
+      - name: inviteID
+        in: path
+        required: true
+        schema: { type: string, minLength: 1, maxLength: 128 }
+    get:
+      operationId: previewTeamInviteAlias
+      security: []
+      summary: Preview a live invitation through the Mattermost-compatible alias
+      responses:
+        "200":
+          description: Live invitation preview
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PublicTeamInvite" }
+        "404":
+          description: Invitation is unavailable
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
 
   /users/login:
     post:
@@ -431,6 +636,79 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Team" }
+
+  /teams/{teamID}/invites:
+    parameters:
+      - name: teamID
+        in: path
+        required: true
+        schema: { type: string, minLength: 1, maxLength: 128 }
+    get:
+      operationId: listTeamInvites
+      summary: List non-revoked member and restricted guest invitations
+      description: Requires system administrator or administrator membership in the selected team.
+      responses:
+        "200":
+          description: Invitations newest first; expired rows remain visible until revoked
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/TeamInvite" }
+        "401":
+          description: Authentication required
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "403":
+          description: Team invitation administration is not allowed
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "500":
+          description: Invitations could not be listed
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+    post:
+      operationId: createTeamInvite
+      summary: Create a member or channel-restricted guest invitation
+      description: |
+        Requires system administrator or administrator membership in the team.
+        Guest invitations require one or more active public/private channels in
+        this team and an access duration between one hour and one year. Member
+        invitations ignore guest scope fields and always permit file downloads.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateTeamInvite" }
+      responses:
+        "201":
+          description: Invitation created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TeamInvite" }
+        "400":
+          description: Invalid body, lifetime, usage limit, or guest channel scope
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "401":
+          description: Authentication required
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "403":
+          description: Team invitation administration is not allowed
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "500":
+          description: Invitation could not be created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
 
   /users/me/teams:
     get:

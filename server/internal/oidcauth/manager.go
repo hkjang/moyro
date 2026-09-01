@@ -37,11 +37,14 @@ var (
 	ErrIssuerMismatch     = errors.New("oidc discovery returned an unexpected issuer")
 	ErrAuthorizedParty    = errors.New("oidc authorized party mismatch")
 	ErrAccessTokenHash    = errors.New("oidc access token hash mismatch")
+	ErrSnapshotCapacity   = errors.New("oidc retained snapshot capacity is exhausted")
 )
 
 const (
 	discoveryDocumentSuffix = "/.well-known/openid-configuration"
 	maxOIDCResponseBytes    = 1 << 20
+	snapshotRetention       = 15 * time.Minute
+	maxRetainedSnapshots    = 64
 )
 
 type Config struct {
@@ -91,11 +94,14 @@ type discoveredProvider struct {
 }
 
 type snapshot struct {
-	config   Config
-	provider *gooidc.Provider
-	oauth2   oauth2.Config
-	verifier *gooidc.IDTokenVerifier
-	client   *http.Client
+	id        string
+	activated time.Time
+	retiredAt time.Time
+	config    Config
+	provider  *gooidc.Provider
+	oauth2    oauth2.Config
+	verifier  *gooidc.IDTokenVerifier
+	client    *http.Client
 }
 
 // Manager atomically replaces a fully discovered provider after an admin
@@ -104,7 +110,26 @@ type snapshot struct {
 type Manager struct {
 	mu         sync.RWMutex
 	current    *snapshot
+	snapshots  map[string]*snapshot
 	httpClient *http.Client
+	now        func() time.Time
+}
+
+// SnapshotBinding is the public, non-secret identity of an immutable provider
+// snapshot. Persisting its opaque ID in the one-time login flow binds both the
+// authorization request and callback exchange to the same issuer/config.
+type SnapshotBinding struct {
+	ID     string
+	Config Config
+}
+
+// ExchangeResult carries the exact provider snapshot that verified the ID
+// token. Callers must derive provider identity and signup policy from this
+// result instead of re-reading the manager's possibly newer current config.
+type ExchangeResult struct {
+	Identity   *Identity
+	Config     Config
+	SnapshotID string
 }
 
 // Prepared is a fully discovered, validated provider snapshot that has not
@@ -124,7 +149,7 @@ func NewManager(client *http.Client) *Manager {
 			},
 		}
 	}
-	return &Manager{httpClient: client}
+	return &Manager{httpClient: client, now: time.Now}
 }
 
 func (m *Manager) Configure(ctx context.Context, cfg Config) error {
@@ -158,7 +183,12 @@ func (m *Manager) Prepare(ctx context.Context, cfg Config) (*Prepared, error) {
 		Scopes:       append([]string(nil), discovered.config.Scopes...),
 	}
 	discoveryCtx := gooidc.ClientContext(ctx, discovered.client)
+	snapshotID, err := randomURLToken(24)
+	if err != nil {
+		return nil, fmt.Errorf("oidc snapshot id: %w", err)
+	}
 	next := &snapshot{
+		id:       snapshotID,
 		config:   discovered.config,
 		provider: discovered.provider,
 		oauth2:   oauthCfg,
@@ -363,18 +393,57 @@ func supportedSigningAlgorithms(values []string) []string {
 // network or database work, making the live transition failure-free after the
 // caller commits its durable configuration.
 func (m *Manager) Activate(prepared *Prepared) error {
+	if err := m.validatePrepared(prepared); err != nil {
+		return err
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	now := m.nowTime()
+	m.pruneSnapshotsLocked(now)
+	if m.snapshots == nil {
+		m.snapshots = make(map[string]*snapshot)
+	}
+	if _, exists := m.snapshots[prepared.next.id]; !exists && len(m.snapshots) >= maxRetainedSnapshots {
+		return ErrSnapshotCapacity
+	}
+	if m.current != nil && m.current != prepared.next {
+		m.current.retiredAt = now
+	}
+	prepared.next.activated = now
+	prepared.next.retiredAt = time.Time{}
+	m.snapshots[prepared.next.id] = prepared.next
+	m.current = prepared.next
+	return nil
+}
+
+// CheckActivationCapacity verifies that a prepared provider can be published
+// without evicting a still-valid authorization flow. Callers that commit
+// durable settings before Activate must serialize this check, that commit,
+// and Activate under the same application-level settings lock.
+func (m *Manager) CheckActivationCapacity(prepared *Prepared) error {
+	if err := m.validatePrepared(prepared); err != nil {
+		return err
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.pruneSnapshotsLocked(m.nowTime())
+	if _, exists := m.snapshots[prepared.next.id]; !exists && len(m.snapshots) >= maxRetainedSnapshots {
+		return ErrSnapshotCapacity
+	}
+	return nil
+}
+
+func (m *Manager) validatePrepared(prepared *Prepared) error {
 	if prepared == nil || prepared.owner != m || prepared.next == nil {
 		return fmt.Errorf("%w: prepared provider does not belong to this manager", ErrInvalidConfig)
 	}
-	m.mu.Lock()
-	m.current = prepared.next
-	m.mu.Unlock()
 	return nil
 }
 
 func (m *Manager) Disable() {
 	m.mu.Lock()
 	m.current = nil
+	m.snapshots = nil
 	m.mu.Unlock()
 }
 
@@ -385,20 +454,34 @@ func (m *Manager) Enabled() bool {
 }
 
 func (m *Manager) PublicConfig() (Config, bool) {
-	s, err := m.load()
-	if err != nil {
+	binding, ok := m.CurrentSnapshot()
+	if !ok {
 		return Config{}, false
 	}
-	cfg := s.config
-	cfg.ClientSecret = ""
-	return cfg, true
+	return binding.Config, true
+}
+
+func (m *Manager) CurrentSnapshot() (SnapshotBinding, bool) {
+	s, err := m.load()
+	if err != nil {
+		return SnapshotBinding{}, false
+	}
+	return SnapshotBinding{ID: s.id, Config: publicConfig(s.config)}, true
 }
 
 func (m *Manager) AuthCodeURL(state, nonce, verifier string) (string, error) {
+	binding, ok := m.CurrentSnapshot()
+	if !ok {
+		return "", ErrDisabled
+	}
+	return m.AuthCodeURLFor(binding.ID, state, nonce, verifier)
+}
+
+func (m *Manager) AuthCodeURLFor(snapshotID, state, nonce, verifier string) (string, error) {
 	if state == "" || nonce == "" || verifier == "" {
 		return "", fmt.Errorf("%w: state, nonce, and PKCE verifier are required", ErrInvalidConfig)
 	}
-	s, err := m.load()
+	s, err := m.loadSnapshot(snapshotID)
 	if err != nil {
 		return "", err
 	}
@@ -410,53 +493,65 @@ func (m *Manager) AuthCodeURL(state, nonce, verifier string) (string, error) {
 }
 
 func (m *Manager) Exchange(ctx context.Context, code, verifier, expectedNonce string) (*Identity, error) {
-	if code == "" || verifier == "" || expectedNonce == "" {
-		return nil, fmt.Errorf("%w: incomplete callback", ErrInvalidConfig)
+	binding, ok := m.CurrentSnapshot()
+	if !ok {
+		return nil, ErrDisabled
 	}
-	s, err := m.load()
+	result, err := m.ExchangeFor(ctx, binding.ID, code, verifier, expectedNonce)
 	if err != nil {
 		return nil, err
+	}
+	return result.Identity, nil
+}
+
+func (m *Manager) ExchangeFor(ctx context.Context, snapshotID, code, verifier, expectedNonce string) (ExchangeResult, error) {
+	if code == "" || verifier == "" || expectedNonce == "" {
+		return ExchangeResult{}, fmt.Errorf("%w: incomplete callback", ErrInvalidConfig)
+	}
+	s, err := m.loadSnapshot(snapshotID)
+	if err != nil {
+		return ExchangeResult{}, err
 	}
 	exchangeCtx := gooidc.ClientContext(ctx, s.client)
 	token, err := s.oauth2.Exchange(exchangeCtx, code, oauth2.VerifierOption(verifier))
 	if err != nil {
-		return nil, fmt.Errorf("oidc code exchange: %w", err)
+		return ExchangeResult{}, fmt.Errorf("oidc code exchange: %w", err)
 	}
 	rawIDToken, ok := token.Extra("id_token").(string)
 	if !ok || rawIDToken == "" {
-		return nil, ErrMissingIDToken
+		return ExchangeResult{}, ErrMissingIDToken
 	}
 	idToken, err := s.verifier.Verify(exchangeCtx, rawIDToken)
 	if err != nil {
-		return nil, fmt.Errorf("oidc id token verification: %w", err)
+		return ExchangeResult{}, fmt.Errorf("oidc id token verification: %w", err)
 	}
 	if idToken.Nonce != expectedNonce {
-		return nil, ErrNonceMismatch
+		return ExchangeResult{}, ErrNonceMismatch
 	}
 	if idToken.AccessTokenHash != "" {
 		if err := idToken.VerifyAccessToken(token.AccessToken); err != nil {
-			return nil, fmt.Errorf("%w: %v", ErrAccessTokenHash, err)
+			return ExchangeResult{}, fmt.Errorf("%w: %v", ErrAccessTokenHash, err)
 		}
 	}
 
 	claims := map[string]any{}
 	if err := idToken.Claims(&claims); err != nil {
-		return nil, fmt.Errorf("oidc claims: %w", err)
+		return ExchangeResult{}, fmt.Errorf("oidc claims: %w", err)
 	}
 	authorizedParty := stringClaim(claims, "azp")
 	if (len(idToken.Audience) > 1 && authorizedParty == "") ||
 		(authorizedParty != "" && authorizedParty != s.config.ClientID) {
-		return nil, ErrAuthorizedParty
+		return ExchangeResult{}, ErrAuthorizedParty
 	}
 	identity := identityFromClaims(s.config, claims)
 	identity.Subject = idToken.Subject
 	if identity.Subject == "" {
-		return nil, fmt.Errorf("%w: subject claim is empty", ErrInvalidConfig)
+		return ExchangeResult{}, fmt.Errorf("%w: subject claim is empty", ErrInvalidConfig)
 	}
 	if s.config.RequireVerifiedEmail && !identity.EmailVerified {
-		return nil, ErrEmailUnverified
+		return ExchangeResult{}, ErrEmailUnverified
 	}
-	return identity, nil
+	return ExchangeResult{Identity: identity, Config: publicConfig(s.config), SnapshotID: s.id}, nil
 }
 
 func (m *Manager) load() (*snapshot, error) {
@@ -466,6 +561,46 @@ func (m *Manager) load() (*snapshot, error) {
 		return nil, ErrDisabled
 	}
 	return m.current, nil
+}
+
+func (m *Manager) loadSnapshot(snapshotID string) (*snapshot, error) {
+	if strings.TrimSpace(snapshotID) == "" {
+		return nil, ErrInvalidFlow
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	s := m.snapshots[snapshotID]
+	if s == nil {
+		return nil, ErrInvalidFlow
+	}
+	if s != m.current {
+		if s.retiredAt.IsZero() || !m.nowTime().Before(s.retiredAt.Add(snapshotRetention)) {
+			delete(m.snapshots, snapshotID)
+			return nil, ErrInvalidFlow
+		}
+	}
+	return s, nil
+}
+
+func (m *Manager) nowTime() time.Time {
+	if m.now != nil {
+		return m.now()
+	}
+	return time.Now()
+}
+
+func (m *Manager) pruneSnapshotsLocked(now time.Time) {
+	for id, candidate := range m.snapshots {
+		if candidate != m.current && (candidate.retiredAt.IsZero() || !now.Before(candidate.retiredAt.Add(snapshotRetention))) {
+			delete(m.snapshots, id)
+		}
+	}
+}
+
+func publicConfig(config Config) Config {
+	config.ClientSecret = ""
+	config.Scopes = append([]string(nil), config.Scopes...)
+	return config
 }
 
 func normalizeConfig(cfg Config, requireSecret bool) (Config, error) {

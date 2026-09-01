@@ -12,9 +12,35 @@ import (
 	"time"
 
 	"github.com/hkjang/moyro/server/internal/activityevents"
+	"github.com/hkjang/moyro/server/internal/rbac"
 	"github.com/hkjang/moyro/server/internal/workitems"
 	"github.com/hkjang/moyro/server/internal/ws"
 )
+
+func TestWorkManagementHandlersRejectRestrictedKeysWithoutExactGrant(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		name, method, path string
+		handle             func(*handlers, http.ResponseWriter, *http.Request)
+	}{
+		{name: "list needs read", method: http.MethodGet, path: "/api/moyro/v1/me/work-items", handle: (*handlers).listNativeWorkItems},
+		{name: "create needs write", method: http.MethodPost, path: "/api/moyro/v1/me/work-items", handle: (*handlers).createNativeWorkItem},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			request := httptest.NewRequest(test.method, test.path, nil)
+			request = request.WithContext(setPrincipalOnContext(request.Context(), rbac.Principal{
+				UserID: "user-1", CredentialID: "key-1", Restricted: true,
+				GrantedPermissions: map[string]struct{}{rbac.PermissionUseAI: {}},
+			}))
+			response := httptest.NewRecorder()
+			test.handle(&handlers{}, response, request)
+			if response.Code != http.StatusForbidden {
+				t.Fatalf("status = %d, want %d", response.Code, http.StatusForbidden)
+			}
+		})
+	}
+}
 
 func TestDecodeNativeWorkItemBodyIsStrictAndSupportsDomainSizedUTF8(t *testing.T) {
 	t.Parallel()

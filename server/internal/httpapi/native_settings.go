@@ -276,6 +276,16 @@ func (h *handlers) patchNativeSettings(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		}
+		if oidcEnabled {
+			if err := h.native.oidc.CheckActivationCapacity(preparedOIDC); err != nil {
+				if errors.Is(err, oidcauth.ErrSnapshotCapacity) {
+					writeError(w, http.StatusConflict, "api.moyro.settings.oidc_snapshot_capacity", "too many recent OIDC settings changes; wait for in-flight sign-ins to finish")
+					return
+				}
+				writeError(w, http.StatusInternalServerError, "api.moyro.settings.oidc_activate", err.Error())
+				return
+			}
+		}
 		if _, err := h.native.settings.PutJSON(r.Context(), section, nativeSettingsKey, value, actor, nil); err != nil {
 			writeError(w, http.StatusInternalServerError, "api.moyro.settings.save", err.Error())
 			return

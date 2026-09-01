@@ -1,10 +1,12 @@
 openapi: 3.1.0
 info:
   title: Moyro Native API
-  version: 0.2.5
+  version: 0.2.6
   description: |
-    Moyro Flow, durable activity inbox, conversation-derived work items, safe
-    approval previews, and service policy endpoints under `/api/moyro/v1`.
+    Moyro Flow, durable activity inbox, lifecycle-aware work items, message
+    automation, permission-scoped knowledge retrieval, conversation-derived
+    documents, safe approval previews, and service policy endpoints under
+    `/api/moyro/v1`.
     This contract is intentionally separate from `openapi-v4.yaml`, which
     documents the Mattermost-compatible `/api/v4` boundary.
 
@@ -19,6 +21,8 @@ servers:
 tags:
   - name: Authentication
     description: Browser-bound completion of an external identity login.
+  - name: OIDC
+    description: Public browser sign-in and administrator-managed Keycloak configuration.
   - name: System
     description: Public build metadata and client capabilities.
   - name: Settings
@@ -31,6 +35,16 @@ tags:
     description: Durable personal inbox events and their state.
   - name: Work items
     description: Tasks and decisions derived from accessible conversations.
+  - name: Automations
+    description: User-owned message rules and durable execution history.
+  - name: Knowledge
+    description: Permission-scoped message and document retrieval with citation sources.
+  - name: Documents
+    description: Source-watermarked documents derived from live conversation threads.
+  - name: Inbox preferences
+    description: User-owned priority, bundling, snooze, and work-hours rules.
+  - name: OIDC onboarding
+    description: Administrator-managed identity-provider group onboarding targets.
   - name: Approvals
     description: Protected MCP requests and display-safe review projections.
 security:
@@ -116,6 +130,80 @@ paths:
                   status: { type: string, const: OK }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
+  /auth/oidc/login:
+    get:
+      operationId: beginOIDCLogin
+      tags: [OIDC]
+      security: []
+      summary: Begin a browser-bound Keycloak authorization-code flow
+      description: |
+        Captures the active immutable provider snapshot and onboarding policy,
+        creates a one-time PKCE transaction, and redirects the browser to the
+        provider. The transaction is also bound to an HttpOnly cookie. An
+        optional return path is accepted only when it is a safe same-origin
+        absolute path; invalid values are replaced by `/`.
+      parameters:
+        - name: return_to
+          in: query
+          required: false
+          description: Same-origin absolute path to restore after successful login.
+          schema: { type: string, maxLength: 2048, example: "/work" }
+      responses:
+        "302":
+          description: Redirect to the provider authorization endpoint
+          headers:
+            Location:
+              schema: { type: string, format: uri }
+            Cache-Control:
+              schema: { type: string, const: no-store }
+            Set-Cookie:
+              schema: { type: string }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "500": { $ref: "#/components/responses/InternalError" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+  /auth/oidc/callback:
+    get:
+      operationId: completeOIDCCallback
+      tags: [OIDC]
+      security: []
+      summary: Complete the Keycloak callback and issue a browser handoff code
+      description: |
+        Consumes the state and HttpOnly transaction cookie, exchanges the
+        authorization code against the provider snapshot captured at login,
+        resolves the local account, and applies the captured group mappings.
+        Every success or failure is returned as a `302`: success appends a
+        five-minute opaque `sso_code` to the destination URL fragment and sets
+        its independent HttpOnly binding cookie; failure redirects to
+        `/login#oauth_error=<safe-code>`. Call `POST /auth/sso/session` next to
+        create the reusable local browser session.
+      parameters:
+        - name: state
+          in: query
+          description: Opaque state returned by the provider.
+          schema: { type: string }
+        - name: code
+          in: query
+          description: Authorization code returned on provider success.
+          schema: { type: string }
+        - name: error
+          in: query
+          description: Provider error code returned instead of `code`.
+          schema: { type: string }
+        - name: error_description
+          in: query
+          description: Provider-supplied diagnostic text; never forwarded verbatim to the browser fragment.
+          schema: { type: string }
+      responses:
+        "302":
+          description: Redirect to the requested local path or to the login error view
+          headers:
+            Location:
+              schema: { type: string }
+            Cache-Control:
+              schema: { type: string, const: no-store }
+            Set-Cookie:
+              description: Clears the transaction cookie and, on success, sets the handoff binding.
+              schema: { type: string }
   /auth/sso/session:
     post:
       operationId: exchangeBrowserSSOSession
@@ -153,6 +241,7 @@ paths:
               schema: { $ref: "#/components/schemas/BrowserLoginSession" }
         "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
         "500": { $ref: "#/components/responses/InternalError" }
   /system/info:
     get:
@@ -212,6 +301,7 @@ paths:
         "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/Conflict" }
         "500": { $ref: "#/components/responses/InternalError" }
         "503": { $ref: "#/components/responses/Unavailable" }
   /admin/operations:
@@ -237,6 +327,135 @@ paths:
                 $ref: "#/components/schemas/AdminOperationsSnapshot"
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+  /admin/oidc/providers:
+    get:
+      operationId: listOIDCProviders
+      tags: [OIDC]
+      summary: List configured OIDC providers
+      description: |
+        Requires `manage_oidc`. Moyro currently supports one provider with the
+        stable id `keycloak`; an unconfigured deployment returns an empty array.
+        Stored client-secret material is never returned.
+      responses:
+        "200":
+          description: Configured providers, or an empty array
+          content:
+            application/json:
+              schema:
+                type: array
+                maxItems: 1
+                items: { $ref: "#/components/schemas/OIDCProvider" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "500": { $ref: "#/components/responses/InternalError" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+    post:
+      operationId: createOIDCProvider
+      tags: [OIDC]
+      summary: Save the Keycloak provider configuration
+      description: |
+        Requires `manage_oidc`. Omitted identity and claim fields use Keycloak
+        defaults. Enabling the provider requires a configured public base URL,
+        client secret, and successful discovery. Discovery is completed before
+        settings are committed and the exact prepared snapshot is then activated.
+        Sending an empty `client_secret` preserves the stored secret.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/OIDCProviderSaveRequest" }
+      responses:
+        "200":
+          description: Normalized and stored provider
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OIDCProvider" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "500": { $ref: "#/components/responses/InternalError" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+  /admin/oidc/providers/{providerID}:
+    parameters:
+      - $ref: "#/components/parameters/OIDCProviderID"
+    patch:
+      operationId: updateOIDCProvider
+      tags: [OIDC]
+      summary: Replace the Keycloak provider configuration
+      description: |
+        Requires `manage_oidc`. Although the method is PATCH, the handler
+        decodes a complete view over server defaults; clients should send every
+        editable field. An empty `client_secret` preserves the stored secret.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/OIDCProviderSaveRequest" }
+      responses:
+        "200":
+          description: Normalized and stored provider
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OIDCProvider" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "500": { $ref: "#/components/responses/InternalError" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+  /admin/oidc/providers/test:
+    post:
+      operationId: testOIDCProvider
+      tags: [OIDC]
+      summary: Probe OIDC discovery without storing or activating the provider
+      description: |
+        Requires `manage_oidc`. The probe validates the issuer and discovery
+        document. It does not require or test the client secret. Insecure HTTP
+        discovery is rejected unless `allow_insecure_backchannel` is explicitly
+        enabled for an offline or development deployment.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/OIDCProviderSaveRequest" }
+      responses:
+        "200":
+          description: Discovery succeeded
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OIDCProviderTestResult" }
+        "400":
+          description: Invalid request or discovery failed
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - { $ref: "#/components/schemas/Error" }
+                  - { $ref: "#/components/schemas/OIDCProviderTestResult" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "500": { $ref: "#/components/responses/InternalError" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+  /admin/oidc/onboarding-targets:
+    get:
+      operationId: listOIDCOnboardingTargets
+      tags: [OIDC onboarding]
+      summary: List active teams and channels available to OIDC group mappings
+      description: |
+        Requires `manage_oidc`. Archived teams/channels and direct or group
+        message channels are omitted, so saved mappings cannot target them.
+      responses:
+        "200":
+          description: Current mapping destinations
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OIDCOnboardingTargets" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "500": { $ref: "#/components/responses/InternalError" }
         "503": { $ref: "#/components/responses/Unavailable" }
   /me/flow-summary:
     get:
@@ -303,6 +522,7 @@ paths:
                 $ref: "#/components/schemas/ActivityEventPage"
         "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
         "500": { $ref: "#/components/responses/InternalError" }
         "503": { $ref: "#/components/responses/Unavailable" }
   /me/activity-events/{eventID}:
@@ -374,8 +594,8 @@ paths:
         Tasks are visible only to their creator or current assignee. Decisions
         are visible to current members of the source channel. Removed channel
         membership removes both kinds from future reads. When `status` is
-        supplied, a matching `kind` is required. The cursor is opaque and sorts
-        by `(create_at, id)` descending.
+        supplied, a matching `kind` is required. `sort=due` is available for
+        dated tasks; otherwise the cursor sorts by `(create_at, id)` descending.
       parameters:
         - name: kind
           in: query
@@ -390,6 +610,15 @@ paths:
         - name: per_page
           in: query
           schema: { type: integer, minimum: 1, maximum: 100, default: 40 }
+        - name: due_from
+          in: query
+          schema: { type: integer, format: int64, minimum: 0 }
+        - name: due_to
+          in: query
+          schema: { type: integer, format: int64, minimum: 0 }
+        - name: sort
+          in: query
+          schema: { type: string, enum: [created, due], default: created }
       responses:
         "200":
           description: Cursor page of work items
@@ -402,6 +631,7 @@ paths:
                 $ref: "#/components/schemas/WorkItemPage"
         "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
         "500": { $ref: "#/components/responses/InternalError" }
         "503": { $ref: "#/components/responses/Unavailable" }
     post:
@@ -412,7 +642,10 @@ paths:
         The server derives team, channel, and root-thread scope from the live
         source post and rechecks source-channel membership. A task assignee must
         be an active channel member; an omitted task assignee defaults to the
-        caller. Decisions reject assignee and due-date values.
+        caller. Tasks can carry priority, recurrence, and accessible task
+        dependencies. Decisions use proposal/review/record lifecycle fields,
+        may supersede an existing recorded decision, and can identify impacted
+        accessible tasks.
 
         An idempotency key of 1–200 characters is required in either the
         `Idempotency-Key` header or `idempotency_key` body field. If both are
@@ -454,8 +687,10 @@ paths:
       summary: Update a task or decision
       description: |
         The creator can change owner-controlled fields. A current task assignee
-        can change status only. Decisions remain creator-controlled. Guessed
-        task IDs that are not visible to the caller are returned as not found.
+        can change status only. A configured decision reviewer may advance the
+        lifecycle but cannot change owner fields. Task completion is rejected
+        while a non-terminal dependency remains. Guessed task IDs that are not
+        visible to the caller are returned as not found.
       parameters:
         - $ref: "#/components/parameters/WorkItemID"
       requestBody:
@@ -475,6 +710,7 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
         "500": { $ref: "#/components/responses/InternalError" }
         "503": { $ref: "#/components/responses/Unavailable" }
     delete:
@@ -487,8 +723,398 @@ paths:
       responses:
         "204":
           description: Work item deleted; no response body
+        "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
+        "500": { $ref: "#/components/responses/InternalError" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+  /me/work-items/{workItemID}/events:
+    get:
+      operationId: listWorkItemEvents
+      tags: [Work items]
+      summary: Read the immutable lifecycle history of a visible work item
+      parameters:
+        - $ref: "#/components/parameters/WorkItemID"
+      responses:
+        "200":
+          description: Chronological lifecycle events
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/WorkItemEvent" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "500": { $ref: "#/components/responses/InternalError" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+  /me/work-items/{workItemID}/dependencies/{dependencyID}:
+    parameters:
+      - $ref: "#/components/parameters/WorkItemID"
+      - $ref: "#/components/parameters/DependencyID"
+    post:
+      operationId: addWorkItemDependency
+      tags: [Work items]
+      summary: Add an accessible task dependency without creating a cycle
+      responses:
+        "200":
+          description: Updated task
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/WorkItem" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "500": { $ref: "#/components/responses/InternalError" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+    delete:
+      operationId: removeWorkItemDependency
+      tags: [Work items]
+      summary: Remove a task dependency
+      responses:
+        "200":
+          description: Updated task
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/WorkItem" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "500": { $ref: "#/components/responses/InternalError" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+  /me/work-items/{workItemID}/impacts/{taskID}:
+    parameters:
+      - $ref: "#/components/parameters/WorkItemID"
+      - $ref: "#/components/parameters/TaskID"
+    post:
+      operationId: addDecisionImpact
+      tags: [Work items]
+      summary: Link a decision to an accessible impacted task
+      responses:
+        "200":
+          description: Updated decision
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/WorkItem" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "500": { $ref: "#/components/responses/InternalError" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+    delete:
+      operationId: removeDecisionImpact
+      tags: [Work items]
+      summary: Remove an impacted-task link
+      responses:
+        "200":
+          description: Updated decision
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/WorkItem" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "500": { $ref: "#/components/responses/InternalError" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+  /me/automation-rules:
+    get:
+      operationId: listAutomationRules
+      tags: [Automations]
+      summary: List message rules owned by the current user
+      responses:
+        "200":
+          description: Active rules with their ordered actions
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/AutomationRule" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "500": { $ref: "#/components/responses/InternalError" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+    post:
+      operationId: createAutomationRule
+      tags: [Automations]
+      summary: Create a bounded channel-message automation
+      description: |
+        The owner must currently belong to the source channel. A matching post
+        and its action-run rows commit atomically; the offline worker retries
+        failed actions using stable run identities.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SaveAutomationRule" }
+      responses:
+        "201":
+          description: Rule created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AutomationRule" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "500": { $ref: "#/components/responses/InternalError" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+  /me/automation-rules/{ruleID}:
+    parameters:
+      - $ref: "#/components/parameters/AutomationRuleID"
+    patch:
+      operationId: updateAutomationRule
+      tags: [Automations]
+      summary: Replace a rule using its expected revision
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/UpdateAutomationRule" }
+      responses:
+        "200":
+          description: Updated rule
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AutomationRule" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "500": { $ref: "#/components/responses/InternalError" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+    delete:
+      operationId: deleteAutomationRule
+      tags: [Automations]
+      summary: Disable a rule and cancel its pending runs
+      responses:
+        "204": { description: Rule deleted; no response body }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "500": { $ref: "#/components/responses/InternalError" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+  /me/automation-rules/{ruleID}/runs:
+    get:
+      operationId: listAutomationRuns
+      tags: [Automations]
+      summary: List durable execution history for an owned rule
+      parameters:
+        - $ref: "#/components/parameters/AutomationRuleID"
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 100, default: 30 }
+      responses:
+        "200":
+          description: Newest execution runs first
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/AutomationRun" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "500": { $ref: "#/components/responses/InternalError" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+  /me/knowledge/search:
+    post:
+      operationId: searchKnowledge
+      tags: [Knowledge]
+      summary: Search live accessible messages and derived documents
+      description: |
+        Search is performed entirely in PostgreSQL and re-evaluates current
+        team/channel membership and restricted-key allow-lists. References such
+        as `M1` and `D1` identify authoritative source cards in this response.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/KnowledgeSearchInput" }
+      responses:
+        "200":
+          description: Permission-filtered ranked sources
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/KnowledgeSearchResult" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "500": { $ref: "#/components/responses/InternalError" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+  /me/documents:
+    get:
+      operationId: listDocuments
+      tags: [Documents]
+      summary: List conversation-derived documents still visible to the user
+      parameters:
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 100, default: 50 }
+      responses:
+        "200":
+          description: Visible documents with live stale-source status
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Document" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "500": { $ref: "#/components/responses/InternalError" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+    post:
+      operationId: createDocument
+      tags: [Documents]
+      summary: Create a document from an unchanged live conversation thread
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateDocument" }
+      responses:
+        "200":
+          description: Idempotent replay
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CreateDocumentResult" }
+        "201":
+          description: Document created with a source snapshot
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CreateDocumentResult" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "413": { $ref: "#/components/responses/PayloadTooLarge" }
+        "500": { $ref: "#/components/responses/InternalError" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+  /me/documents/{documentID}:
+    parameters:
+      - $ref: "#/components/parameters/DocumentID"
+    get:
+      operationId: getDocument
+      tags: [Documents]
+      summary: Read one currently accessible document
+      responses:
+        "200":
+          description: Document with live stale-source status
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Document" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "500": { $ref: "#/components/responses/InternalError" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+    patch:
+      operationId: updateDocument
+      tags: [Documents]
+      summary: Update owned content using optimistic revision control
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PatchDocument" }
+      responses:
+        "200":
+          description: Updated document
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Document" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "500": { $ref: "#/components/responses/InternalError" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+    delete:
+      operationId: deleteDocument
+      tags: [Documents]
+      summary: Delete an owned document using optimistic revision control
+      parameters:
+        - name: revision
+          in: query
+          required: true
+          schema: { type: integer, format: int64, minimum: 1 }
+      responses:
+        "204": { description: Document deleted; no response body }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "500": { $ref: "#/components/responses/InternalError" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+  /me/document-sources/{postID}:
+    get:
+      operationId: getDocumentSource
+      tags: [Documents]
+      summary: Resolve a post to its complete live source thread
+      parameters:
+        - $ref: "#/components/parameters/PostID"
+      responses:
+        "200":
+          description: Ordered source posts and opaque content revision
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DocumentSource" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "413": { $ref: "#/components/responses/PayloadTooLarge" }
+        "500": { $ref: "#/components/responses/InternalError" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+  /me/inbox-preferences:
+    get:
+      operationId: getInboxPreferences
+      tags: [Inbox preferences]
+      summary: Read normalized personal inbox and notification rules
+      responses:
+        "200":
+          description: Stored preferences or offline-safe defaults
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/InboxPreferences" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "500": { $ref: "#/components/responses/InternalError" }
+        "503": { $ref: "#/components/responses/Unavailable" }
+    patch:
+      operationId: updateInboxPreferences
+      tags: [Inbox preferences]
+      summary: Partially update personal priority, bundling, snooze, and work-hours rules
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PatchInboxPreferences" }
+      responses:
+        "200":
+          description: Normalized saved preferences
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/InboxPreferences" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
         "500": { $ref: "#/components/responses/InternalError" }
         "503": { $ref: "#/components/responses/Unavailable" }
   /me/approval-requests:
@@ -606,6 +1232,37 @@ components:
       in: path
       required: true
       schema: { type: string, minLength: 1, maxLength: 128 }
+    DependencyID:
+      name: dependencyID
+      in: path
+      required: true
+      schema: { type: string, minLength: 1, maxLength: 128 }
+    TaskID:
+      name: taskID
+      in: path
+      required: true
+      schema: { type: string, minLength: 1, maxLength: 128 }
+    OIDCProviderID:
+      name: providerID
+      in: path
+      required: true
+      description: Moyro currently supports the single built-in Keycloak provider.
+      schema: { type: string, const: keycloak }
+    AutomationRuleID:
+      name: ruleID
+      in: path
+      required: true
+      schema: { type: string, minLength: 1, maxLength: 128 }
+    DocumentID:
+      name: documentID
+      in: path
+      required: true
+      schema: { type: string, minLength: 1, maxLength: 128 }
+    PostID:
+      name: postID
+      in: path
+      required: true
+      schema: { type: string, minLength: 1, maxLength: 128 }
     ApprovalRequestID:
       name: requestID
       in: path
@@ -650,7 +1307,12 @@ components:
         application/json:
           schema: { $ref: "#/components/schemas/Error" }
     Conflict:
-      description: Idempotency key conflicts with a different or deleted resource
+      description: Optimistic revision, idempotency, dependency-cycle, or lifecycle precondition conflict
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    PayloadTooLarge:
+      description: The complete live source thread exceeds the bounded snapshot size
       content:
         application/json:
           schema: { $ref: "#/components/schemas/Error" }
@@ -678,7 +1340,7 @@ components:
     LoginUser:
       type: object
       additionalProperties: false
-      required: [id, username, email, roles, picture]
+      required: [id, username, email, roles, picture, guest_file_download]
       properties:
         id: { type: string }
         username: { type: string }
@@ -689,12 +1351,166 @@ components:
         last_name: { type: string }
         nickname: { type: string }
         position: { type: string }
+        guest_expires_at:
+          type: integer
+          format: int64
+          minimum: 1
+          description: Unix-millisecond expiry for a restricted guest; omitted for regular users.
+        guest_file_download:
+          type: boolean
+          description: Whether a restricted guest may download original file bytes.
     BrowserLoginSession:
       type: object
       additionalProperties: false
       required: [user]
       properties:
         user: { $ref: "#/components/schemas/LoginUser" }
+    OIDCSecretState:
+      type: object
+      additionalProperties: false
+      required: [configured]
+      properties:
+        configured: { type: boolean }
+    OIDCGroupMapping:
+      type: object
+      additionalProperties: false
+      required: [group]
+      properties:
+        group:
+          type: string
+          minLength: 1
+          maxLength: 255
+          description: Exact provider group matched case-insensitively after trimming.
+        account_role:
+          type: string
+          enum: [user, admin, guest]
+          default: user
+        team_id:
+          type: string
+          maxLength: 128
+          description: Active team to add; required for mappings with channels and for guests.
+        team_role:
+          type: string
+          enum: [member, admin]
+          default: member
+        channel_ids:
+          type: array
+          maxItems: 100
+          uniqueItems: true
+          items: { type: string, minLength: 1, maxLength: 128 }
+        channel_role:
+          type: string
+          enum: [member, admin]
+          default: member
+        guest_expires_after_seconds:
+          oneOf:
+            - { type: integer, format: int64, const: 0 }
+            - { type: integer, format: int64, minimum: 3600, maximum: 31536000 }
+          description: For guest mappings, zero selects 30 days and explicit values must be 3600–31536000.
+        guest_file_download:
+          type: boolean
+          default: false
+      allOf:
+        - if:
+            properties:
+              account_role: { const: guest }
+            required: [account_role]
+          then:
+            required: [team_id, channel_ids]
+            properties:
+              team_id: { type: string, minLength: 1, maxLength: 128 }
+              channel_ids: { type: array, minItems: 1, maxItems: 100 }
+              team_role: { type: string, const: member }
+              channel_role: { type: string, const: member }
+    OIDCProviderSaveRequest:
+      type: object
+      description: The compatibility decoder ignores unknown fields; clients should send only the documented configuration properties.
+      properties:
+        id: { type: string, const: keycloak, default: keycloak }
+        kind: { type: string, const: keycloak, default: keycloak }
+        name: { type: string, default: Keycloak }
+        enabled: { type: boolean, default: false }
+        issuer_url:
+          type: string
+          description: Absolute HTTP(S) issuer URL; a trailing discovery-document suffix is normalized away.
+        client_id: { type: string }
+        client_secret:
+          type: string
+          format: password
+          writeOnly: true
+          description: Required when first enabling; an empty value preserves an existing encrypted secret.
+        scopes:
+          type: array
+          items: { type: string }
+          default: [openid, profile, email]
+          description: Empty values and duplicates are removed; `openid` is always included.
+        username_claim: { type: string, default: preferred_username }
+        email_claim: { type: string, default: email }
+        groups_claim: { type: string, default: groups }
+        group_mappings:
+          type: array
+          maxItems: 100
+          items: { $ref: "#/components/schemas/OIDCGroupMapping" }
+        ca_certificate_pem:
+          type: string
+          description: Optional private CA bundle used only for provider backchannel requests.
+        allow_signup: { type: boolean, default: true }
+        require_verified_email: { type: boolean, default: true }
+        allow_insecure_backchannel:
+          type: boolean
+          default: false
+          description: Permit HTTP token, JWKS, and user-info endpoints for a trusted private network; authorization remains HTTPS-only when the issuer is HTTPS.
+    OIDCProvider:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - kind
+        - name
+        - enabled
+        - issuer_url
+        - client_id
+        - scopes
+        - username_claim
+        - email_claim
+        - groups_claim
+        - group_mappings
+        - allow_signup
+        - require_verified_email
+        - allow_insecure_backchannel
+      properties:
+        id: { type: string, const: keycloak }
+        kind: { type: string, const: keycloak }
+        name: { type: string }
+        enabled: { type: boolean }
+        issuer_url: { type: string }
+        client_id: { type: string }
+        client_secret_state: { $ref: "#/components/schemas/OIDCSecretState" }
+        scopes:
+          type: array
+          items: { type: string }
+        username_claim: { type: string }
+        email_claim: { type: string }
+        groups_claim: { type: string }
+        group_mappings:
+          type: array
+          maxItems: 100
+          items: { $ref: "#/components/schemas/OIDCGroupMapping" }
+        ca_certificate_pem: { type: string }
+        allow_signup: { type: boolean }
+        require_verified_email: { type: boolean }
+        allow_insecure_backchannel: { type: boolean }
+        redirect_url: { type: string, format: uri }
+        discovery_status: { type: string, enum: [unknown, ready, error] }
+        last_tested_at: { type: integer, format: int64, minimum: 1 }
+    OIDCProviderTestResult:
+      type: object
+      additionalProperties: false
+      required: [ok]
+      properties:
+        ok: { type: boolean }
+        issuer: { type: string }
+        message: { type: string }
     SystemInfo:
       type: object
       required:
@@ -1043,7 +1859,13 @@ components:
       enum: [task, decision]
     WorkItemStatus:
       type: string
-      enum: [open, in_progress, done, cancelled, recorded, superseded]
+      enum: [open, in_progress, done, cancelled, proposed, under_review, recorded, superseded]
+    WorkItemPriority:
+      type: string
+      enum: [low, normal, high, urgent]
+    WorkItemRecurrence:
+      type: string
+      enum: [none, daily, weekly, monthly]
     WorkItem:
       type: object
       additionalProperties: false
@@ -1057,6 +1879,13 @@ components:
         - channel_id
         - due_at
         - decided_at
+        - priority
+        - completed_at
+        - recurrence_unit
+        - recurrence_interval
+        - occurrence_no
+        - dependency_ids
+        - impact_task_ids
         - create_at
         - update_at
         - delete_at
@@ -1074,6 +1903,21 @@ components:
         source_thread_id: { type: string }
         due_at: { type: integer, format: int64, minimum: 0 }
         decided_at: { type: integer, format: int64, minimum: 0 }
+        priority: { $ref: "#/components/schemas/WorkItemPriority" }
+        completed_at: { type: integer, format: int64, minimum: 0 }
+        reviewer_id: { type: string }
+        recurrence_unit: { $ref: "#/components/schemas/WorkItemRecurrence" }
+        recurrence_interval: { type: integer, minimum: 0, maximum: 365 }
+        series_id: { type: string }
+        occurrence_no: { type: integer, minimum: 0 }
+        supersedes_id: { type: string }
+        superseded_by_id: { type: string }
+        dependency_ids:
+          type: array
+          items: { type: string }
+        impact_task_ids:
+          type: array
+          items: { type: string }
         create_at: { type: integer, format: int64, minimum: 1 }
         update_at: { type: integer, format: int64, minimum: 1 }
         delete_at: { type: integer, format: int64, minimum: 0 }
@@ -1105,6 +1949,22 @@ components:
           minimum: 0
           default: 0
           description: Task only; milliseconds since Unix epoch, or zero for no due date.
+        priority: { $ref: "#/components/schemas/WorkItemPriority" }
+        reviewer_id:
+          type: string
+          description: Decision reviewer; must be an active source-channel member.
+        initial_status:
+          type: string
+          enum: [proposed, recorded]
+        recurrence_unit: { $ref: "#/components/schemas/WorkItemRecurrence" }
+        recurrence_interval: { type: integer, minimum: 0, maximum: 365 }
+        supersedes_id: { type: string, maxLength: 128 }
+        dependency_ids:
+          type: array
+          items: { type: string, maxLength: 128 }
+        impact_task_ids:
+          type: array
+          items: { type: string, maxLength: 128 }
         idempotency_key:
           type: string
           minLength: 1
@@ -1130,6 +1990,400 @@ components:
           maxLength: 128
           description: Task creator only; empty string removes the assignee.
         due_at: { type: integer, format: int64, minimum: 0 }
+        priority: { $ref: "#/components/schemas/WorkItemPriority" }
+        reviewer_id: { type: string, maxLength: 128 }
+        recurrence_unit: { $ref: "#/components/schemas/WorkItemRecurrence" }
+        recurrence_interval: { type: integer, minimum: 0, maximum: 365 }
+    WorkItemEvent:
+      type: object
+      additionalProperties: false
+      required: [id, work_item_id, event_type, details, create_at]
+      properties:
+        id: { type: string }
+        work_item_id: { type: string }
+        actor_id: { type: string }
+        event_type:
+          type: string
+          enum:
+            - created
+            - updated
+            - status_changed
+            - assigned
+            - reviewer_changed
+            - dependency_added
+            - dependency_removed
+            - impact_added
+            - impact_removed
+            - superseded
+            - recurrence_spawned
+        from_status: { $ref: "#/components/schemas/WorkItemStatus" }
+        to_status: { $ref: "#/components/schemas/WorkItemStatus" }
+        details: { type: object, additionalProperties: true }
+        create_at: { type: integer, format: int64, minimum: 1 }
+    AutomationMatchType:
+      type: string
+      enum: [contains, starts_with]
+    AutomationActionType:
+      type: string
+      enum: [task, decision, reminder]
+    AutomationActionConfig:
+      type: object
+      additionalProperties: false
+      properties:
+        title: { type: string, maxLength: 240 }
+        description: { type: string, maxLength: 10000 }
+        assignee_id: { type: string, maxLength: 128 }
+        due_offset_minutes: { type: integer, minimum: 0, maximum: 527040 }
+        priority: { $ref: "#/components/schemas/WorkItemPriority" }
+        recurrence_unit: { $ref: "#/components/schemas/WorkItemRecurrence" }
+        recurrence_interval: { type: integer, minimum: 0, maximum: 365 }
+        initial_status: { type: string, enum: [proposed, recorded] }
+        reviewer_id: { type: string, maxLength: 128 }
+        remind_offset_minutes: { type: integer, minimum: 1, maximum: 527040 }
+    AutomationAction:
+      type: object
+      additionalProperties: false
+      required: [type, config]
+      properties:
+        id: { type: string, maxLength: 128 }
+        position: { type: integer, minimum: 0, maximum: 4 }
+        type: { $ref: "#/components/schemas/AutomationActionType" }
+        config: { $ref: "#/components/schemas/AutomationActionConfig" }
+    SaveAutomationRule:
+      type: object
+      additionalProperties: false
+      required: [name, channel_id, enabled, match_type, match_value, actions]
+      properties:
+        name: { type: string, minLength: 1, maxLength: 120 }
+        channel_id: { type: string, minLength: 1, maxLength: 128 }
+        enabled: { type: boolean }
+        match_type: { $ref: "#/components/schemas/AutomationMatchType" }
+        match_value: { type: string, minLength: 1, maxLength: 200 }
+        actions:
+          type: array
+          minItems: 1
+          maxItems: 5
+          items: { $ref: "#/components/schemas/AutomationAction" }
+    UpdateAutomationRule:
+      type: object
+      additionalProperties: false
+      required: [name, channel_id, enabled, match_type, match_value, revision, actions]
+      properties:
+        name: { type: string, minLength: 1, maxLength: 120 }
+        channel_id: { type: string, minLength: 1, maxLength: 128 }
+        enabled: { type: boolean }
+        match_type: { $ref: "#/components/schemas/AutomationMatchType" }
+        match_value: { type: string, minLength: 1, maxLength: 200 }
+        revision:
+          type: integer
+          format: int64
+          minimum: 1
+          description: Exact current rule revision used for optimistic concurrency control.
+        actions:
+          type: array
+          minItems: 1
+          maxItems: 5
+          items: { $ref: "#/components/schemas/AutomationAction" }
+    AutomationRule:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - name
+        - created_by
+        - channel_id
+        - enabled
+        - match_type
+        - match_value
+        - revision
+        - actions
+        - create_at
+        - update_at
+        - delete_at
+      properties:
+        id: { type: string }
+        name: { type: string, minLength: 1, maxLength: 120 }
+        created_by: { type: string }
+        team_id: { type: string }
+        channel_id: { type: string, minLength: 1, maxLength: 128 }
+        enabled: { type: boolean }
+        match_type: { $ref: "#/components/schemas/AutomationMatchType" }
+        match_value: { type: string, minLength: 1, maxLength: 200 }
+        revision: { type: integer, format: int64, minimum: 1 }
+        actions:
+          type: array
+          minItems: 1
+          maxItems: 5
+          items: { $ref: "#/components/schemas/AutomationAction" }
+        create_at: { type: integer, format: int64, minimum: 1 }
+        update_at: { type: integer, format: int64, minimum: 1 }
+        delete_at: { type: integer, format: int64, minimum: 0 }
+    AutomationRun:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - rule_id
+        - action_id
+        - post_id
+        - actor_id
+        - action_type
+        - status
+        - attempt_count
+        - next_attempt_at
+        - create_at
+        - update_at
+      properties:
+        id: { type: string }
+        rule_id: { type: string }
+        action_id: { type: string }
+        post_id: { type: string }
+        actor_id: { type: string }
+        action_type: { $ref: "#/components/schemas/AutomationActionType" }
+        status: { type: string, enum: [pending, processing, retry, succeeded, dead, cancelled] }
+        attempt_count: { type: integer, minimum: 0 }
+        next_attempt_at: { type: integer, format: int64, minimum: 0 }
+        claimed_at: { type: integer, format: int64, minimum: 0 }
+        lease_until: { type: integer, format: int64, minimum: 0 }
+        result_type: { type: string }
+        result_id: { type: string }
+        last_error_code: { type: string }
+        last_error_text: { type: string, maxLength: 1000 }
+        create_at: { type: integer, format: int64, minimum: 1 }
+        update_at: { type: integer, format: int64, minimum: 1 }
+        completed_at: { type: integer, format: int64, minimum: 0 }
+    KnowledgeSearchInput:
+      type: object
+      additionalProperties: false
+      required: [query, team_id]
+      properties:
+        query: { type: string, minLength: 1, maxLength: 500 }
+        team_id: { type: string, minLength: 1, maxLength: 128 }
+        channel_id: { type: string, minLength: 1, maxLength: 128 }
+        limit: { type: integer, minimum: 1, maximum: 50, default: 20 }
+    KnowledgeSource:
+      type: object
+      additionalProperties: false
+      required:
+        - ref
+        - kind
+        - id
+        - channel_id
+        - excerpt
+        - author_id
+        - author_name
+        - create_at
+        - update_at
+        - rank
+      properties:
+        ref: { type: string, pattern: "^[MD][1-9][0-9]*$" }
+        kind: { type: string, enum: [message, document] }
+        id: { type: string }
+        team_id: { type: string }
+        channel_id: { type: string }
+        post_id: { type: string }
+        document_id: { type: string }
+        source_thread_id: { type: string }
+        title: { type: string }
+        excerpt: { type: string, maxLength: 1201 }
+        author_id: { type: string }
+        author_name: { type: string }
+        create_at: { type: integer, format: int64, minimum: 1 }
+        update_at: { type: integer, format: int64, minimum: 0 }
+        rank: { type: number, format: double }
+    KnowledgeSearchResult:
+      type: object
+      additionalProperties: false
+      required: [sources, total_hits]
+      properties:
+        sources:
+          type: array
+          maxItems: 50
+          items: { $ref: "#/components/schemas/KnowledgeSource" }
+        total_hits: { type: integer, minimum: 0 }
+    Document:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - title
+        - body
+        - created_by
+        - channel_id
+        - source_thread_id
+        - source_cursor_at
+        - revision
+        - create_at
+        - update_at
+        - delete_at
+        - stale
+      properties:
+        id: { type: string }
+        title: { type: string, minLength: 1, maxLength: 240 }
+        body: { type: string, minLength: 1, maxLength: 100000 }
+        created_by: { type: string }
+        team_id: { type: string }
+        channel_id: { type: string }
+        source_thread_id: { type: string }
+        source_cursor_at:
+          type: integer
+          format: int64
+          minimum: 1
+          description: Opaque content revision; it is not a timestamp.
+        revision: { type: integer, format: int64, minimum: 1 }
+        create_at: { type: integer, format: int64, minimum: 1 }
+        update_at: { type: integer, format: int64, minimum: 1 }
+        delete_at: { type: integer, format: int64, minimum: 0 }
+        stale: { type: boolean }
+    DocumentSourcePost:
+      type: object
+      additionalProperties: false
+      required: [id, channel_id, user_id, username, root_id, message, create_at, update_at]
+      properties:
+        id: { type: string }
+        channel_id: { type: string }
+        user_id: { type: string }
+        username: { type: string }
+        root_id: { type: string }
+        message: { type: string }
+        create_at: { type: integer, format: int64, minimum: 1 }
+        update_at: { type: integer, format: int64, minimum: 0 }
+    DocumentSource:
+      type: object
+      additionalProperties: false
+      required: [channel_id, thread_id, cursor_at, posts]
+      properties:
+        team_id: { type: string }
+        channel_id: { type: string }
+        thread_id: { type: string }
+        cursor_at:
+          type: integer
+          format: int64
+          minimum: 1
+          description: Opaque content revision; it is not a timestamp.
+        posts:
+          type: array
+          minItems: 1
+          maxItems: 200
+          items: { $ref: "#/components/schemas/DocumentSourcePost" }
+    CreateDocument:
+      type: object
+      additionalProperties: false
+      required: [title, body, source_post_id, source_cursor_at]
+      properties:
+        title: { type: string, minLength: 1, maxLength: 240 }
+        body: { type: string, minLength: 1, maxLength: 100000 }
+        source_post_id: { type: string, minLength: 1, maxLength: 128 }
+        source_cursor_at: { type: integer, format: int64, minimum: 1 }
+        idempotency_key:
+          type: string
+          minLength: 1
+          maxLength: 200
+          description: Required when the Idempotency-Key header is omitted.
+    CreateDocumentResult:
+      type: object
+      additionalProperties: false
+      required: [document, replayed]
+      properties:
+        document: { $ref: "#/components/schemas/Document" }
+        replayed: { type: boolean }
+    PatchDocument:
+      type: object
+      additionalProperties: false
+      required: [expected_revision]
+      anyOf:
+        - required: [title]
+        - required: [body]
+        - required: [source_cursor_at]
+      properties:
+        title: { type: string, minLength: 1, maxLength: 240 }
+        body: { type: string, minLength: 1, maxLength: 100000 }
+        source_cursor_at: { type: integer, format: int64, minimum: 1 }
+        expected_revision: { type: integer, format: int64, minimum: 1 }
+    InboxPreferencesFields:
+      type: object
+      properties:
+        vip_user_ids:
+          type: array
+          maxItems: 200
+          uniqueItems: true
+          items: { type: string, minLength: 1, maxLength: 128 }
+        priority_event_types:
+          type: array
+          maxItems: 16
+          uniqueItems: true
+          items: { $ref: "#/components/schemas/ActivityEventType" }
+        bundle_by: { type: string, enum: [none, channel, type] }
+        snooze_presets_minutes:
+          type: array
+          minItems: 1
+          maxItems: 8
+          uniqueItems: true
+          items: { type: integer, minimum: 5, maximum: 43200 }
+        work_hours_enabled: { type: boolean }
+        work_hours_timezone: { type: string, minLength: 1, maxLength: 128 }
+        work_hours_weekdays:
+          type: array
+          minItems: 1
+          maxItems: 7
+          uniqueItems: true
+          items: { type: integer, minimum: 1, maximum: 7 }
+        work_hours_start_minute: { type: integer, minimum: 0, maximum: 1439 }
+        work_hours_end_minute: { type: integer, minimum: 0, maximum: 1439 }
+        priority_override: { type: boolean }
+    InboxPreferences:
+      unevaluatedProperties: false
+      allOf:
+        - $ref: "#/components/schemas/InboxPreferencesFields"
+        - type: object
+          required:
+            - vip_user_ids
+            - priority_event_types
+            - bundle_by
+            - snooze_presets_minutes
+            - work_hours_enabled
+            - work_hours_timezone
+            - work_hours_weekdays
+            - work_hours_start_minute
+            - work_hours_end_minute
+            - priority_override
+            - update_at
+          properties:
+            update_at: { type: integer, format: int64, minimum: 0 }
+    PatchInboxPreferences:
+      unevaluatedProperties: false
+      minProperties: 1
+      allOf:
+        - $ref: "#/components/schemas/InboxPreferencesFields"
+    OIDCOnboardingChannelTarget:
+      type: object
+      additionalProperties: false
+      required: [id, team_id, name, display_name, type]
+      properties:
+        id: { type: string }
+        team_id: { type: string }
+        name: { type: string }
+        display_name: { type: string }
+        type: { type: string, enum: [O, P] }
+    OIDCOnboardingTeamTarget:
+      type: object
+      additionalProperties: false
+      required: [id, name, display_name, channels]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        display_name: { type: string }
+        channels:
+          type: array
+          items: { $ref: "#/components/schemas/OIDCOnboardingChannelTarget" }
+    OIDCOnboardingTargets:
+      type: object
+      additionalProperties: false
+      required: [teams]
+      properties:
+        teams:
+          type: array
+          items: { $ref: "#/components/schemas/OIDCOnboardingTeamTarget" }
     ApprovalAction:
       type: string
       enum: [mcp.create_post, mcp.reply_to_thread]

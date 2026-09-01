@@ -14,6 +14,9 @@ import {
   type User,
 } from "@/api/client";
 import { workItemsApi, type WorkItem, type WorkItemStatus } from "@/api/work-items";
+import { useWorkItemCreation } from "@/features/work-items/WorkItemCreationProvider";
+import { WorkItemDetailsDialog } from "@/features/work-items/WorkItemDetailsDialog";
+import { WorkManagementView } from "@/features/work-items/WorkManagementView";
 import type { RootState } from "@/store";
 import {
   FlowConfirmDialog,
@@ -97,6 +100,8 @@ function workItemStatus(item: WorkItem): { label: string; tone: "default" | "war
     case "open": return { label: "할 일", tone: "info" };
     case "in_progress": return { label: "진행 중", tone: "warning" };
     case "done": return { label: "완료", tone: "success" };
+    case "proposed": return { label: "제안", tone: "info" };
+    case "under_review": return { label: "검토 중", tone: "warning" };
     case "recorded": return { label: "기록됨", tone: "success" };
     case "superseded": return { label: "변경됨", tone: "default" };
     case "cancelled": return { label: "취소됨", tone: "error" };
@@ -110,6 +115,7 @@ export function MyWorkPage({ initialTab = "tasks" }: { initialTab?: MyWorkTab })
   const token = useSelector((state: RootState) => state.auth.token);
   const currentUserID = useSelector((state: RootState) => state.auth.user?.id) ?? "";
   const workspace = useFlowWorkspaceIndex();
+  const workItemCreation = useWorkItemCreation();
   const tab = validTab(params.tab) ? params.tab : initialTab;
   const [data, setData] = useState<WorkData>(EMPTY_DATA);
   const [loading, setLoading] = useState(true);
@@ -122,6 +128,7 @@ export function MyWorkPage({ initialTab = "tasks" }: { initialTab?: MyWorkTab })
   const [workCursors, setWorkCursors] = useState<Record<WorkItemTab, string>>(EMPTY_WORK_CURSORS);
   const [loadingMore, setLoadingMore] = useState<WorkItemTab | null>(null);
   const [updatingID, setUpdatingID] = useState("");
+  const [detailsItem, setDetailsItem] = useState<WorkItem | null>(null);
 
   useEffect(() => {
     if (params.tab !== undefined && !validTab(params.tab)) {
@@ -179,7 +186,7 @@ export function MyWorkPage({ initialTab = "tasks" }: { initialTab?: MyWorkTab })
       let users: Record<string, User> = {};
       const authorIds = [...new Set([
         ...[...saved, ...Object.values(reminderPosts), ...Object.values(workItemPosts)].map((post) => post.user_id),
-        ...workItems.flatMap((item) => [item.created_by, item.assignee_id ?? ""]),
+        ...workItems.flatMap((item) => [item.created_by, item.assignee_id ?? "", item.reviewer_id ?? ""]),
       ].filter(Boolean))];
       if (authorIds.length > 0) {
         try {
@@ -259,7 +266,7 @@ export function MyWorkPage({ initialTab = "tasks" }: { initialTab?: MyWorkTab })
       const sourceIDs = page.items.map((item) => item.source_post_id).filter((id): id is string => Boolean(id));
       const posts = await postsByIDs(token, sourceIDs);
       const users = await usersByIDs(token, [
-        ...page.items.flatMap((item) => [item.created_by, item.assignee_id ?? ""]),
+        ...page.items.flatMap((item) => [item.created_by, item.assignee_id ?? "", item.reviewer_id ?? ""]),
         ...posts.map((post) => post.user_id),
       ]);
       setData((current) => {
@@ -317,8 +324,9 @@ export function MyWorkPage({ initialTab = "tasks" }: { initialTab?: MyWorkTab })
           {loading ? <FlowLoading /> : data.workItems.filter((item) => item.kind === "task").length === 0 ? (
             <FlowEmpty title="내 작업이 없습니다" description="메시지의 더보기 메뉴에서 작업으로 만들 수 있습니다." />
           ) : (
-            <div className="flow-list">
-              {data.workItems.filter((item) => item.kind === "task").map((item) => {
+            <WorkManagementView
+              items={data.workItems.filter((item) => item.kind === "task")}
+              renderItem={(item) => {
                 const source = item.source_post_id ? data.workItemPosts[item.source_post_id] : undefined;
                 const entry = workspace.channelById[item.channel_id];
                 const assignee = item.assignee_id ? data.users[item.assignee_id] : undefined;
@@ -330,16 +338,20 @@ export function MyWorkPage({ initialTab = "tasks" }: { initialTab?: MyWorkTab })
                       <div className="flow-badges">
                         <Typography component="h3" className="flow-item-title">{item.title}</Typography>
                         <FlowStatusBadge label={status.label} tone={status.tone} />
+                        <Chip size="small" variant="outlined" label={`우선순위 ${item.priority === "urgent" ? "긴급" : item.priority === "high" ? "높음" : item.priority === "low" ? "낮음" : "보통"}`} />
+                        {item.dependency_ids.length > 0 && <Chip size="small" variant="outlined" label={`선행 ${item.dependency_ids.length}`} />}
                         {entry && <Chip size="small" variant="outlined" label={entry.channel.display_name || entry.channel.name} />}
                       </div>
                       {item.description && <Typography className="flow-item-message">{item.description}</Typography>}
                       <Typography className="flow-item-subtitle">
                         {assignee ? `담당 @${assignee.username}` : "담당자 없음"}
                         {item.due_at > 0 ? ` · 마감 ${formatDateTime(item.due_at)}` : ""}
+                        {item.recurrence_unit !== "none" ? ` · ${item.recurrence_interval}${item.recurrence_unit === "daily" ? "일" : item.recurrence_unit === "weekly" ? "주" : "개월"}마다 반복` : ""}
                         {source ? ` · 원문 ${formatDateTime(source.create_at)}` : ""}
                       </Typography>
                     </div>
                     <div className="flow-list-actions">
+                      <Button onClick={() => setDetailsItem(item)}>상세·이력</Button>
                       {entry && source && <Button onClick={() => navigate(channelPath(entry), { state: postNavigationState(source.id) })}>원문 메시지</Button>}
                       {canUpdate && item.status === "open" && <Button variant="outlined" disabled={Boolean(updatingID)} onClick={() => void updateWorkItemStatus(item, "in_progress")}>시작</Button>}
                       {canUpdate && item.status !== "done" && item.status !== "cancelled" && <Button variant="outlined" disabled={Boolean(updatingID)} onClick={() => void updateWorkItemStatus(item, "done")}>완료</Button>}
@@ -348,8 +360,8 @@ export function MyWorkPage({ initialTab = "tasks" }: { initialTab?: MyWorkTab })
                     </div>
                   </article>
                 );
-              })}
-            </div>
+              }}
+            />
           )}
           {!loading && workCursors.tasks && (
             <Button disabled={Boolean(loadingMore)} onClick={() => void loadMoreWorkItems("task")}>
@@ -371,24 +383,30 @@ export function MyWorkPage({ initialTab = "tasks" }: { initialTab?: MyWorkTab })
                 const source = item.source_post_id ? data.workItemPosts[item.source_post_id] : undefined;
                 const entry = workspace.channelById[item.channel_id];
                 const author = data.users[item.created_by];
+                const reviewer = item.reviewer_id ? data.users[item.reviewer_id] : undefined;
                 const status = workItemStatus(item);
+                const canReview = item.created_by === currentUserID || item.reviewer_id === currentUserID;
                 return (
                   <article className="flow-list-row" key={item.id}>
                     <div className="flow-list-main">
                       <div className="flow-badges">
                         <Typography component="h3" className="flow-item-title">{item.title}</Typography>
                         <FlowStatusBadge label={status.label} tone={status.tone} />
+                        {item.impact_task_ids.length > 0 && <Chip size="small" variant="outlined" label={`영향 작업 ${item.impact_task_ids.length}`} />}
                         {entry && <Chip size="small" variant="outlined" label={entry.channel.display_name || entry.channel.name} />}
                       </div>
                       {item.description && <Typography className="flow-item-message">{item.description}</Typography>}
                       <Typography className="flow-item-subtitle">
-                        {author ? `기록 @${author.username}` : "기록자 정보 없음"} · {formatDateTime(item.decided_at || item.create_at)}
+                        {author ? `기록 @${author.username}` : "기록자 정보 없음"}
+                        {reviewer ? ` · 검토 @${reviewer.username}` : ""} · {formatDateTime(item.decided_at || item.create_at)}
                       </Typography>
                     </div>
                     <div className="flow-list-actions">
+                      <Button onClick={() => setDetailsItem(item)}>상세·이력</Button>
                       {entry && source && <Button onClick={() => navigate(channelPath(entry), { state: postNavigationState(source.id) })}>근거 메시지</Button>}
-                      {item.created_by === currentUserID && item.status === "recorded" && <Button variant="outlined" disabled={Boolean(updatingID)} onClick={() => void updateWorkItemStatus(item, "superseded")}>변경됨으로 표시</Button>}
-                      {item.created_by === currentUserID && item.status === "superseded" && <Button variant="outlined" disabled={Boolean(updatingID)} onClick={() => void updateWorkItemStatus(item, "recorded")}>다시 유효하게</Button>}
+                      {canReview && item.status === "proposed" && <Button variant="outlined" disabled={Boolean(updatingID)} onClick={() => void updateWorkItemStatus(item, "under_review")}>검토 시작</Button>}
+                      {canReview && (item.status === "proposed" || item.status === "under_review") && <Button variant="outlined" disabled={Boolean(updatingID)} onClick={() => void updateWorkItemStatus(item, "recorded")}>확정</Button>}
+                      {item.created_by === currentUserID && item.status === "recorded" && source && <Button variant="outlined" disabled={Boolean(updatingID)} onClick={() => workItemCreation.open(source, "decision", { supersedesID: item.id })}>대체 결정</Button>}
                       {item.created_by === currentUserID && <Button color="error" variant="outlined" startIcon={<DeleteOutlineRounded />} disabled={Boolean(updatingID)} onClick={() => setTarget({ kind: "decisions", id: item.id, title: "결정 기록을 삭제할까요?" })}>삭제</Button>}
                     </div>
                   </article>
@@ -513,6 +531,20 @@ export function MyWorkPage({ initialTab = "tasks" }: { initialTab?: MyWorkTab })
         )}
       </FlowTabPanel>
 
+      <WorkItemDetailsDialog
+        token={token ?? ""}
+        item={detailsItem}
+        items={data.workItems}
+        canManage={Boolean(detailsItem && detailsItem.created_by === currentUserID)}
+        onClose={() => setDetailsItem(null)}
+        onChanged={(updated) => {
+          setDetailsItem(updated);
+          setData((current) => ({
+            ...current,
+            workItems: current.workItems.map((candidate) => candidate.id === updated.id ? updated : candidate),
+          }));
+        }}
+      />
       <FlowConfirmDialog
         open={Boolean(target)}
         title={target?.title ?? "항목을 변경할까요?"}

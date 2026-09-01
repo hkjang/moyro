@@ -258,6 +258,9 @@ func (h *handlers) listGroups(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *handlers) createGroup(w http.ResponseWriter, r *http.Request) {
+	if h.denyGuestMutation(w, r, "api.group.create.guest_forbidden") {
+		return
+	}
 	body := decodeCompatMap(r)
 	if _, ok := body["id"]; !ok {
 		body["id"] = uuid.NewString()
