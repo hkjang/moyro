@@ -272,26 +272,109 @@ func parseOpenGraph(r io.Reader) ogMeta {
 	return out
 }
 
+// ipResolver is the slice of *net.Resolver this package needs. Taking it as a
+// parameter keeps the address policy testable without a live DNS server.
+type ipResolver interface {
+	LookupIP(ctx context.Context, network, host string) ([]net.IP, error)
+}
+
+const blockedAddrReason = "link preview: private address blocked"
+
+// blockedNets lists ranges net.IP's own predicates do not cover. A preview
+// fetch has no business reaching any of them, and several (carrier-grade NAT,
+// the IETF protocol block that holds 192.0.0.192) route to infrastructure a
+// tenant could otherwise probe through this server.
+var blockedNets = func() []*net.IPNet {
+	cidrs := []string{
+		"100.64.0.0/10",   // RFC 6598 carrier-grade NAT
+		"192.0.0.0/24",    // RFC 6890 IETF protocol assignments
+		"192.0.2.0/24",    // TEST-NET-1
+		"198.18.0.0/15",   // RFC 2544 benchmarking
+		"198.51.100.0/24", // TEST-NET-2
+		"203.0.113.0/24",  // TEST-NET-3
+		"240.0.0.0/4",     // reserved, including the broadcast address
+		"2001:db8::/32",   // IPv6 documentation
+		"100::/64",        // IPv6 discard-only
+	}
+	nets := make([]*net.IPNet, 0, len(cidrs))
+	for _, cidr := range cidrs {
+		_, parsed, err := net.ParseCIDR(cidr)
+		if err != nil {
+			continue
+		}
+		nets = append(nets, parsed)
+	}
+	return nets
+}()
+
+// blockedIP reports whether an address is outside the public internet the
+// preview fetcher is allowed to reach.
+func blockedIP(ip net.IP) bool {
+	if ip == nil || ip.IsLoopback() || ip.IsPrivate() || ip.IsUnspecified() ||
+		ip.IsLinkLocalUnicast() || ip.IsMulticast() || ip.IsInterfaceLocalMulticast() {
+		return true
+	}
+	for _, blocked := range blockedNets {
+		if blocked.Contains(ip) {
+			return true
+		}
+	}
+	return false
+}
+
+// dialTargets resolves `addr` and returns the concrete `ip:port` endpoints the
+// dialer may connect to. Returning addresses rather than the original host is
+// the point: handing the hostname back to the dialer would resolve it a second
+// time, so a DNS answer that flips to 127.0.0.1 between the check and the
+// connection would pass the guard. Any blocked address in the answer rejects
+// the whole dial, so a mixed public/private record cannot be retried into.
+func dialTargets(ctx context.Context, resolver ipResolver, addr string) ([]string, error) {
+	host, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		return nil, err
+	}
+	ips := []net.IP{}
+	if literal := net.ParseIP(host); literal != nil {
+		ips = append(ips, literal)
+	} else {
+		resolved, err := resolver.LookupIP(ctx, "ip", host)
+		if err != nil {
+			return nil, err
+		}
+		ips = resolved
+	}
+	if len(ips) == 0 {
+		return nil, &net.AddrError{Err: blockedAddrReason, Addr: host}
+	}
+	targets := make([]string, 0, len(ips))
+	for _, ip := range ips {
+		if blockedIP(ip) {
+			return nil, &net.AddrError{Err: blockedAddrReason, Addr: ip.String()}
+		}
+		targets = append(targets, net.JoinHostPort(ip.String(), port))
+	}
+	return targets, nil
+}
+
 // safeDialContext refuses to connect to loopback, RFC1918, link-local, or
 // unspecified addresses. Runs on every dial including redirects, so we
 // can't be tricked into hitting a metadata service via a 302 on a public URL.
 func safeDialContext(ctx context.Context, network, addr string) (net.Conn, error) {
-	host, _, err := net.SplitHostPort(addr)
+	targets, err := dialTargets(ctx, net.DefaultResolver, addr)
 	if err != nil {
 		return nil, err
-	}
-	ips, err := net.DefaultResolver.LookupIP(ctx, "ip", host)
-	if err != nil {
-		return nil, err
-	}
-	for _, ip := range ips {
-		if ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsUnspecified() {
-			return nil, &net.AddrError{Err: "link preview: private address blocked", Addr: ip.String()}
-		}
 	}
 	var d net.Dialer
 	d.Timeout = 3 * time.Second
-	return d.DialContext(ctx, network, addr)
+	var lastErr error
+	for _, target := range targets {
+		conn, err := d.DialContext(ctx, network, target)
+		if err == nil {
+			return conn, nil
+		}
+		lastErr = err
+	}
+	return nil, lastErr
 }
 
 func hostname(rawURL string) string {
