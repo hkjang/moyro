@@ -759,7 +759,7 @@ export function IntegrationsPanel({
         </header>
         <div className="admin-console-topbar">
           <div className="admin-scope-chip">
-            <span>Organization</span>
+            <span>조직</span>
             <strong>{organizationName}</strong>
           </div>
           <div className="admin-scope-chip">
@@ -883,7 +883,7 @@ export function IntegrationsPanel({
             </div>
             <div className="admin-summary-grid">
               <div className="admin-kv">
-                <span>Organization</span>
+                <span>조직</span>
                 <strong>{organizationName}</strong>
               </div>
               <div className="admin-kv">
@@ -1476,7 +1476,7 @@ export function IntegrationsPanel({
                 style={{ width: "auto", padding: "0 12px", height: 34 }}
                 onClick={onReloadConfig}
                 disabled
-                title="레거시 전체 설정 리로드는 v0.2.7에서 지원하지 않습니다. moyro 관리 설정과 플러그인 설정은 저장 즉시 적용됩니다."
+                title="레거시 전체 설정 리로드는 v0.2.8에서 지원하지 않습니다. moyro 관리 설정과 플러그인 설정은 저장 즉시 적용됩니다."
               >레거시 리로드 미지원</button>
               <button
                 type="button"

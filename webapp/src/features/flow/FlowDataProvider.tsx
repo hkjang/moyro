@@ -13,6 +13,7 @@ import { Outlet } from "react-router-dom";
 import { flowApi, type FlowSummary } from "@/api/flow";
 import { useWebsocket } from "@/hooks/useWebsocket";
 import type { RootState } from "@/store";
+import { useUnreadTitle } from "@/hooks/useUnreadTitle";
 import {
   errorMessage,
   type FlowChannelEntry,
@@ -79,6 +80,10 @@ export function FlowWorkspaceProvider({ token, children }: {
 }) {
   const [teams, setTeams] = useState<FlowSummary["teams"]>([]);
   const [entries, setEntries] = useState<FlowChannelEntry[]>([]);
+  useUnreadTitle(
+    entries.reduce((sum, entry) => sum + (entry.membership?.mention_count ?? 0), 0),
+    entries.filter((entry) => (entry.membership?.msg_count ?? 0) > 0).length,
+  );
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [revision, setRevision] = useState(0);

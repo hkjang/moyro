@@ -45,45 +45,45 @@ export const TAB_LABELS: Record<Tab, string> = {
 
 export const ADMIN_NAV: { section: string; items: { tab: Tab; label: string }[] }[] = [
   {
-    section: "Organization",
+    section: "조직",
     items: [
-      { tab: "org", label: "Organization" },
-      { tab: "workspaces", label: "Workspaces" },
+      { tab: "org", label: "조직" },
+      { tab: "workspaces", label: "워크스페이스" },
     ],
   },
   {
-    section: "Directory",
+    section: "디렉터리",
     items: [
-      { tab: "users", label: "Members" },
-      { tab: "channels", label: "Channels" },
+      { tab: "users", label: "멤버" },
+      { tab: "channels", label: "채널" },
     ],
   },
   {
-    section: "Apps",
+    section: "앱",
     items: [
-      { tab: "apps", label: "Installed Apps" },
-      { tab: "plugins", label: "Plugins" },
-      { tab: "bots", label: "Bots / Tokens" },
+      { tab: "apps", label: "설치된 앱" },
+      { tab: "plugins", label: "플러그인" },
+      { tab: "bots", label: "봇 · 토큰" },
     ],
   },
   {
-    section: "Security",
+    section: "보안",
     items: [
-      { tab: "auth", label: "2FA / SSO / Sessions" },
-      { tab: "roles", label: "Permissions / Roles" },
-      { tab: "policies", label: "Access Control" },
+      { tab: "auth", label: "2FA · SSO · 세션" },
+      { tab: "roles", label: "권한 · 역할" },
+      { tab: "policies", label: "접근 제어" },
     ],
   },
   {
-    section: "Operations",
+    section: "운영",
     items: [
-      { tab: "system", label: "System / Storage" },
-      { tab: "jobs", label: "Background Jobs" },
-      { tab: "audit", label: "Logging / Audit" },
-      { tab: "invites", label: "Team Invites" },
-      { tab: "emoji", label: "Custom Emoji" },
-      { tab: "incoming", label: "Incoming Webhooks" },
-      { tab: "outgoing", label: "Outgoing Webhooks" },
+      { tab: "system", label: "시스템 · 저장소" },
+      { tab: "jobs", label: "백그라운드 작업" },
+      { tab: "audit", label: "로그 · 감사" },
+      { tab: "invites", label: "팀 초대" },
+      { tab: "emoji", label: "커스텀 이모지" },
+      { tab: "incoming", label: "인커밍 웹훅" },
+      { tab: "outgoing", label: "아웃고잉 웹훅" },
     ],
   },
 ];

@@ -1,0 +1,97 @@
+/* Rows that are not messages: day boundaries, the unread marker, and the
+ * floating "back to latest" affordance. Colors come from the shared tokens so
+ * they follow the active color scheme without per-theme overrides. */
+
+.timeline-divider {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 20px 6px;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1;
+  user-select: none;
+}
+
+.timeline-divider::before,
+.timeline-divider::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: var(--flow-border, #dfe3ea);
+}
+
+.timeline-date {
+  color: var(--flow-text-muted, #667085);
+}
+
+.timeline-date > time {
+  padding: 4px 10px;
+  border: 1px solid var(--flow-border, #dfe3ea);
+  border-radius: var(--flow-radius-pill, 999px);
+  background: var(--flow-surface, #fff);
+}
+
+.timeline-unread {
+  color: var(--flow-danger, #c2414b);
+}
+
+.timeline-unread::before,
+.timeline-unread::after {
+  background: color-mix(in srgb, var(--flow-danger, #c2414b) 55%, transparent);
+}
+
+.timeline-jump {
+  position: absolute;
+  right: 20px;
+  bottom: 12px;
+  z-index: 5;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 36px;
+  padding: 0 14px 0 12px;
+  border: 1px solid color-mix(in srgb, var(--flow-brand, #3157d5) 40%, var(--flow-border, #dfe3ea));
+  border-radius: var(--flow-radius-pill, 999px);
+  background: var(--flow-surface, #fff);
+  color: var(--flow-brand, #3157d5);
+  font-size: 13px;
+  font-weight: 700;
+  box-shadow: 0 6px 18px rgba(16, 26, 59, 0.16);
+  cursor: pointer;
+}
+
+.timeline-jump:hover {
+  background: color-mix(in srgb, var(--flow-brand, #3157d5) 8%, var(--flow-surface, #fff));
+}
+
+.timeline-jump svg {
+  font-size: 16px;
+}
+
+/* The scroll container must be the positioning context for the jump button
+ * and must not let the button scroll away with the content. */
+.chat-timeline-host {
+  position: relative;
+  display: flex;
+  min-height: 0;
+  flex: 1;
+  flex-direction: column;
+}
+
+@media (max-width: 960px) {
+  .timeline-jump {
+    right: 12px;
+    min-height: 44px;
+  }
+}
+
+@media (forced-colors: active) {
+  .timeline-divider::before,
+  .timeline-divider::after {
+    background: CanvasText;
+  }
+  .timeline-jump {
+    border-color: ButtonText;
+  }
+}

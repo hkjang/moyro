@@ -259,3 +259,11 @@
     scroll-behavior: auto;
   }
 }
+
+@media (max-width: 640px) {
+  /* The destination is already the screen title on a phone; the AI status
+   * moves into the tools row that appears with text. */
+  .composer-context-bar {
+    display: none;
+  }
+}

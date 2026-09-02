@@ -308,7 +308,9 @@ export function TodayBriefing({
           <Typography component="div" className="today-briefing-content">{displayedContent}</Typography>
           {result && <Typography className="flow-item-subtitle">생성 시각 {formatDateTime(result.generatedAt)}</Typography>}
         </div>
-      ) : !busy && !result ? (
+      ) : !busy && !result && !disabledReason ? (
+        // The disabled-reason banner already explains why there is nothing
+        // here; stacking an empty state under it says the same thing twice.
         <FlowEmpty title="아직 생성된 브리핑이 없습니다" description="버튼을 누르기 전에는 메시지를 읽거나 AI 요청을 보내지 않습니다." />
       ) : null}
 

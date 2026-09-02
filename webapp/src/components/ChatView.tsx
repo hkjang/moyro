@@ -20,7 +20,9 @@ import {
   type UserStatusValue,
 } from "@/api/client";
 import { useConfirm } from "@/components/shared";
+import { useToast } from "@/components/feedback/ToastProvider";
 import { useWebsocket } from "@/hooks/useWebsocket";
+import { useUnreadTitle } from "@/hooks/useUnreadTitle";
 import { displayVersion, useSystemInfo } from "@/features/system/SystemInfoContext";
 import { useAdminAccess } from "@/features/admin/AdminAccessContext";
 import { useThemePreference } from "@/features/theme/ThemePreferenceProvider";
@@ -38,6 +40,9 @@ import { ChannelHeader } from "@/features/workspace/header/ChannelHeader";
 import { MessageComposer } from "@/features/workspace/composer/MessageComposer";
 import { clearMoyroDraftsForUser } from "@/features/workspace/composer/useDraft";
 import { MessageItem } from "@/features/workspace/messages/MessageItem";
+import { DateDivider, JumpToLatestButton, UnreadDivider } from "@/features/workspace/messages/TimelineDividers";
+import { buildTimeline } from "@/features/workspace/model/timeline";
+import { useTimelineScroll } from "@/features/workspace/model/useTimelineScroll";
 import type {
   FilesMap,
   ReactionMap,
@@ -112,6 +117,7 @@ export function ChatView() {
   // render() is spilled into the chat-shell div at the bottom so its
   // z-index stacks above every other modal.
   const confirmer = useConfirm();
+  const toast = useToast();
 
   const [teams, setTeams] = useState<Team[]>([]);
   const [currentTeamId, setCurrentTeamId] = useState<string | null>(routeTeamId ?? null);
@@ -120,6 +126,13 @@ export function ChatView() {
   const [posts, setPosts] = useState<Post[]>([]);
   const [loadingPosts, setLoadingPosts] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Every existing setError call keeps working; the message now surfaces in
+  // the shared toast instead of a login-styled banner pinned under the list.
+  useEffect(() => {
+    if (!error) return;
+    toast.error(error);
+    setError(null);
+  }, [error, toast]);
   const inboxPreferences = useInboxPreferences(token);
 
   const [users, setUsers] = useState<UsersMap>({});
@@ -170,6 +183,17 @@ export function ChatView() {
 
   const [typingUsers, setTypingUsers] = useState<Record<string, number>>({});
   const [unread, setUnread] = useState<Record<string, UnreadEntry>>({});
+  // The reader's last_viewed_at per channel, refreshed whenever this client
+  // marks a channel viewed. Read through a ref when a channel opens so the
+  // "새 메시지" marker reflects the moment before viewing zeroes the counters.
+  const lastViewedRef = useRef<Record<string, number>>({});
+  const unreadRef = useRef(unread);
+  useEffect(() => { unreadRef.current = unread; }, [unread]);
+  const [unreadMarkerAt, setUnreadMarkerAt] = useState(0);
+  useUnreadTitle(
+    Object.values(unread).reduce((sum, entry) => sum + entry.mention, 0),
+    Object.values(unread).filter((entry) => entry.msg > 0).length,
+  );
   // Per-channel notify_props (loaded lazily when the settings menu opens
   // or when a channel's member row is hydrated at login). Desktop pref
   // from the WS `unread_updated` event is also folded in so we can make
@@ -222,7 +246,9 @@ export function ChatView() {
   const [showDiscover, setShowDiscover] = useState(false);
 
   // Scheduled messages stay global while the modal remembers its composer.
-  const [scheduledList, setScheduledList] = useState<import("@/api/client").ScheduledPost[]>([]);
+  // The pending-schedule list is kept only so websocket/schedule handlers can
+  // update it; the count itself is surfaced by My Work rather than the sidebar.
+  const [, setScheduledList] = useState<import("@/api/client").ScheduledPost[]>([]);
   const [scheduleModalFor, setScheduleModalFor] = useState<
     | null
     | {
@@ -536,6 +562,7 @@ export function ChatView() {
         for (const m of members) {
           unreadNext[m.channel_id] = { msg: m.msg_count, mention: m.mention_count };
           if (m.notify_props) notifyNext[m.channel_id] = m.notify_props;
+          lastViewedRef.current[m.channel_id] = m.last_viewed_at;
         }
         setUnread(unreadNext);
         setChannelNotify(notifyNext);
@@ -584,6 +611,10 @@ export function ChatView() {
     const channelID = currentChannelId;
     setPosts([]);
     setLoadingPosts(true);
+    // Freeze the unread boundary now: the view call below resets the counters,
+    // and the marker must reflect what was unread when the reader arrived.
+    const hadUnread = (unreadRef.current[channelID]?.msg ?? 0) > 0;
+    setUnreadMarkerAt(hadUnread ? (lastViewedRef.current[channelID] ?? 0) : 0);
     api.listPosts(token, channelID)
       .then((list: PostList) => {
         if (postsLoadGenerationRef.current !== generation) return;
@@ -635,8 +666,10 @@ export function ChatView() {
             .catch(() => { /* ignore — star stays outline */ });
         }
 
-        // Mark viewed to clear unread.
+        // Mark viewed to clear unread. Record the moment locally so a later
+        // return to this channel places its marker after what was seen now.
         api.viewChannel(token, channelID).catch(() => undefined);
+        lastViewedRef.current[channelID] = Date.now();
         setUnread((u) => ({ ...u, [channelID]: { msg: 0, mention: 0 } }));
       })
       .catch((e) => {
@@ -806,6 +839,19 @@ export function ChatView() {
     () => selectChannelFileEntries(posts, currentChannelId, filesByID, users),
     [currentChannelId, filesByID, posts, users],
   );
+  const timeline = useMemo(
+    () => buildTimeline(posts, { unreadSince: unreadMarkerAt, currentUserId: user?.id }),
+    [posts, unreadMarkerAt, user?.id],
+  );
+  const timelinePostIds = useMemo(() => posts.map((post) => post.id), [posts]);
+  const timelineScroll = useTimelineScroll({
+    channelId: currentChannelId,
+    postIds: timelinePostIds,
+    latestAuthorId: posts[posts.length - 1]?.user_id,
+    currentUserId: user?.id,
+    loading: loadingPosts,
+    suspended: Boolean(navigationFocusPostID),
+  });
 
   function openChannelContext(tab: Exclude<WorkspaceContextTab, "thread">) {
     if (!currentChannel) return;
@@ -932,6 +978,7 @@ export function ChatView() {
       // shortly after and becomes a no-op if we already removed the row.
       setChannels((prev) => prev.filter((c) => c.id !== channelId));
       if (currentChannelId === channelId) setCurrentChannelId(null);
+      toast.success("채널을 보관했습니다.");
     } catch (e) {
       setError(e instanceof Error ? e.message : "채널 보관 실패");
     }
@@ -944,6 +991,7 @@ export function ChatView() {
       // The restore itself doesn't return the channel row, so refetch.
       loadChannels();
       if (showArchived) loadArchivedChannels();
+      toast.success("채널을 복원했습니다.");
     } catch (e) {
       setError(e instanceof Error ? e.message : "채널 복원 실패");
     }
@@ -961,23 +1009,9 @@ export function ChatView() {
     setSavedIds,
     confirmer,
     onError: setError,
+    onNotice: toast.success,
   });
 
-  // Phase 19 — scheduled-posts loader keeps the sidebar badge current.
-  const loadScheduledList = useCallback(async () => {
-    if (!token) return;
-    try {
-      const list = await api.listMyScheduledPosts(token);
-      setScheduledList(list ?? []);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "예약 메시지 로드 실패");
-    }
-  }, [token]);
-
-  // Pull the pending queue once at mount so the sidebar count is accurate
-  // before the user opens the 예약됨 view. Subsequent changes arrive via
-  // the scheduled_post_* WS events wired above.
-  useEffect(() => { loadScheduledList(); }, [loadScheduledList]);
 
   // Open the schedule modal from the MessageComposer. Captures the current
   // compose state + active channel so the submission path has what it
@@ -1035,6 +1069,7 @@ export function ChatView() {
         setRootComposerResetSeq((n) => n + 1);
       }
       setScheduleModalFor(null);
+      toast.success("메시지를 예약했습니다.");
       return true;
     } catch (e) {
       setError(e instanceof Error ? e.message : "예약 실패");
@@ -1050,6 +1085,7 @@ export function ChatView() {
     try {
       await api.createPostReminder(token, postId, when);
       setReminderForPostId(null);
+      toast.success("리마인더를 설정했습니다.");
       return true;
     } catch (e) {
       setError(e instanceof Error ? e.message : "리마인더 생성 실패");
@@ -1293,15 +1329,12 @@ export function ChatView() {
           users={users}
           statuses={statuses}
           unread={unread}
-          scheduledCount={scheduledList.length}
           showArchived={showArchived}
           isAdmin={isAdmin}
           onSelectTeam={selectTeam}
           onSelectChannel={selectChannel}
           onCreateTeam={onCreateTeam}
           onCreateChannel={onCreateChannel}
-          onOpenSaved={() => navigate("/my-work/saved")}
-          onOpenScheduled={() => navigate("/my-work/scheduled")}
           onOpenDiscover={() => setShowDiscover(true)}
           onToggleArchived={() => setShowArchived((value) => !value)}
           onRestoreChannel={onRestoreChannel}
@@ -1417,33 +1450,44 @@ export function ChatView() {
                 )}
               </div>
             ) : (
-              <div className="chat-messages">
-                {loadingPosts ? (
-                  <div className="chat-empty">불러오는 중…</div>
-                ) : posts.length === 0 ? (
-                  <div className="chat-empty">첫 메시지를 남겨보세요.</div>
-                ) : (
-                  posts.map((p) => (
-                    <MessageItem
-                      key={p.id}
-                      post={p}
-                      isMe={p.user_id === user?.id}
-                      author={users[p.user_id]}
-                      status={statuses[p.user_id]}
-                      reactions={reactionsByPost[p.id] ?? []}
-                      currentUserId={user?.id ?? ""}
-                      files={(p.file_ids ?? []).map((id) => filesByID[id]).filter(Boolean) as FileInfo[]}
-                      token={token ?? ""}
-                      domAnchorId={`channel-post-${p.id}`}
-                      isSaved={savedIds.has(p.id)}
-                      onToggleSaved={() => postActions.toggleSaved(p)}
-                      onToggleReaction={(emoji) => onToggleReaction(p, emoji)}
-                      onEdit={postActions.edit}
-                      onDelete={postActions.remove}
-                      onOpenThread={openThread}
-                      onRemindMe={() => setReminderForPostId(p.id)}
-                    />
-                  ))
+              <div className="chat-timeline-host">
+                <div className="chat-messages chat-messages-grouped" ref={timelineScroll.containerRef}>
+                  {loadingPosts ? (
+                    <div className="chat-empty">불러오는 중…</div>
+                  ) : posts.length === 0 ? (
+                    <div className="chat-empty">첫 메시지를 남겨보세요.</div>
+                  ) : (
+                    timeline.map((item) => {
+                      if (item.kind === "date") return <DateDivider key={item.key} label={item.label} at={item.at} />;
+                      if (item.kind === "unread") return <UnreadDivider key={item.key} />;
+                      const p = item.post;
+                      return (
+                        <MessageItem
+                          key={p.id}
+                          post={p}
+                          continuation={item.continuation}
+                          isMe={p.user_id === user?.id}
+                          author={users[p.user_id]}
+                          status={statuses[p.user_id]}
+                          reactions={reactionsByPost[p.id] ?? []}
+                          currentUserId={user?.id ?? ""}
+                          files={(p.file_ids ?? []).map((id) => filesByID[id]).filter(Boolean) as FileInfo[]}
+                          token={token ?? ""}
+                          domAnchorId={`channel-post-${p.id}`}
+                          isSaved={savedIds.has(p.id)}
+                          onToggleSaved={() => postActions.toggleSaved(p)}
+                          onToggleReaction={(emoji) => onToggleReaction(p, emoji)}
+                          onEdit={postActions.edit}
+                          onDelete={postActions.remove}
+                          onOpenThread={openThread}
+                          onRemindMe={() => setReminderForPostId(p.id)}
+                        />
+                      );
+                    })
+                  )}
+                </div>
+                {(timelineScroll.scrolledUp || timelineScroll.pendingCount > 0) && posts.length > 0 && (
+                  <JumpToLatestButton count={timelineScroll.pendingCount} onClick={timelineScroll.jumpToLatest} />
                 )}
               </div>
             )}
@@ -1485,7 +1529,6 @@ export function ChatView() {
           </div>
         )}
 
-        {error && <div className="login-error" style={{ margin: 12 }}>{error}</div>}
       </main>
       )}
       context={activePluginRHS ? (

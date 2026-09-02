@@ -219,6 +219,68 @@
   font-size: 18px;
 }
 
+/* Header actions never wrap: a label that does not fit is hidden, not
+ * broken across two lines. */
+.channel-context-action {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+.channel-plugin-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding-right: 6px;
+  margin-right: 2px;
+  border-right: 1px solid var(--flow-border, #dfe3ea);
+}
+
+.channel-plugin-action {
+  width: 36px;
+  padding: 0;
+}
+
+.channel-plugin-icon {
+  display: inline-flex;
+  font-size: 18px;
+}
+
+/* The search field yields before the actions do: it shrinks to a minimum
+ * and lets the labels collapse first. */
+.workspace-shell .chat-header-right .search-form {
+  flex: 0 1 240px;
+  min-width: 140px;
+}
+
+.workspace-shell .chat-header-right .search-input {
+  width: 100%;
+  min-width: 0;
+}
+
+.workspace-shell .chat-header-left {
+  min-width: 0;
+}
+
+/* Desktop always has room for the field; the toggle exists for touch only. */
+.channel-search-toggle {
+  display: none;
+}
+
+@media (max-width: 1280px) {
+  .workspace-shell .channel-context-actions .channel-context-action > span {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+  }
+  .workspace-shell .channel-context-actions .channel-context-action {
+    min-width: 36px;
+    padding: 0 6px;
+  }
+}
+
 .channel-context-action:hover,
 .channel-context-action.is-active {
   border-color: var(--flow-border, #dfe3ea);
@@ -723,9 +785,46 @@ html[data-theme="dark"] .context-panel-tab.is-active {
     min-height: 44px;
   }
 
+  /* One row of icon actions on a phone: no wrapping, no decorative divider.
+   * The search field, when opened, drops below the header instead of
+   * claiming a header row of its own. */
+  .workspace-shell .workspace-main-slot .chat-header {
+    position: relative;
+  }
+
+  .workspace-shell .chat-header-right {
+    flex-wrap: nowrap;
+    justify-content: flex-end;
+    gap: 2px;
+  }
+
+  .workspace-shell .chat-header-right .chat-header-divider {
+    display: none;
+  }
+
+  .workspace-shell .channel-plugin-actions {
+    padding-right: 2px;
+    margin-right: 0;
+    border-right: 0;
+  }
+
   .workspace-shell .chat-header-right .search-form {
-    order: 2;
-    flex: 1 0 100%;
+    display: none;
+  }
+
+  .workspace-shell .chat-header-right .search-form.is-open {
+    position: absolute;
+    top: calc(100% + 4px);
+    right: 12px;
+    left: 12px;
+    z-index: 6;
+    display: flex;
+    min-width: 0;
+    flex: none;
+  }
+
+  .workspace-shell .channel-search-toggle {
+    display: inline-flex;
   }
 
   .workspace-context-slot {

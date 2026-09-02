@@ -356,7 +356,7 @@ export function MyWorkPage({ initialTab = "tasks" }: { initialTab?: MyWorkTab })
                       {canUpdate && item.status === "open" && <Button variant="outlined" disabled={Boolean(updatingID)} onClick={() => void updateWorkItemStatus(item, "in_progress")}>시작</Button>}
                       {canUpdate && item.status !== "done" && item.status !== "cancelled" && <Button variant="outlined" disabled={Boolean(updatingID)} onClick={() => void updateWorkItemStatus(item, "done")}>완료</Button>}
                       {canUpdate && item.status === "done" && <Button variant="outlined" disabled={Boolean(updatingID)} onClick={() => void updateWorkItemStatus(item, "open")}>다시 열기</Button>}
-                      {item.created_by === currentUserID && <Button color="error" variant="outlined" startIcon={<DeleteOutlineRounded />} disabled={Boolean(updatingID)} onClick={() => setTarget({ kind: "tasks", id: item.id, title: "작업을 삭제할까요?" })}>삭제</Button>}
+                      {item.created_by === currentUserID && <Button className="flow-action-destructive" color="error" variant="text" startIcon={<DeleteOutlineRounded />} disabled={Boolean(updatingID)} onClick={() => setTarget({ kind: "tasks", id: item.id, title: "작업을 삭제할까요?" })}>삭제</Button>}
                     </div>
                   </article>
                 );
@@ -407,7 +407,7 @@ export function MyWorkPage({ initialTab = "tasks" }: { initialTab?: MyWorkTab })
                       {canReview && item.status === "proposed" && <Button variant="outlined" disabled={Boolean(updatingID)} onClick={() => void updateWorkItemStatus(item, "under_review")}>검토 시작</Button>}
                       {canReview && (item.status === "proposed" || item.status === "under_review") && <Button variant="outlined" disabled={Boolean(updatingID)} onClick={() => void updateWorkItemStatus(item, "recorded")}>확정</Button>}
                       {item.created_by === currentUserID && item.status === "recorded" && source && <Button variant="outlined" disabled={Boolean(updatingID)} onClick={() => workItemCreation.open(source, "decision", { supersedesID: item.id })}>대체 결정</Button>}
-                      {item.created_by === currentUserID && <Button color="error" variant="outlined" startIcon={<DeleteOutlineRounded />} disabled={Boolean(updatingID)} onClick={() => setTarget({ kind: "decisions", id: item.id, title: "결정 기록을 삭제할까요?" })}>삭제</Button>}
+                      {item.created_by === currentUserID && <Button className="flow-action-destructive" color="error" variant="text" startIcon={<DeleteOutlineRounded />} disabled={Boolean(updatingID)} onClick={() => setTarget({ kind: "decisions", id: item.id, title: "결정 기록을 삭제할까요?" })}>삭제</Button>}
                     </div>
                   </article>
                 );

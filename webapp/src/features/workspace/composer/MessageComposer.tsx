@@ -277,7 +277,9 @@ export function MessageComposer({
           <span className={`composer-ai-status ${canUseAI ? "is-available" : ""}`}>{aiStatus}</span>
         </div>
 
-        {canUseAI && (
+        {canUseAI && (value.trim().length > 0 || rewriteMode) && (
+          // The rewrite modes only apply to text, so they appear once there
+          // is text; an empty composer keeps its chrome to the input.
           <div className="composer-ai-tools" aria-label="AI 메시지 다듬기">
             <span>AI 다듬기</span>
             {REWRITE_MODES.map((mode) => (

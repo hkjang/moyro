@@ -405,23 +405,25 @@ export function UnifiedInboxPage() {
             ) : undefined}
           >
             <div className="flow-toolbar flow-activity-filters" aria-label="업데이트 표시 옵션">
-              <div className="flow-badges">
-                <Button
-                  size="small"
-                  variant={showCompleted ? "contained" : "outlined"}
+              <div className="flow-badges" role="group" aria-label="표시 필터">
+                <Chip
+                  component="button"
+                  clickable
+                  label={`완료 ${completedCount}`}
+                  color={showCompleted ? "primary" : "default"}
+                  variant={showCompleted ? "filled" : "outlined"}
                   onClick={() => setShowCompleted((current) => !current)}
                   aria-pressed={showCompleted}
-                >
-                  완료 {completedCount}
-                </Button>
-                <Button
-                  size="small"
-                  variant={showSnoozed ? "contained" : "outlined"}
+                />
+                <Chip
+                  component="button"
+                  clickable
+                  label={`미룬 항목 ${snoozedCount}`}
+                  color={showSnoozed ? "primary" : "default"}
+                  variant={showSnoozed ? "filled" : "outlined"}
                   onClick={() => setShowSnoozed((current) => !current)}
                   aria-pressed={showSnoozed}
-                >
-                  미룬 항목 {snoozedCount}
-                </Button>
+                />
               </div>
               <Typography className="flow-item-subtitle">새 업데이트 {unreadActivityIDs.length}개</Typography>
             </div>
@@ -454,7 +456,6 @@ export function UnifiedInboxPage() {
                       <div className="flow-list-main">
                         <div className="flow-badges">
                           <FlowStatusBadge label={ACTIVITY_TYPE_LABELS[event.type]} tone={activityTone(event.type)} />
-                          {event.read_at === 0 && <Chip size="small" label="새 항목" color="primary" />}
                           {priority && <Chip size="small" label="우선순위" color="warning" />}
                           {completed && <FlowStatusBadge label="완료" tone="success" />}
                           {snoozed && <Chip size="small" variant="outlined" label={`${formatDateTime(event.snoozed_until)}까지 미룸`} />}
@@ -527,7 +528,7 @@ export function UnifiedInboxPage() {
                           </>
                         )}
                         <Button
-                          variant={completed ? "outlined" : "contained"}
+                          variant="outlined"
                           startIcon={<CheckCircleOutlineRounded />}
                           disabled={busy}
                           onClick={() => void patchActivity(

@@ -8,6 +8,7 @@ import PeopleAltOutlined from "@mui/icons-material/PeopleAltOutlined";
 import SearchRounded from "@mui/icons-material/SearchRounded";
 import SettingsRounded from "@mui/icons-material/SettingsRounded";
 import SummarizeRounded from "@mui/icons-material/SummarizeRounded";
+import ExtensionOutlined from "@mui/icons-material/ExtensionOutlined";
 import type {
   Channel,
   ChannelNotifyProps,
@@ -129,6 +130,9 @@ function ChannelSettingsMenu({
 
 export function ChannelHeader(props: ChannelHeaderProps) {
   const pluginRegistry = usePluginRegistryState();
+  // Below the tablet breakpoint the search field is hidden behind a toggle;
+  // the always-visible full-width input otherwise cost the mobile header a row.
+  const [mobileSearchOpen, setMobileSearchOpen] = useState(false);
   const {
     token,
     currentUser,
@@ -202,20 +206,31 @@ export function ChannelHeader(props: ChannelHeaderProps) {
         </h2>
       </div>
       <div className="chat-header-right">
+        {pluginRegistry.channelHeaderButtons.length > 0 && (
+          // Plugin actions are icon-only so an arbitrary number of them — with
+          // labels the product does not control — cannot push the built-in
+          // actions or the search field out of the header.
+          <div className="channel-plugin-actions" role="group" aria-label="플러그인 작업">
+            {pluginRegistry.channelHeaderButtons.map((button) => {
+              const label = button.tooltipText || button.dropdownText;
+              return (
+                <button
+                  key={button.id}
+                  type="button"
+                  className="channel-context-action channel-plugin-action"
+                  aria-label={label}
+                  title={label}
+                  onClick={() => button.action(channel)}
+                >
+                  <span className="channel-plugin-icon" aria-hidden>
+                    {resolvePluginIcon(button.icon) ?? <ExtensionOutlined fontSize="inherit" />}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        )}
         <div className="channel-context-actions" aria-label="채널 컨텍스트 열기">
-          {pluginRegistry.channelHeaderButtons.map((button) => (
-            <button
-              key={button.id}
-              type="button"
-              className="channel-context-action"
-              aria-label={button.tooltipText || button.dropdownText}
-              title={button.tooltipText || button.dropdownText}
-              onClick={() => button.action(channel)}
-            >
-              <span aria-hidden>{resolvePluginIcon(button.icon)}</span>
-              <span>{button.dropdownText}</span>
-            </button>
-          ))}
           <button
             type="button"
             className={`channel-context-action ${activeContext === "summary" ? "is-active" : ""}`}
@@ -247,8 +262,17 @@ export function ChannelHeader(props: ChannelHeaderProps) {
             <span>정보</span>
           </button>
         </div>
+        <button
+          type="button"
+          className="channel-context-action channel-search-toggle"
+          aria-label="메시지 검색 열기"
+          aria-expanded={mobileSearchOpen}
+          onClick={() => setMobileSearchOpen((value) => !value)}
+        >
+          <SearchRounded fontSize="inherit" aria-hidden />
+        </button>
         <form
-          className="search-form"
+          className={`search-form ${mobileSearchOpen || searchOpen ? "is-open" : ""}`}
           onSubmit={(event) => {
             event.preventDefault();
             onSearch();

@@ -43,7 +43,7 @@ set.
 
 ## Current Product Shape
 
-moyro v0.2.7 presents collaboration as Moyro Flow: **read conversations, make
+moyro v0.2.8 presents collaboration as Moyro Flow: **read conversations, make
 decisions, and act in one workspace**. A global navigation rail connects
 Today, a durable user-scoped activity inbox, the channel workspace, tasks,
 decisions, saved/scheduled/reminder data in My Work, approval history and
@@ -76,7 +76,7 @@ as proof that the runtime is healthy. Other compatibility surfaces may be
 partial.
 The site policy also controls whether browser drafts use seven-day local
 retention by default, current-session storage, or no local storage, and whether
-logout clears the current user's stored drafts. The supported v0.2.7 deployment
+logout clears the current user's stored drafts. The supported v0.2.8 deployment
 is one application container with external
 PostgreSQL and local file storage. Unconfigured SMTP is exposed as a disabled
 capability and does not start a digest worker. S3, Redis fan-out, outbound link
@@ -92,7 +92,7 @@ tests 0.6.5.
 
 The release also introduces checksummed migrations, scheduled-post leases,
 hash-first session lookup, a durable outgoing-webhook delivery queue, and
-route-level web code splitting. v0.2.7 keeps the HttpOnly browser session-token
+route-level web code splitting. v0.2.8 keeps the HttpOnly browser session-token
 contract and bounded SSO response-loss recovery, and adds restricted guest
 access plus idempotent Keycloak group-to-team/channel/role provisioning. Future
 HA settings propagation remains outside the single-replica operational

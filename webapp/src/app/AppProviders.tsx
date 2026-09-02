@@ -6,6 +6,7 @@ import { AdminAccessProvider } from "@/features/admin/AdminAccessContext";
 import { ThemePreferenceProvider } from "@/features/theme/ThemePreferenceProvider";
 import { moyroTheme } from "@/theme/moyroTheme";
 import { PluginLoader } from "@/plugins/PluginLoader";
+import { ToastProvider } from "@/components/feedback/ToastProvider";
 
 export function AppProviders({ children }: { children: React.ReactNode }) {
   return (
@@ -22,7 +23,9 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
           <PluginLoader />
           <SystemInfoProvider>
             <AdminAccessProvider>
-              <BrowserRouter>{children}</BrowserRouter>
+              <ToastProvider>
+                <BrowserRouter>{children}</BrowserRouter>
+              </ToastProvider>
             </AdminAccessProvider>
           </SystemInfoProvider>
         </ThemePreferenceProvider>

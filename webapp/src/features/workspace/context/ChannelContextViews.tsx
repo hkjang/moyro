@@ -3,6 +3,7 @@ import DownloadRounded from "@mui/icons-material/DownloadRounded";
 import type { Channel, ChannelStats, FileInfo, Post, Team } from "@/api/client";
 import { api } from "@/api/client";
 import { downloadAuthenticatedMedia } from "@/components/AuthenticatedMedia";
+import { formatDateTime } from "@/lib/time";
 
 export type ChannelSummarySource = {
   ref: string;
@@ -19,16 +20,6 @@ export type ChannelFileEntry = {
 };
 
 type JumpHandler = (postId: string) => void;
-
-function formatDateTime(value: number): string {
-  return new Date(value).toLocaleString([], {
-    year: "numeric",
-    month: "short",
-    day: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
-}
 
 function formatBytes(bytes: number): string {
   if (!bytes) return "0 B";

@@ -3,7 +3,7 @@ import { api, publicMoyroApi, type SystemInfo } from "@/api/client";
 
 const FALLBACK_INFO: SystemInfo = {
   name: "moyro",
-  version: "0.2.7",
+  version: "0.2.8",
   build_hash: "",
   build_date: "",
   oidc_enabled: false,

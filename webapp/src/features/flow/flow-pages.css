@@ -138,6 +138,9 @@
 }
 .flow-list-main { min-width: 0; flex: 1; }
 .flow-list-actions { display: flex; align-items: center; justify-content: flex-end; gap: 8px; flex-wrap: wrap; }
+/* A destructive action sits apart from the primary ones with lighter weight,
+ * so "완료" and "삭제" are never two equal buttons side by side. */
+.flow-list-actions .flow-action-destructive { margin-left: 12px; }
 .flow-item-title { color: var(--flow-text); font-size: 14px !important; font-weight: 720 !important; line-height: 1.4 !important; }
 .flow-item-subtitle { margin-top: 3px !important; color: var(--flow-muted); font-size: 12px !important; line-height: 1.5 !important; }
 .flow-item-message {

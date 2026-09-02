@@ -267,17 +267,19 @@ export function LoginView() {
           </div>
         )}
 
-        <div className="login-tabs" role="tablist">
-          <button
-            type="button"
-            role="tab"
-            aria-selected={mode === "login"}
-            className="login-tab"
-            onClick={() => { setMode("login"); setError(null); }}
-          >
-            로그인
-          </button>
-          {canRegister && (
+        {canRegister && (
+          // A tab strip with one tab is a decoration, not a control; it only
+          // renders once there is a second mode to switch to.
+          <div className="login-tabs" role="tablist">
+            <button
+              type="button"
+              role="tab"
+              aria-selected={mode === "login"}
+              className="login-tab"
+              onClick={() => { setMode("login"); setError(null); }}
+            >
+              로그인
+            </button>
             <button
               type="button"
               role="tab"
@@ -287,8 +289,8 @@ export function LoginView() {
             >
               회원가입
             </button>
-          )}
-        </div>
+          </div>
+        )}
 
         <form onSubmit={submit}>
           {mode === "login" ? (

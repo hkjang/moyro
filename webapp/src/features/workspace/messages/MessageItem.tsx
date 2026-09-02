@@ -26,6 +26,7 @@ import { useDocumentCreation } from "@/features/knowledge/DocumentCreationProvid
 import { WorkspaceAvatar } from "@/features/workspace/sidebar/WorkspaceAvatar";
 import { PluginSurface } from "@/plugins/PluginSurface";
 import { usePluginRegistryState } from "@/plugins/registry";
+import { formatClockTime, formatDateTime } from "@/lib/time";
 import "@/features/workspace/messages/message-item.css";
 
 const QUICK_EMOJIS = ["+1", "heart", "tada", "laughing", "eyes", "rocket"];
@@ -45,10 +46,6 @@ const EMOJI_MAP: Record<string, string> = {
 
 function emojiCharacter(name: string): string {
   return EMOJI_MAP[name] ?? `:${name}:`;
-}
-
-function formatMessageTime(value: number): string {
-  return new Date(value).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 }
 
 function humanFileSize(bytes: number): string {
@@ -84,6 +81,13 @@ export type MessageItemProps = {
   channelLabel?: string;
   onJumpToChannel?: () => void;
   onRemindMe?: () => void;
+  /**
+   * True when this post directly follows another by the same author within
+   * the grouping window. The row then drops its avatar/name/time header and
+   * reads as a continuation line; the time remains reachable on hover, focus,
+   * and in the accessible name.
+   */
+  continuation?: boolean;
 };
 
 export function MessageItem(props: MessageItemProps) {
@@ -111,6 +115,7 @@ export function MessageItem(props: MessageItemProps) {
     channelLabel,
     onJumpToChannel,
     onRemindMe,
+    continuation = false,
   } = props;
   const [editing, setEditing] = useState(false);
   const [editSaving, setEditSaving] = useState(false);
@@ -161,11 +166,21 @@ export function MessageItem(props: MessageItemProps) {
   return (
     <div
       id={domAnchorId}
-      className={`msg workspace-message-item ${isMe ? "msg-me" : ""} ${compact ? "msg-compact" : ""}`}
+      className={`msg workspace-message-item ${isMe ? "msg-me" : ""} ${compact ? "msg-compact" : ""} ${continuation ? "msg-continuation" : ""}`}
       role="group"
-      aria-label={`${authorName}의 메시지`}
+      aria-label={`${authorName}의 메시지, ${formatDateTime(post.create_at)}`}
       tabIndex={-1}
     >
+      {continuation && (
+        <time
+          className="msg-continuation-time"
+          dateTime={new Date(post.create_at).toISOString()}
+          title={formatDateTime(post.create_at)}
+          aria-hidden
+        >
+          {formatClockTime(post.create_at)}
+        </time>
+      )}
       <div className="msg-meta">
         <WorkspaceAvatar
           token={token}
@@ -177,8 +192,12 @@ export function MessageItem(props: MessageItemProps) {
           updateAt={author?.update_at}
         />
         <span className="msg-author">{authorName}</span>
-        <time className="msg-time" dateTime={new Date(post.create_at).toISOString()}>
-          {formatMessageTime(post.create_at)}
+        <time
+          className="msg-time"
+          dateTime={new Date(post.create_at).toISOString()}
+          title={formatDateTime(post.create_at)}
+        >
+          {formatClockTime(post.create_at)}
         </time>
         {edited && <span className="msg-edited">(편집됨)</span>}
         {post.is_pinned && <PushPinRounded className="msg-pinned" fontSize="inherit" aria-label="고정된 메시지" />}

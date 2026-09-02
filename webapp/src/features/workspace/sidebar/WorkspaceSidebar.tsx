@@ -20,15 +20,12 @@ type WorkspaceSidebarProps = {
   users: Record<string, User>;
   statuses: Record<string, UserStatusValue>;
   unread: Record<string, WorkspaceUnreadEntry>;
-  scheduledCount: number;
   showArchived: boolean;
   isAdmin: boolean;
   onSelectTeam: (teamId: string) => void;
   onSelectChannel: (channelId: string) => void;
   onCreateTeam: () => void;
   onCreateChannel: () => void;
-  onOpenSaved: () => void;
-  onOpenScheduled: () => void;
   onOpenDiscover: () => void;
   onToggleArchived: () => void;
   onRestoreChannel: (channelId: string) => void;
@@ -188,15 +185,12 @@ export function WorkspaceSidebar(props: WorkspaceSidebarProps) {
     users,
     statuses,
     unread,
-    scheduledCount,
     showArchived,
     isAdmin,
     onSelectTeam,
     onSelectChannel,
     onCreateTeam,
     onCreateChannel,
-    onOpenSaved,
-    onOpenScheduled,
     onOpenDiscover,
     onToggleArchived,
     onRestoreChannel,
@@ -257,31 +251,6 @@ export function WorkspaceSidebar(props: WorkspaceSidebarProps) {
 
       {currentTeamId && (
         <>
-          <div className="item-list" style={{ marginBottom: 4 }}>
-            <button
-              type="button"
-              className="item"
-              onClick={() => { onCloseMobile(); onOpenSaved(); }}
-              title="북마크한 메시지 모아보기"
-            >
-              ⭐ 저장됨
-            </button>
-            <button
-              type="button"
-              className="item"
-              onClick={() => { onCloseMobile(); onOpenScheduled(); }}
-              title="예약된 메시지"
-              style={{ display: "flex", alignItems: "center", gap: 6 }}
-            >
-              <span style={{ flex: 1 }}>🕐 예약됨</span>
-              {scheduledCount > 0 && (
-                <span className="unread-badge" aria-label={`예약 ${scheduledCount}건`}>
-                  {scheduledCount}
-                </span>
-              )}
-            </button>
-          </div>
-
           {favoriteChannels.length > 0 && (
             <>
               <SectionTitle>⭐ 즐겨찾기</SectionTitle>

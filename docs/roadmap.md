@@ -59,12 +59,16 @@ Next polish:
 - Add structured claim/source AI output and server-side retrieval before
   describing summaries as RAG or citation-complete.
 - Continue extracting orchestration from `ChatView.tsx` below its CI
-  source-size ratchet; session management, archived channels, and message
-  actions already live in their own hooks, and the legacy global stylesheet is
-  now split by area.
-- Replace the bounded live-post window with real timeline virtualization so
-  scrolling back through long history stops depending on how much the client
-  is willing to retain.
+  source-size ratchet; session management, archived channels, message actions,
+  the timeline model, and scroll ownership already live in their own hooks,
+  and the legacy global stylesheet is split by area.
+- Add skeleton placeholders for the message list and sidebar; spinners still
+  cause a layout jump on first paint.
+- Add a keyboard-shortcut reference; only the Cmd+K switcher is discoverable
+  today.
+- Replace the bounded live-post window with real timeline virtualization and
+  history paging so scrolling back through long history stops depending on how
+  much the client is willing to retain.
 - Expand focus management and roving keyboard navigation across older dialogs
   and menus.
 

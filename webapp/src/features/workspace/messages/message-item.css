@@ -139,3 +139,62 @@
     outline-color: Highlight;
   }
 }
+
+/* ── Continuation rows ──────────────────────────────────────────────────
+ * A post that follows another by the same author within the grouping window
+ * hides its header. The time stays available: it is announced in the row's
+ * accessible name, shown in the tooltip, and revealed at the left edge on
+ * hover or focus. Tighter vertical padding keeps a run of short lines from
+ * reading as separate messages. */
+.chat-shell .msg.msg-continuation {
+  padding-top: 2px;
+  padding-bottom: 3px;
+}
+
+.workspace-message-item.msg-continuation .msg-meta {
+  display: none;
+}
+
+.workspace-message-item .msg-continuation-time {
+  position: absolute;
+  top: 5px;
+  left: 8px;
+  width: 42px;
+  color: var(--flow-text-muted, #667085);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+  text-align: right;
+  white-space: nowrap;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.workspace-message-item.msg-continuation:hover .msg-continuation-time,
+.workspace-message-item.msg-continuation:focus-within .msg-continuation-time {
+  opacity: 1;
+}
+
+/* Every grouped row shares a left gutter wide enough for the revealed time,
+ * so header rows and continuation lines keep the same text edge. */
+.chat-shell .chat-messages.chat-messages-grouped .msg {
+  padding-left: 58px;
+}
+
+@media (max-width: 640px) {
+  /* No hover on touch; the time lives in the tooltip and label instead. */
+  .workspace-message-item .msg-continuation-time {
+    display: none;
+  }
+  .chat-shell .chat-messages.chat-messages-grouped .msg {
+    padding-left: 16px;
+  }
+}
+
+@media (max-width: 960px), (hover: none) and (pointer: coarse) {
+  /* The always-visible action button on touch layouts sits over the row's
+   * right edge; keep the whole row — not just its header — clear of it. */
+  .workspace-message-item:not(.msg-compact) {
+    padding-right: 56px;
+  }
+}

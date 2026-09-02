@@ -1,6 +1,6 @@
 # Moyro Flow Design Rules
 
-Status date: 2026-08-30
+Status date: 2026-09-02
 
 Moyro keeps familiar channel, message, thread, and keyboard behavior at its
 Mattermost-compatible boundary. Its product interface is independently
@@ -55,10 +55,17 @@ not write `html[data-theme]` directly.
   channel, or direct conversation inside the workspace.
 - Messages remain flat rows rather than speech bubbles. Hover and focus expose
   compact communication actions; workflow actions live in the more menu.
+- Consecutive posts by one author within five minutes group under a single
+  header; a day separator and the "새 메시지" marker always start a new group.
+  The channel opens on the newest message and offers "최신 메시지로" once the
+  reader scrolls up, rather than moving the view under them.
+- Every timestamp comes from `webapp/src/lib/time.ts`; no surface formats time
+  on its own.
 - The right side is one context panel with thread, summary, files, and channel
   information—not several competing drawers.
 - My Work owns saved messages, scheduled posts, and reminders. They must not be
-  styled or routed as pseudo-channels.
+  styled or routed as pseudo-channels; the workspace sidebar no longer lists
+  them.
 - Approval is a global work surface, not a personal-setting subsection.
 - Admin entry pages lead with actual operating state and unknown/error states,
   not only navigation cards or optimistic green indicators.

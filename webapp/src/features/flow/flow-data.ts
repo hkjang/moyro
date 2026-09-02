@@ -38,33 +38,9 @@ export function postNavigationState(postID: string): { focusPostId: string } {
   return { focusPostId: postID };
 }
 
-export function formatDateTime(value: number): string {
-  if (!value) return "—";
-  return new Intl.DateTimeFormat("ko-KR", {
-    dateStyle: "medium",
-    timeStyle: "short",
-  }).format(value);
-}
-
-export function formatRelativeTime(value: number): string {
-  if (!value) return "—";
-  const delta = value - Date.now();
-  const abs = Math.abs(delta);
-  const formatter = new Intl.RelativeTimeFormat("ko-KR", { numeric: "auto" });
-  if (abs < 60_000) return formatter.format(Math.round(delta / 1_000), "second");
-  if (abs < 3_600_000) return formatter.format(Math.round(delta / 60_000), "minute");
-  if (abs < 86_400_000) return formatter.format(Math.round(delta / 3_600_000), "hour");
-  return formatter.format(Math.round(delta / 86_400_000), "day");
-}
-
-export function isToday(value: number): boolean {
-  if (!value) return false;
-  const target = new Date(value);
-  const today = new Date();
-  return target.getFullYear() === today.getFullYear()
-    && target.getMonth() === today.getMonth()
-    && target.getDate() === today.getDate();
-}
+// Time formatting is shared with the workspace so every surface renders the
+// same strings for the same instant.
+export { formatDateTime, formatRelativeTime, isToday } from "@/lib/time";
 
 type SavedPostsWire = {
   order?: unknown;

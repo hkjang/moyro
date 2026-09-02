@@ -99,6 +99,17 @@ Important modules:
 - `features/workspace/model/post-window.ts` bounds how many live posts the
   channel view retains, so a long-lived session in a busy channel cannot grow
   its state and DOM without limit.
+- `features/workspace/model/timeline.ts` turns the post list into the rows the
+  channel renders — day separators, the unread marker, and continuation flags
+  for grouped follow-ups — and `useTimelineScroll.ts` keeps the view pinned to
+  the newest message until the reader scrolls up, counting arrivals after that.
+- `lib/time.ts` is the only time formatter. The clock and day labels are
+  assembled by hand because ICU's Korean day-period output differs between
+  CLDR releases; every surface imports from here so the same instant never
+  renders two ways on one screen.
+- `components/feedback/ToastProvider.tsx` is the one feedback surface for
+  confirmations and failures; `useToast()` is a no-op outside the provider so
+  components stay renderable in isolation.
 - `features/theme/ThemePreferenceProvider.tsx` is the single owner of MUI,
   first-paint, local-cache, and server-backed theme state.
 - `features/shell/ProductShell.tsx` owns the global rail and mobile bottom

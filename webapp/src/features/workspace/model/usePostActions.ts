@@ -38,6 +38,8 @@ export type PostActionsOptions = {
   setSavedIds: Dispatch<SetStateAction<Set<string>>>;
   confirmer: Confirmer;
   onError: (message: string) => void;
+  /** Optional confirmation channel for actions that otherwise finish silently. */
+  onNotice?: (message: string) => void;
 };
 
 /** How long the ephemeral slash-command banner stays up. */
@@ -61,6 +63,7 @@ export function usePostActions({
   setSavedIds,
   confirmer,
   onError,
+  onNotice,
 }: PostActionsOptions): PostActions {
   const [commandNotice, setCommandNotice] = useState<string | null>(null);
 
@@ -156,12 +159,13 @@ export function usePostActions({
       try {
         if (wasSaved) await api.unsavePost(token, post.id);
         else await api.savePost(token, post.id);
+        onNotice?.(wasSaved ? "저장을 해제했습니다." : "메시지를 저장했습니다. 내 업무에서 볼 수 있습니다.");
       } catch (e) {
         apply(wasSaved);
         onError(e instanceof Error ? e.message : "저장 실패");
       }
     },
-    [token, savedIds, setSavedIds, onError],
+    [token, savedIds, setSavedIds, onError, onNotice],
   );
 
   const dismissCommandNotice = useCallback(() => setCommandNotice(null), []);
