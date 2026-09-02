@@ -400,6 +400,35 @@ func TestExecuteFiltersMentionsToCurrentChannelMembers(t *testing.T) {
 	}
 }
 
+func TestExecuteNotifiesMentionsWrittenWithPunctuationOrCase(t *testing.T) {
+	channelSvc := &fakeChannels{member: true}
+	activity := &fakeActivity{}
+	userSvc := &fakeUsers{resolved: map[string]string{
+		"alice": "user-alice", "build.bot": "user-bot",
+	}}
+	service := New(Dependencies{
+		Channels: channelSvc,
+		Posts:    &fakePosts{},
+		Users:    userSvc,
+		Events:   &fakeEvents{}, Activity: activity,
+		Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
+	})
+	if _, err := service.Execute(context.Background(), Command{
+		Source: SourceREST, ActorID: "author", ChannelID: "channel-1",
+		Message: "cc @Alice. reviewed by @build.bot, mail ops@example.com",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(activity.mentionIDs, []string{"user-alice", "user-bot"}) {
+		t.Fatalf("mention ids = %#v, want both handles resolved", activity.mentionIDs)
+	}
+	for _, name := range userSvc.resolvedNames {
+		if name == "example.com" {
+			t.Fatalf("email address produced a mention candidate: %#v", userSvc.resolvedNames)
+		}
+	}
+}
+
 func TestExecuteAppliesTrustedMCPMetadataAfterPluginHooks(t *testing.T) {
 	pluginOutput, err := json.Marshal(posts.Post{
 		Message: "plugin changed",
