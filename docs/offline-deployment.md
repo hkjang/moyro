@@ -1,16 +1,16 @@
 # moyro Offline Deployment Guide
 
-This guide describes how to install the v0.2.11 moyro service image in a network
+This guide describes how to install the v0.2.12 moyro service image in a network
 with no internet access after its release archive is published. The
 archive contains the application and web UI. It does not contain PostgreSQL; a
 reachable PostgreSQL service must already exist inside the target network.
 
 ## Release artifact contract
 
-For the `v0.2.11` release tag:
+For the `v0.2.12` release tag:
 
-- Docker image: `moyro:v0.2.11`
-- Downloaded file: `moyro-v0.2.11.tar.gz`
+- Docker image: `moyro:v0.2.12`
+- Downloaded file: `moyro-v0.2.12.tar.gz`
 - Supported platform for the initial release: `linux/amd64`
 
 After publication, transfer the archive through the organization's approved
@@ -18,14 +18,14 @@ media and integrity process. Compare it with the SHA-256 in the release notes
 before loading the image:
 
 ```bash
-sha256sum moyro-v0.2.11.tar.gz
+sha256sum moyro-v0.2.12.tar.gz
 ```
 
 Load it without contacting a registry:
 
 ```bash
-docker load --input moyro-v0.2.11.tar.gz
-docker image inspect moyro:v0.2.11
+docker load --input moyro-v0.2.12.tar.gz
+docker image inspect moyro:v0.2.12
 ```
 
 ## PostgreSQL preparation
@@ -89,7 +89,7 @@ docker run -d \
   --env-file /etc/moyro/moyro.env \
   --mount type=volume,src=moyro-data,dst=/var/lib/moyro \
   --publish 8065:8065 \
-  moyro:v0.2.11
+  moyro:v0.2.12
 ```
 
 Check startup and open `http://<server>:8065/`:
@@ -106,7 +106,7 @@ can use bounded local retention, session-only storage, or no browser storage;
 logout cleanup is controlled by the same site policy. Those values are stored
 in PostgreSQL; provider secrets are encrypted before storage.
 
-v0.2.11 ignores forwarding headers by default. Add only the reverse proxy's
+v0.2.12 ignores forwarding headers by default. Add only the reverse proxy's
 explicit IP CIDRs to **Trusted proxy CIDRs** after configuring that proxy to
 remove client-supplied `Forwarded` and `X-Forwarded-For` values. A request's
 immediate TCP peer must match one of those CIDRs before moyro resolves the
@@ -122,7 +122,7 @@ port, or path in the allow-list entry.
 The Mattermost-compatible `GET /api/v4/config` endpoint is an operational
 snapshot, not a second configuration store. Its legacy `PUT /config`,
 `PUT /config/patch`, and `POST /config/reload` mutations return a 501
-Mattermost AppError in v0.2.11. SMTP, S3, Redis, and link-preview toggles
+Mattermost AppError in v0.2.12. SMTP, S3, Redis, and link-preview toggles
 therefore cannot appear to save successfully. Runtime plugin lifecycle is a
 separate supported native workflow: an administrator with `manage_plugins`
 can upload, replace, enable, disable, configure, and delete reviewed
@@ -136,7 +136,7 @@ The native product API contract is published separately from compatibility
 routes: [`openapi-moyro.yaml`](openapi-moyro.yaml) covers `/api/moyro/v1`, while
 [`openapi-v4.yaml`](openapi-v4.yaml) covers the Mattermost-compatible `/api/v4`.
 
-Run exactly one moyro application container in v0.2.11. PostgreSQL may be
+Run exactly one moyro application container in v0.2.12. PostgreSQL may be
 managed separately, but multi-replica application deployment and cross-node
 live-setting propagation are not supported until the HA/Redis work is
 completed.
@@ -213,7 +213,7 @@ file volume can retain message metadata while losing attachments.
 v0.2.4 added migration `000011_login_handoffs`, which stores only SHA-256
 digests of short-lived SSO codes and browser bindings. v0.2.5 added
 `000012_sso_handoff_idempotency`, recording the completed session and exchange
-time needed for the bounded response-loss recovery window. v0.2.11 adds
+time needed for the bounded response-loss recovery window. v0.2.12 adds
 `000013_work_management`, `000014_knowledge_documents`, and
 `000015_collaboration_controls` for durable automation/work lifecycles,
 source-watermarked documents, inbox rules, and restricted guests. Startup
@@ -221,7 +221,7 @@ applies them through the checksummed migration ledger and transactions. Keep
 the pre-upgrade database backup because an image-only rollback is not a
 supported way to remove an applied migration.
 
-Do not mix an earlier pre-moyro development build with a v0.2.11 node. Upgrade
+Do not mix an earlier pre-moyro development build with a v0.2.12 node. Upgrade
 the service as one coordinated operation and verify the matching database
 backup before discarding the prior container.
 
@@ -235,7 +235,7 @@ On a connected staging host, preload `postgres:16-alpine` and run the same
 offline check used by the release workflow:
 
 ```bash
-bash scripts/verify-release.sh moyro:v0.2.11 moyro-v0.2.11.tar.gz
+bash scripts/verify-release.sh moyro:v0.2.12 moyro-v0.2.12.tar.gz
 ```
 
 The script loads the archive, creates an internal-only Docker network, starts
@@ -260,7 +260,7 @@ logs in again. Temporary containers, network, and volume are removed on exit.
 - Conversation-derived tasks and decisions survive restart, retain source links,
   and do not become visible outside creator/assignee/channel membership rules.
 - SMTP delivery, S3 storage, Redis fan-out, and outbound link previews remain
-  explicitly unsupported in v0.2.11 rather than reporting a false successful
+  explicitly unsupported in v0.2.12 rather than reporting a false successful
   save. Runtime plugin upload and lifecycle management are supported only for
   reviewed Trusted Native archives through the native plugin page/API.
 - Network controls independently restrict container egress to approved internal
