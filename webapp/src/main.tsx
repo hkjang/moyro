@@ -7,6 +7,11 @@ import { App } from "@/components/App";
 import { AppProviders } from "@/app/AppProviders";
 import { bootstrapPluginRuntime } from "@/plugins/runtime";
 import "@/index.css";
+// Ordered continuations of index.css. The cascade depends on this sequence,
+// so keep these three immediately after it.
+import "@/styles/admin.css";
+import "@/styles/features.css";
+import "@/styles/workspace-chrome.css";
 import "@/styles/tokens.css";
 import "@/styles/base.css";
 import "@/styles/accessibility.css";

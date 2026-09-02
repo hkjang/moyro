@@ -1,0 +1,1599 @@
+/* Mattermost-compatible theming, sidebar, user menu, and polish passes.
+ *
+ * Split out of the former single index.css. main.tsx imports these files
+ * in their original order, so the cascade is byte-for-byte what it was
+ * before the split — nothing here was reordered or rewritten.
+ * ------------------------------------------------------------------ */
+
+/* =====================================================================
+   Phase 21 — Mattermost API compat wave 1
+   ===================================================================== */
+
+/* Theme overrides. The :root defaults are Mattermost-clean light tokens
+   (white surface, #1c58d9 accent). The webapp's theme picker sets
+   <html data-theme="light|dark"> via the prefs row display_settings/theme;
+   "system" resolves to either at runtime via prefers-color-scheme. The
+   light block below is intentionally a verbatim restatement of :root so
+   an explicit pick wins even if a sibling rule mutates :root in the
+   future; the dark block flips the palette to Mattermost's dark-mode
+   surface (#1f1f1f center, brighter #5d89ea accent for contrast). */
+html[data-theme="light"] {
+  --bg: #f4f5f7;
+  --bg-grad-1: #e9edf3;
+  --bg-grad-2: #f4f5f7;
+  --card: #ffffff;
+  --card-border: #d9dce3;
+  --fg: #1f2937;
+  --muted: #6b7280;
+  --accent: #1c58d9;
+  --accent-hover: #1649b8;
+  --accent-ring: rgba(28, 88, 217, 0.18);
+  --danger: #d24b4e;
+  --input-bg: #ffffff;
+  --input-border: #c5cad3;
+  --input-focus: rgba(28, 88, 217, 0.6);
+  --surface: #ffffff;
+  --surface-2: #f5f7fb;
+  --border: var(--card-border);
+  --text: var(--fg);
+}
+
+html[data-theme="dark"] {
+  --bg: #1f1f1f;
+  --bg-grad-1: #18181a;
+  --bg-grad-2: #1f1f1f;
+  --card: #2c2d31;
+  --card-border: #3a3b40;
+  --fg: #e8eaed;
+  --muted: #9aa0a6;
+  --accent: #5d89ea;
+  --accent-hover: #7299ee;
+  --accent-ring: rgba(93, 137, 234, 0.28);
+  --danger: #f15c5e;
+  --input-bg: #232428;
+  --input-border: #3a3b40;
+  --input-focus: rgba(93, 137, 234, 0.6);
+  --surface: #2c2d31;
+  --surface-2: #232428;
+  --border: var(--card-border);
+  --text: var(--fg);
+}
+
+/* In dark mode the login page should use a deeper navy wash so the
+   white-card hover doesn't blast the user's eyes. The login-card itself
+   already pulls --card so it darkens automatically. */
+html[data-theme="dark"] .login-page {
+  background:
+    radial-gradient(900px 600px at 18% -10%, rgba(93, 137, 234, 0.16), transparent 60%),
+    radial-gradient(700px 500px at 110% 110%, rgba(93, 137, 234, 0.10), transparent 55%),
+    linear-gradient(180deg, #161618, #1f1f1f);
+}
+
+/* Dark-mode chat shell: keep the deep navy sidebar (still readable on
+   dark) but flip the center channel from white to Mattermost's dark
+   surface so the message stream reads in dark mode without blowing out
+   the user's vision. The v11 layer below this file owns the light
+   defaults; here we only override the deltas. */
+html[data-theme="dark"] .chat-shell {
+  background: #1f1f1f;
+  color: var(--fg);
+}
+html[data-theme="dark"] .chat-shell .chat-main,
+html[data-theme="dark"] .chat-shell .chat-msgs,
+html[data-theme="dark"] .chat-shell .chat-header,
+html[data-theme="dark"] .chat-shell .chat-composer {
+  background: #1f1f1f;
+  color: var(--fg);
+  border-color: #2c2d31;
+}
+html[data-theme="dark"] .chat-shell .msg:hover { background: #232428; }
+html[data-theme="dark"] .chat-shell .msg-author { color: #e8eaed; }
+html[data-theme="dark"] .chat-shell .msg-time,
+html[data-theme="dark"] .chat-shell .msg-edited { color: #9aa0a6; }
+html[data-theme="dark"] .chat-shell .composer-input,
+html[data-theme="dark"] .chat-shell textarea,
+html[data-theme="dark"] .chat-shell input[type="text"],
+html[data-theme="dark"] .chat-shell input[type="email"],
+html[data-theme="dark"] .chat-shell input[type="password"] {
+  background: #232428;
+  color: var(--fg);
+  border-color: #3a3b40;
+}
+html[data-theme="dark"] .chat-shell .thread-panel {
+  background: #1f1f1f;
+  border-left-color: #2c2d31;
+}
+html[data-theme="dark"] .modal-card {
+  background: #2c2d31;
+  border-color: #3a3b40;
+  color: var(--fg);
+}
+
+/* Channel-header member chip. Subtle pill so it sits next to the channel
+   name without competing visually. */
+.channel-stats-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: 10px;
+  padding: 2px 8px;
+  font-size: 13px;
+  border-radius: 999px;
+  background: var(--surface-2);
+  color: var(--muted);
+  border: 1px solid var(--card-border);
+}
+
+/* Quick Switcher (Cmd+K) modal. Reuses .modal-backdrop / .modal-card
+   from earlier phases; the quick-switcher-* classes layer on input-only
+   styling for the autocomplete list. */
+.quick-switcher {
+  width: min(560px, 92vw);
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.quick-switcher-input {
+  width: 100%;
+  height: 40px;
+  padding: 0 12px;
+  font-size: 15px;
+  background: var(--input-bg);
+  border: 1px solid var(--input-border);
+  border-radius: 8px;
+  color: var(--fg);
+  outline: none;
+}
+.quick-switcher-input:focus {
+  border-color: var(--input-focus);
+  box-shadow: 0 0 0 3px var(--accent-ring);
+}
+.quick-switcher-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: 320px;
+  overflow-y: auto;
+  border-radius: 8px;
+  border: 1px solid var(--card-border);
+}
+.quick-switcher-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  cursor: pointer;
+  border-bottom: 1px solid var(--card-border);
+  user-select: none;
+}
+.quick-switcher-row:last-child { border-bottom: none; }
+.quick-switcher-row.active,
+.quick-switcher-row:hover {
+  background: var(--surface-2);
+}
+.quick-switcher-icon {
+  width: 22px;
+  text-align: center;
+  color: var(--muted);
+  font-size: 14px;
+}
+.quick-switcher-name {
+  flex: 1;
+  color: var(--fg);
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.quick-switcher-sub {
+  color: var(--muted);
+  font-size: 13px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+.quick-switcher-empty {
+  padding: 18px 12px;
+  text-align: center;
+  color: var(--muted);
+  font-size: 13px;
+}
+.quick-switcher-hint {
+  text-align: center;
+  font-size: 13px;
+  color: var(--muted);
+  padding-top: 2px;
+}
+
+/* ---- Phase 22 — sidebar favorites + notify-prefs panel ---- */
+
+/* Star button on each channel row. Hidden by default and shown on hover so
+   the sidebar stays clean; already-favorited rows force-show via .is-fav. */
+.channel-fav {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  margin: 0 4px;
+  font-size: 14px;
+  color: var(--muted);
+  cursor: pointer;
+  border-radius: 4px;
+  opacity: 0;
+  transition: opacity 80ms ease, background 80ms ease, color 80ms ease;
+}
+.item:hover .channel-fav,
+.channel-fav.is-fav {
+  opacity: 1;
+}
+.channel-fav.is-fav {
+  color: #fbbf24;
+}
+.channel-fav:hover {
+  background: var(--surface-2, rgba(148, 163, 184, 0.18));
+  color: #fbbf24;
+}
+
+/* Notification preferences modal — single-column form rows. */
+.notify-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 13px;
+}
+.notify-row > span:first-child {
+  min-width: 180px;
+  color: var(--fg);
+}
+.notify-row select,
+.notify-row input[type="text"] {
+  height: 30px;
+  border-radius: 6px;
+  padding: 0 8px;
+  border: 1px solid var(--input-border, var(--border));
+  background: var(--input-bg, var(--surface));
+  color: var(--text, var(--fg));
+}
+
+/* The earlier "User panel usability" mid-layer (warm sticky brand header,
+ * green sidebar accents, glassy backdrop blurs, larger items, cream gradient
+ * thread rail) was removed in the Mattermost-style redesign — its rules
+ * conflicted with the v11 layer below. Sidebar/thread/header personality is
+ * now defined exclusively by the v11 layer. */
+
+/* ---- Mattermost v11-style alignment ---------------------------------
+ * The final user-facing layer intentionally pulls the workspace back toward
+ * Mattermost's current product shape: dark channel rail, white message list,
+ * compact headers, low shadow, and RHS as a focused utility panel.
+ * ------------------------------------------------------------------ */
+.chat-shell {
+  --chat-bg: #ffffff;
+  --chat-bg-soft: #f5f7fb;
+  --chat-surface: #ffffff;
+  --chat-surface-solid: #ffffff;
+  --chat-surface-soft: #f4f6fa;
+  --chat-ink: #1f2937;
+  --chat-muted: #6b7280;
+  --chat-line: #d9dce3;
+  --chat-line-strong: #b9c0cc;
+  --chat-accent: #1c58d9;
+  --chat-accent-2: #166de0;
+  --chat-coral: #d24b4e;
+  --chat-warning: #d98b00;
+  --chat-danger: #d24b4e;
+  --chat-sidebar: #1e325c;
+  --chat-sidebar-2: #162848;
+  --chat-sidebar-hover: rgba(255, 255, 255, 0.08);
+  --chat-sidebar-active: rgba(255, 255, 255, 0.16);
+  --chat-sidebar-text: #eef4ff;
+  --chat-sidebar-muted: #b7c3d7;
+  --chat-sidebar-line: rgba(255, 255, 255, 0.13);
+  --chat-shadow: none;
+  --bg: var(--chat-bg);
+  --fg: var(--chat-ink);
+  --muted: var(--chat-muted);
+  --card-border: var(--chat-line);
+  --border: var(--chat-line);
+  --input-bg: #ffffff;
+  --input-border: #b9c0cc;
+  --input-focus: rgba(28, 88, 217, 0.72);
+  --accent: var(--chat-accent);
+  --accent-hover: #1649b8;
+  --accent-ring: rgba(28, 88, 217, 0.16);
+  --danger: var(--chat-danger);
+  grid-template-columns: minmax(272px, 292px) minmax(0, 1fr) auto;
+  background: #ffffff;
+  color: var(--chat-ink);
+}
+
+.chat-shell .chat-side {
+  padding: 0 10px 10px;
+  gap: 4px;
+  border-right: 1px solid #14233f;
+  background: linear-gradient(180deg, var(--chat-sidebar), var(--chat-sidebar-2));
+  box-shadow: none;
+}
+
+.chat-shell .chat-side::-webkit-scrollbar-thumb,
+.chat-shell .thread-body::-webkit-scrollbar-thumb,
+.chat-shell .chat-messages::-webkit-scrollbar-thumb {
+  border: 3px solid transparent;
+  background: rgba(111, 125, 139, 0.44);
+  background-clip: padding-box;
+}
+
+.chat-shell .chat-side .login-brand {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  min-height: 52px;
+  margin: 0 -10px 8px !important;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--chat-sidebar-line);
+  background: rgba(30, 50, 92, 0.98);
+  backdrop-filter: none;
+}
+
+.chat-shell .chat-side .login-logo {
+  width: 30px;
+  height: 30px;
+  border-radius: 6px;
+  background: #ffffff;
+  color: var(--chat-sidebar);
+  box-shadow: none;
+}
+
+.chat-shell .chat-side .login-brand strong {
+  color: #ffffff;
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.chat-shell .chat-side .section-title {
+  min-height: 22px;
+  margin: 16px 8px 4px;
+  color: var(--chat-sidebar-muted);
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.chat-shell .chat-side .section-title::after {
+  display: none;
+}
+
+.chat-shell .chat-side .item-list {
+  gap: 1px;
+}
+
+.chat-shell .chat-side .item {
+  min-height: 32px;
+  padding: 5px 8px;
+  border: 0;
+  border-radius: 4px;
+  color: var(--chat-sidebar-text);
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.25;
+  box-shadow: none;
+}
+
+.chat-shell .chat-side .item:hover {
+  border-color: transparent;
+  background: var(--chat-sidebar-hover);
+  color: #ffffff;
+}
+
+.chat-shell .chat-side .item-active,
+.chat-shell .chat-side .item-active:hover {
+  border-color: transparent;
+  background: var(--chat-sidebar-active);
+  color: #ffffff;
+  box-shadow: inset 3px 0 0 #ffffff;
+}
+
+.chat-shell .chat-side .item-muted {
+  min-height: 30px;
+  color: var(--chat-sidebar-muted);
+  font-weight: 500;
+}
+
+.chat-shell .chat-side button.item-muted {
+  border: 0;
+  border-style: solid;
+  background: transparent;
+}
+
+.chat-shell .chat-side button.item-muted:hover {
+  background: var(--chat-sidebar-hover);
+  color: #ffffff;
+}
+
+.chat-shell .chat-side .item-badge {
+  width: 22px;
+  height: 22px;
+  border-radius: 5px;
+  box-shadow: none;
+}
+
+.chat-shell .chat-side .channel-hash {
+  color: var(--chat-sidebar-muted);
+}
+
+.chat-shell .chat-side .avatar {
+  box-shadow: none;
+}
+
+.chat-shell .chat-side .channel-fav {
+  width: 20px;
+  height: 20px;
+  margin: 0;
+  color: var(--chat-sidebar-muted);
+  border-radius: 4px;
+}
+
+.chat-shell .chat-side .channel-fav:hover,
+.chat-shell .chat-side .channel-fav.is-fav {
+  background: rgba(255, 255, 255, 0.1);
+  color: #ffcf5c;
+}
+
+.chat-shell .chat-side .unread,
+.chat-shell .chat-side .unread-badge {
+  min-width: 20px;
+  height: 18px;
+  padding: 0 6px;
+  border: 0;
+  border-radius: 9px;
+  background: rgba(255, 255, 255, 0.18);
+  color: #ffffff;
+}
+
+.chat-shell .chat-side .mention-badge {
+  min-width: 20px;
+  height: 18px;
+  padding: 0 6px;
+  border-radius: 9px;
+  background: #d24b4e;
+  color: #ffffff;
+}
+
+/* Phase 34.5 — the sidebar bottom identity row was removed entirely;
+   identity now lives only in the header's user-menu-trigger. The old
+   .chat-side > div:last-child treatment painted the bottom block with a
+   dark gradient + auto-top margin; with the identity row gone, that
+   selector would land on the channel list and squash the layout, so it's
+   deleted. The .btn-ghost styling is kept here scoped to .chat-side so
+   any sidebar ghost buttons (none currently — but search/discover/more
+   actions historically used it) still read correctly against navy. */
+.chat-shell .chat-side .btn-ghost {
+  height: 32px;
+  border: 1px solid var(--chat-sidebar-line);
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--chat-sidebar-text);
+  box-shadow: none;
+}
+
+.chat-shell .chat-side .btn-ghost:hover {
+  border-color: rgba(255, 255, 255, 0.22);
+  background: rgba(255, 255, 255, 0.1);
+  color: #ffffff;
+}
+
+.chat-shell .chat-main {
+  min-width: 0;
+  background: #ffffff;
+}
+
+.chat-shell .chat-header {
+  min-height: 56px;
+  padding: 10px 20px;
+  align-items: center;
+  border-bottom: 1px solid var(--chat-line);
+  background: #ffffff;
+  box-shadow: none;
+  backdrop-filter: none;
+}
+
+.chat-shell .chat-header-team {
+  color: var(--chat-muted);
+  font-size: 13px;
+}
+
+.chat-shell .chat-header-title {
+  color: #202124;
+  font-size: 17px;
+  font-weight: 700;
+}
+
+.chat-shell .search-input {
+  min-width: 260px;
+  height: 34px;
+  border-radius: 4px;
+  box-shadow: none;
+}
+
+.chat-shell .chat-messages {
+  gap: 0;
+  padding: 8px 0 20px;
+  background: #ffffff;
+}
+
+.chat-shell .msg,
+.chat-shell .msg-me,
+.chat-shell .msg-compact {
+  width: 100%;
+  max-width: 100%;
+  align-self: stretch;
+  padding: 7px 20px 8px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.chat-shell .msg:hover,
+.chat-shell .msg-me:hover {
+  background: #f5f7fb;
+}
+
+.chat-shell .msg-meta {
+  gap: 8px;
+  min-height: 22px;
+  margin-bottom: 2px;
+  color: var(--chat-muted);
+  font-size: 13px;
+}
+
+.chat-shell .msg-author {
+  color: #202124;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.chat-shell .msg-time,
+.chat-shell .msg-edited {
+  color: #6b7280;
+  font-size: 13px;
+}
+
+.chat-shell .msg-body,
+.chat-shell .msg-files,
+.chat-shell .reactions,
+.chat-shell .msg > form {
+  margin-left: 28px;
+}
+
+.chat-shell .msg-body {
+  color: #202124;
+  font-size: 14px;
+  line-height: 1.46;
+}
+
+.chat-shell .msg-actions {
+  right: 16px;
+  top: -10px;
+  border: 1px solid var(--chat-line);
+  border-radius: 4px;
+  background: #ffffff;
+  box-shadow: 0 6px 16px rgba(25, 34, 51, 0.14);
+}
+
+.chat-shell .action-btn {
+  border-radius: 4px;
+  color: #4b5563;
+}
+
+.chat-shell .action-btn:hover {
+  background: #eef2f8;
+  color: #202124;
+}
+
+.chat-shell .composer {
+  padding: 10px 20px 14px;
+  border-top: 1px solid var(--chat-line);
+  background: #ffffff;
+  box-shadow: none;
+  backdrop-filter: none;
+}
+
+.chat-shell .composer-input {
+  min-height: 42px;
+  border-radius: 4px;
+  box-shadow: none;
+}
+
+.chat-shell .composer-input:focus,
+.chat-shell .search-input:focus,
+.chat-shell .status-select:focus {
+  border-color: var(--chat-accent);
+  box-shadow: 0 0 0 3px rgba(28, 88, 217, 0.14);
+}
+
+.chat-shell .btn-primary {
+  height: 38px;
+  border: 1px solid #1649b8;
+  border-radius: 4px;
+  background: #1c58d9;
+  box-shadow: none;
+}
+
+.chat-shell .btn-primary:hover {
+  background: #1649b8;
+}
+
+.chat-shell .btn-ghost {
+  border-radius: 4px;
+  box-shadow: none;
+}
+
+.chat-shell .reaction-chip,
+.chat-shell .msg-channel-chip,
+.chat-shell .search-chip,
+.chat-shell .file-chip,
+.chat-shell .link-preview,
+.chat-shell .discover-row {
+  border-color: var(--chat-line);
+  border-radius: 4px;
+  background: #ffffff;
+  color: #202124;
+  box-shadow: none;
+}
+
+.chat-shell .reaction-mine {
+  border-color: rgba(28, 88, 217, 0.36);
+  background: rgba(28, 88, 217, 0.08);
+}
+
+.chat-shell .link-preview {
+  border-left-color: var(--chat-accent);
+}
+
+.chat-shell .notify-menu,
+.chat-shell .emoji-picker,
+.chat-shell .mention-menu,
+.chat-shell .quick-switcher {
+  border-color: var(--chat-line);
+  border-radius: 6px;
+  background: #ffffff;
+  color: #202124;
+  box-shadow: 0 16px 40px rgba(25, 34, 51, 0.18);
+}
+
+.chat-shell .thread-panel {
+  width: clamp(380px, 28vw, 420px);
+  border-left: 1px solid var(--chat-line);
+  background: #ffffff;
+  box-shadow: none;
+}
+
+.chat-shell .thread-header {
+  min-height: 56px;
+  padding: 10px 14px 10px 16px;
+  border-bottom: 1px solid var(--chat-line);
+  background: #ffffff;
+  box-shadow: none;
+  backdrop-filter: none;
+}
+
+.chat-shell .thread-header strong {
+  color: #202124;
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.chat-shell .thread-header .action-btn {
+  width: 30px;
+  height: 30px;
+  border: 1px solid transparent;
+  background: transparent;
+}
+
+.chat-shell .thread-header .action-btn:hover {
+  border-color: var(--chat-line);
+  background: #f5f7fb;
+}
+
+.chat-shell .thread-body {
+  gap: 0;
+  padding: 8px 0 14px;
+  background: #ffffff;
+}
+
+.chat-shell .thread-panel .msg,
+.chat-shell .thread-panel .msg-me {
+  padding: 8px 16px 9px;
+  border-radius: 0;
+  background: transparent;
+}
+
+.chat-shell .thread-panel .msg:first-child {
+  border-left: 3px solid var(--chat-accent);
+  background: #f5f7fb;
+}
+
+.chat-shell .thread-divider {
+  min-height: 32px;
+  margin: 4px 16px 6px;
+  padding: 6px 0;
+  border: 0;
+  border-top: 1px solid var(--chat-line);
+  border-bottom: 1px solid var(--chat-line);
+  border-radius: 0;
+  background: transparent;
+  color: var(--chat-muted);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.chat-shell .thread-divider::after {
+  display: none;
+}
+
+.chat-shell .thread-panel .chat-empty {
+  margin: 18px 16px;
+  border: 1px dashed var(--chat-line-strong);
+  border-radius: 4px;
+  background: #f8fafc;
+}
+
+.chat-shell .thread-panel .composer {
+  padding: 10px 14px 14px;
+  border-top: 1px solid var(--chat-line);
+  background: #ffffff;
+}
+
+.chat-shell .thread-panel .composer-input {
+  min-height: 42px;
+  max-height: 128px;
+}
+
+@media (max-width: 960px) {
+  .chat-shell {
+    grid-template-columns: 1fr;
+    grid-template-rows: auto minmax(0, 1fr);
+  }
+
+  .chat-shell .chat-side {
+    max-height: 38vh;
+    padding: 0 10px 10px;
+    border-right: 0;
+    border-bottom: 1px solid #14233f;
+  }
+
+  .chat-shell .chat-side .login-brand {
+    position: static;
+    margin-right: -10px !important;
+    margin-left: -10px !important;
+  }
+
+  .chat-shell .chat-header {
+    min-height: auto;
+    align-items: flex-start;
+    padding: 12px 14px;
+  }
+
+  .chat-shell .search-input {
+    min-width: 0;
+  }
+
+  .chat-shell .thread-panel {
+    width: min(420px, 100vw);
+    box-shadow: -12px 0 30px rgba(25, 34, 51, 0.16);
+  }
+}
+
+@media (max-width: 640px) {
+  .chat-shell .chat-side {
+    max-height: 42vh;
+  }
+
+  .chat-shell .chat-messages,
+  .chat-shell .thread-body {
+    padding-top: 4px;
+  }
+
+  .chat-shell .msg,
+  .chat-shell .msg-me,
+  .chat-shell .thread-panel .msg,
+  .chat-shell .thread-panel .msg-me {
+    padding-right: 14px;
+    padding-left: 14px;
+  }
+
+  .chat-shell .msg-body,
+  .chat-shell .msg-files,
+  .chat-shell .reactions,
+  .chat-shell .msg > form {
+    margin-left: 26px;
+  }
+
+  .chat-shell .composer {
+    min-width: 0;
+    padding: 10px 12px 12px;
+  }
+
+  .chat-shell .composer-input,
+  .chat-shell .mention-picker-host {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .chat-shell .composer .btn-primary {
+    width: 64px !important;
+  }
+}
+
+/* =====================================================================
+   Phase 34 / 34.5 — Mattermost-v11 user menu + admin hamburger.
+   Sidebar carries a single .side-brand anchor at top (admin hamburger
+   to the left of the brand, opens the operations panel directly — no
+   intermediate dropdown for one item). The chat-header carries a
+   right-aligned avatar trigger that opens .user-menu, anchored top:56px
+   right:16px. Search input gets a leading 🔍 icon and a trailing × clear
+   button when results are showing. Phase 34.5 dropped the redundant
+   sidebar bottom identity row entirely — the user-menu-trigger in the
+   header is the single source of identity surfaces.
+   ===================================================================== */
+
+/* ── Sidebar brand row + hamburger ────────────────────────────────── */
+.chat-shell .side-brand {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0 -10px 8px;
+  padding: 12px 12px 10px;
+  border-bottom: 1px solid var(--chat-sidebar-line);
+  background: rgba(30, 50, 92, 0.98);
+}
+.chat-shell .side-brand.side-brand-no-burger {
+  padding-left: 14px;
+}
+.side-hamburger {
+  width: 30px;
+  height: 30px;
+  flex-shrink: 0;
+  display: inline-flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  gap: 4px;
+  border: 1px solid transparent;
+  background: transparent;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background 120ms ease, border-color 120ms ease;
+}
+.side-hamburger > span {
+  display: block;
+  width: 16px;
+  height: 2px;
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.82);
+  transition: background 120ms ease;
+}
+.side-hamburger:hover {
+  background: rgba(255, 255, 255, 0.12);
+  border-color: rgba(255, 255, 255, 0.20);
+}
+.side-hamburger:hover > span { background: #ffffff; }
+.side-hamburger:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px rgba(28, 88, 217, 0.55);
+}
+.side-brand-name {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-weight: 700;
+  font-size: 15px;
+  letter-spacing: 0.01em;
+  color: rgba(255, 255, 255, 0.95);
+}
+.side-brand-logo {
+  width: 28px;
+  height: 28px;
+  display: block;
+  flex: 0 0 auto;
+  filter: drop-shadow(0 2px 5px rgba(9, 18, 45, 0.28));
+}
+
+/* ── Chat-header right group + user-menu trigger ──────────────────── */
+.chat-shell .chat-header { gap: 14px; }
+.chat-header-right {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.chat-header-divider {
+  width: 1px;
+  height: 24px;
+  background: var(--chat-line);
+  flex-shrink: 0;
+}
+.search-form {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+.chat-shell .search-form .search-icon {
+  position: absolute;
+  left: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: 13px;
+  opacity: 0.55;
+  pointer-events: none;
+}
+.chat-shell .search-form .search-input {
+  padding-left: 30px;
+  padding-right: 30px;
+}
+.chat-shell .search-form .search-clear {
+  position: absolute;
+  right: 6px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 22px;
+  height: 22px;
+  display: grid;
+  place-items: center;
+  border: 0;
+  background: transparent;
+  color: #6b7280;
+  font-size: 16px;
+  line-height: 1;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease;
+}
+.chat-shell .search-form .search-clear:hover {
+  background: #eef2f8;
+  color: #1f2937;
+}
+.user-menu-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 36px;
+  padding: 2px 8px 2px 4px;
+  border: 1px solid transparent;
+  background: transparent;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background 120ms ease, border-color 120ms ease;
+}
+.user-menu-trigger:hover {
+  background: #f1f3f7;
+  border-color: #e1e4eb;
+}
+.user-menu-trigger:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px rgba(28, 88, 217, 0.55);
+}
+.user-menu-trigger[aria-expanded="true"] {
+  background: rgba(28, 88, 217, 0.08);
+  border-color: rgba(28, 88, 217, 0.30);
+}
+.user-menu-caret {
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1;
+  transition: transform 120ms ease;
+}
+.user-menu-trigger[aria-expanded="true"] .user-menu-caret {
+  transform: rotate(180deg);
+}
+
+/* ── User menu overlay layer ──────────────────────────────────────── */
+.user-menu-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 1500;
+  pointer-events: none;
+}
+.user-menu-backdrop {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  cursor: default;
+  pointer-events: auto;
+}
+.user-menu {
+  position: absolute;
+  top: 56px;
+  right: 16px;
+  width: min(320px, calc(100vw - 24px));
+  pointer-events: auto;
+  background: #ffffff;
+  color: #1f2937;
+  border: 1px solid #d9dce3;
+  border-radius: 10px;
+  box-shadow: 0 24px 56px -20px rgba(15, 23, 42, 0.42), 0 6px 16px rgba(15, 23, 42, 0.10);
+  padding: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  animation: user-menu-pop 140ms ease-out;
+  transform-origin: top right;
+}
+@keyframes user-menu-pop {
+  from { opacity: 0; transform: translateY(-4px) scale(0.985); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+.user-menu-head {
+  padding: 12px 14px 12px;
+}
+.user-menu-name {
+  font-size: 15px;
+  font-weight: 700;
+  color: #1f2937;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.user-menu-email {
+  margin-top: 2px;
+  font-size: 13px;
+  color: #6b7280;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.user-menu-current-status {
+  margin-top: 8px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 8px 3px 6px;
+  background: #f4f6fa;
+  border: 1px solid #e1e4eb;
+  border-radius: 999px;
+  font-size: 13px;
+  color: #4b5563;
+  font-weight: 500;
+}
+.user-menu-section { padding: 6px 8px 4px; }
+.user-menu-section-label {
+  padding: 0 4px 6px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #6b7280;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+.user-menu-status-row {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 4px;
+}
+.user-menu-status-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 8px;
+  border: 1px solid #e1e4eb;
+  background: #ffffff;
+  border-radius: 6px;
+  color: #1f2937;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 120ms ease, border-color 120ms ease, transform 80ms ease;
+}
+.user-menu-status-pill > span:nth-child(2) {
+  flex: 1;
+  text-align: left;
+}
+.user-menu-status-pill:hover { background: #f5f7fb; transform: translateY(-1px); }
+.user-menu-status-pill:active { transform: translateY(0); }
+.user-menu-status-pill.is-active {
+  background: rgba(28, 88, 217, 0.10);
+  border-color: rgba(28, 88, 217, 0.46);
+  color: #1c58d9;
+  font-weight: 600;
+}
+.user-menu-check {
+  font-size: 13px;
+  font-weight: 700;
+  color: #1c58d9;
+  line-height: 1;
+}
+.status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #9aa0a6;
+}
+.status-dot.status-online { background: #21a366; }
+.status-dot.status-away { background: #f5a623; }
+.status-dot.status-dnd { background: #d24b4e; }
+.status-dot.status-offline { background: #9aa0a6; }
+.user-menu-divider {
+  height: 1px;
+  margin: 4px -6px;
+  background: #ececf0;
+}
+.user-menu-item,
+.user-menu-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 8px 12px;
+  border: 0;
+  background: transparent;
+  border-radius: 4px;
+  color: #1f2937;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+  transition: background 100ms ease;
+}
+.user-menu-item:hover,
+.user-menu-row:hover {
+  background: #f1f3f7;
+}
+.user-menu-item:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+.user-menu-icon {
+  width: 20px;
+  flex-shrink: 0;
+  text-align: center;
+  font-size: 15px;
+  line-height: 1;
+}
+.user-menu-label {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  overflow: hidden;
+}
+.user-menu-label small {
+  color: #6b7280;
+  font-size: 13px;
+  font-weight: 400;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.user-menu-row {
+  cursor: default;
+}
+.user-menu-row input[type="checkbox"] {
+  flex-shrink: 0;
+  width: 16px;
+  height: 16px;
+  accent-color: #1c58d9;
+  cursor: pointer;
+}
+.user-menu-select {
+  height: 28px;
+  min-width: 100px;
+  padding: 0 8px;
+  font-size: 13px;
+  color: #1f2937;
+  background: #ffffff;
+  border: 1px solid #c5cad3;
+  border-radius: 4px;
+  cursor: pointer;
+}
+.user-menu-select:focus {
+  outline: none;
+  border-color: #1c58d9;
+  box-shadow: 0 0 0 2px rgba(28, 88, 217, 0.20);
+}
+.user-menu-item-danger { color: #b1383b; }
+.user-menu-item-danger:hover { background: rgba(210, 75, 78, 0.10); }
+
+/* Dark-mode overrides for the dropdown so the white card flips to a
+   matte dark surface that doesn't blow out the user's vision. */
+html[data-theme="dark"] .user-menu-trigger:hover {
+  background: rgba(255, 255, 255, 0.06);
+  border-color: rgba(255, 255, 255, 0.12);
+}
+html[data-theme="dark"] .user-menu {
+  background: #2c2d31;
+  color: #e8eaed;
+  border-color: #3a3b40;
+}
+html[data-theme="dark"] .user-menu-name { color: #e8eaed; }
+html[data-theme="dark"] .user-menu-email,
+html[data-theme="dark"] .user-menu-section-label,
+html[data-theme="dark"] .user-menu-label small {
+  color: #9aa0a6;
+}
+html[data-theme="dark"] .user-menu-status-pill {
+  background: #232428;
+  border-color: #3a3b40;
+  color: #e8eaed;
+}
+html[data-theme="dark"] .user-menu-status-pill:hover { background: #2f3034; }
+html[data-theme="dark"] .user-menu-status-pill.is-active {
+  background: rgba(93, 137, 234, 0.18);
+  border-color: rgba(93, 137, 234, 0.55);
+  color: #93b3f1;
+}
+html[data-theme="dark"] .user-menu-divider { background: #3a3b40; }
+html[data-theme="dark"] .user-menu-item,
+html[data-theme="dark"] .user-menu-row { color: #e8eaed; }
+html[data-theme="dark"] .user-menu-item:hover,
+html[data-theme="dark"] .user-menu-row:hover { background: #34353a; }
+html[data-theme="dark"] .user-menu-select {
+  background: #232428;
+  color: #e8eaed;
+  border-color: #3a3b40;
+}
+html[data-theme="dark"] .user-menu-item-danger { color: #f59295; }
+html[data-theme="dark"] .user-menu-item-danger:hover { background: rgba(241, 92, 94, 0.14); }
+html[data-theme="dark"] .user-menu-current-status {
+  background: #232428;
+  border-color: #3a3b40;
+  color: #b8bcc4;
+}
+html[data-theme="dark"] .user-menu-check { color: #93b3f1; }
+html[data-theme="dark"] .user-menu-trigger[aria-expanded="true"] {
+  background: rgba(93, 137, 234, 0.18);
+  border-color: rgba(93, 137, 234, 0.55);
+}
+html[data-theme="dark"] .chat-header-divider { background: #3a3b40; }
+html[data-theme="dark"] .chat-shell .search-form .search-clear { color: #9aa0a6; }
+html[data-theme="dark"] .chat-shell .search-form .search-clear:hover {
+  background: #34353a;
+  color: #e8eaed;
+}
+
+/* Mobile: drop the user-menu to fill more of the viewport so the
+   dropdown isn't clipped on a narrow screen. */
+@media (max-width: 640px) {
+  .user-menu {
+    top: 56px;
+    right: 8px;
+    left: 8px;
+    width: auto;
+  }
+}
+
+/* =====================================================================
+   Phase 34.6 — Polish pass for visual rhythm.
+   Targets: sidebar item-active bar weight, channel-list hover warmth,
+   section-title hierarchy, message hover tint, msg-actions shadow,
+   composer min-height + focus ring, thread empty-state, reaction-chip
+   pill shape. All overrides live at the bottom so the previous v11
+   blocks remain readable; remove this block to revert.
+   ===================================================================== */
+
+/* Sidebar list rhythm — bigger active bar, softer hover */
+.chat-shell .chat-side .item-active,
+.chat-shell .chat-side .item-active:hover {
+  box-shadow: inset 4px 0 0 #ffffff;
+}
+.chat-shell .chat-side .item-list {
+  gap: 2px;
+}
+.chat-shell .chat-side .section-title {
+  margin-top: 18px;
+  color: #b8c0d4;
+  font-size: 13px;
+  letter-spacing: 0.06em;
+}
+.chat-shell .chat-side .section-title:first-child {
+  margin-top: 6px;
+}
+
+/* Message stream — cooler hover tint, tighter actions shadow */
+.chat-shell .msg:hover,
+.chat-shell .msg-me:hover {
+  background: #f4f6fa;
+}
+.chat-shell .msg-actions {
+  box-shadow: 0 4px 12px rgba(15, 23, 42, 0.10);
+  border-color: #dde1e8;
+}
+
+/* Composer — slightly taller resting state, accent ring on focus */
+.chat-shell .composer-input {
+  min-height: 44px;
+  line-height: 1.5;
+}
+.chat-shell .composer-input:focus {
+  border-color: #1c58d9;
+  box-shadow: 0 0 0 3px rgba(28, 88, 217, 0.18);
+}
+
+/* Reaction chip → pill (Mattermost v11 reaction shape) */
+.chat-shell .reaction-chip {
+  border-radius: 999px;
+  padding: 2px 8px;
+  min-height: 22px;
+  font-size: 13px;
+}
+
+/* Thread panel empty-state — drop the dashed border, use a soft solid card */
+.chat-shell .thread-panel .chat-empty {
+  border: 1px solid #e1e4eb;
+  border-radius: 6px;
+  background: #f7f9fc;
+  color: var(--chat-muted);
+}
+
+/* msg-meta vertical alignment with the inline avatar — keep author and
+   timestamp on the same baseline so a +1px avatar doesn't rip the row. */
+.chat-shell .msg-meta {
+  align-items: center;
+  min-height: 24px;
+}
+
+/* Channel-stats chip in chat-header — match v11 token shape */
+.chat-shell .channel-stats-chip {
+  height: 22px;
+  padding: 0 8px;
+  border-radius: 11px;
+  border: 1px solid var(--chat-line);
+  background: #f7f9fc;
+  color: #4b5563;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+/* Dark-mode variants for the polish pass */
+html[data-theme="dark"] .chat-shell .msg:hover,
+html[data-theme="dark"] .chat-shell .msg-me:hover {
+  background: #232428;
+}
+html[data-theme="dark"] .chat-shell .msg-actions {
+  border-color: #3a3b40;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.36);
+}
+html[data-theme="dark"] .chat-shell .thread-panel .chat-empty {
+  border-color: #3a3b40;
+  background: #232428;
+}
+html[data-theme="dark"] .chat-shell .channel-stats-chip {
+  background: #232428;
+  border-color: #3a3b40;
+  color: #b8bcc4;
+}
+
+/* moyro accessibility + settings foundation. Keep content text at a
+   comfortable reading size and reserve 13px only for metadata/captions. */
+html,
+body,
+#root {
+  min-height: 100%;
+  font-family: "Noto Sans KR Variable", "Noto Sans KR", Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-size: 16px;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+}
+
+.chat-shell .msg-body,
+.chat-shell .composer-input,
+.chat-shell .chat-empty {
+  font-size: 16px;
+  line-height: 1.6;
+}
+
+.chat-shell .item,
+.chat-shell .btn-ghost,
+.chat-shell .btn-primary,
+.chat-shell .user-menu-item,
+.chat-shell .user-menu-row,
+.chat-shell .user-menu-select,
+.chat-shell .user-menu-status-pill {
+  font-size: 14px;
+}
+
+.chat-shell .section-title,
+.chat-shell .msg-time,
+.chat-shell .msg-edited,
+.chat-shell .user-menu-label small,
+.chat-shell .user-menu-email,
+.chat-shell .user-menu-section-label,
+.chat-shell .channel-stats-chip,
+.login-page .login-footer,
+.login-page .login-subtitle {
+  font-size: 13px;
+}
+
+/* Shared visible scrollbars for dense administrator and account menus. */
+.moyro-scrollbar,
+.user-menu-scroll {
+  scrollbar-gutter: stable;
+  scrollbar-width: thin;
+  scrollbar-color: #718198 transparent;
+}
+
+.moyro-scrollbar::-webkit-scrollbar,
+.user-menu-scroll::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+.moyro-scrollbar::-webkit-scrollbar-track,
+.user-menu-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.moyro-scrollbar::-webkit-scrollbar-thumb,
+.user-menu-scroll::-webkit-scrollbar-thumb {
+  min-height: 36px;
+  border: 2px solid transparent;
+  border-radius: 999px;
+  background: #718198;
+  background-clip: padding-box;
+}
+
+.moyro-scrollbar::-webkit-scrollbar-thumb:hover,
+.user-menu-scroll::-webkit-scrollbar-thumb:hover {
+  background: #52647e;
+  background-clip: padding-box;
+}
+
+.user-menu {
+  max-height: calc(100dvh - 72px);
+  overflow: hidden;
+}
+
+.user-menu-scroll {
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.user-menu-footer {
+  flex: 0 0 auto;
+  padding-top: 4px;
+  border-top: 1px solid #ececf0;
+  background: inherit;
+}
+
+.user-menu-version {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 14px 12px;
+  color: #697386;
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.user-menu-version-brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-weight: 650;
+}
+
+/* URL-driven service administration and personal-settings layouts. */
+.moyro-settings-shell {
+  display: grid;
+  grid-template-columns: 280px minmax(0, 1fr);
+  width: 100%;
+  height: 100dvh;
+  min-height: 640px;
+  overflow: hidden;
+  background: #f5f7fb;
+}
+
+.moyro-settings-sidebar {
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  flex-direction: column;
+  border-right: 1px solid #dfe4ec;
+  background: #fff;
+}
+
+.moyro-settings-nav {
+  min-height: 0;
+  flex: 1;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.moyro-settings-main {
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  flex-direction: column;
+}
+
+.moyro-settings-header {
+  z-index: 2;
+  display: flex;
+  min-height: 72px;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 24px;
+  border-bottom: 1px solid #dfe4ec;
+  background: rgba(255, 255, 255, 0.96);
+}
+
+.moyro-settings-content {
+  min-width: 0;
+  min-height: 0;
+  flex: 1;
+  overflow: auto;
+  padding: clamp(20px, 3vw, 40px);
+}
+
+.moyro-mark {
+  display: block;
+  width: 40px;
+  height: 40px;
+  flex: 0 0 auto;
+  filter: drop-shadow(0 5px 7px rgba(49, 95, 234, 0.20));
+}
+
+.moyro-secret-value,
+.moyro-ai-output {
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+html[data-theme="dark"] .moyro-settings-shell {
+  background: #16181d;
+}
+
+html[data-theme="dark"] .moyro-settings-sidebar,
+html[data-theme="dark"] .moyro-settings-header {
+  border-color: #363a43;
+  background: #202228;
+}
+
+html[data-theme="dark"] .user-menu-version {
+  color: #adb4c2;
+}
+
+html[data-theme="dark"] .user-menu-footer {
+  border-color: #3a3b40;
+}
+
+@media (max-width: 800px) {
+  .moyro-settings-shell {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(220px, 42dvh) minmax(0, 1fr);
+    min-height: 0;
+  }
+
+  .moyro-settings-sidebar {
+    border-right: 0;
+    border-bottom: 1px solid #dfe4ec;
+  }
+
+  .moyro-settings-header {
+    min-height: 64px;
+    padding-inline: 14px;
+  }
+
+  .moyro-settings-content {
+    padding: 18px 14px 28px;
+  }
+}
+
+@media (forced-colors: active) {
+  .moyro-scrollbar,
+  .user-menu-scroll {
+    forced-color-adjust: auto;
+  }
+}

@@ -43,6 +43,13 @@ SELECT pg_advisory_lock(
 SELECT pg_advisory_unlock(
     hashtextextended(current_database() || ':' || COALESCE(current_schema(), ''), 0)
 )`
+
+	// Applied to the migration connection only. The pool's request-path
+	// defaults would otherwise abort a long schema change midway.
+	migrationTimeoutSQL = `
+SET statement_timeout = 0;
+SET lock_timeout = 0;
+SET idle_in_transaction_session_timeout = 0`
 )
 
 var migrationFilenamePattern = regexp.MustCompile(`^(\d{6})_([a-z0-9][a-z0-9_]*)\.up\.sql$`)
@@ -108,6 +115,13 @@ func migrate(ctx context.Context, db *DB, migrationFiles fs.FS, appVersion strin
 		return fmt.Errorf("store: acquire migration connection: %w", err)
 	}
 	defer conn.Release()
+
+	// Schema changes legitimately run far longer than any request-path query
+	// — rewriting a large table can take minutes — so the per-session timeouts
+	// that bound a runaway read must not apply to this connection.
+	if _, err := conn.Exec(ctx, migrationTimeoutSQL); err != nil {
+		return fmt.Errorf("store: relax migration timeouts: %w", err)
+	}
 
 	if _, err := conn.Exec(ctx, migrationLockSQL); err != nil {
 		return fmt.Errorf("store: acquire migration lock: %w", err)

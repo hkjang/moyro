@@ -41,7 +41,7 @@ func TestReminderFiredEventStopsAfterChannelMembershipRevocation(t *testing.T) {
 	var member atomic.Bool
 	member.Store(true)
 	resolved := make(chan struct{}, 2)
-	hub.SetAudienceResolver(func(context.Context, ws.Broadcast) (map[string]struct{}, error) {
+	hub.SetAudienceResolver(func(context.Context, ws.Broadcast, []string) (map[string]struct{}, error) {
 		audience := map[string]struct{}{}
 		if member.Load() {
 			audience["user-1"] = struct{}{}

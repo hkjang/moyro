@@ -943,9 +943,13 @@ func (s *Service) BumpUnread(ctx context.Context, channelID, authorID string, me
 	return out, rows.Err()
 }
 
+// uniqueStrings returns the distinct values of `in` in first-seen order.
+// It allocates rather than de-duplicating in place: callers (and the HTTP
+// handlers above them) keep using their own slice after the call, so
+// reordering or truncating the caller's backing array would corrupt it.
 func uniqueStrings(in []string) []string {
-	seen := map[string]struct{}{}
-	out := in[:0]
+	seen := make(map[string]struct{}, len(in))
+	out := make([]string, 0, len(in))
 	for _, s := range in {
 		if _, ok := seen[s]; ok {
 			continue

@@ -58,8 +58,13 @@ Next polish:
   prepared UI states.
 - Add structured claim/source AI output and server-side retrieval before
   describing summaries as RAG or citation-complete.
-- Continue extracting orchestration from `ChatView.tsx` below its 150 KB CI
-  ratchet and split the remaining legacy global stylesheet.
+- Continue extracting orchestration from `ChatView.tsx` below its CI
+  source-size ratchet; session management, archived channels, and message
+  actions already live in their own hooks, and the legacy global stylesheet is
+  now split by area.
+- Replace the bounded live-post window with real timeline virtualization so
+  scrolling back through long history stops depending on how much the client
+  is willing to retain.
 - Expand focus management and roving keyboard navigation across older dialogs
   and menus.
 
@@ -68,7 +73,10 @@ Next polish:
 Status: partial.
 
 - Health endpoint
-- Prometheus metrics
+- Prometheus metrics, including PostgreSQL pool saturation, distinct connected
+  WebSocket users, and every event the hub sheds
+- Bounded PostgreSQL pool with per-session statement/lock/idle timeouts,
+  overridable through `POSTGRES_DSN`
 - Optional Redis fanout
 - Optional S3-compatible file storage
 - Email digest worker
@@ -78,6 +86,9 @@ Next polish:
 - Add deployment notes for local Docker, single VM, and Kubernetes.
 - Add backup/restore guidance for PostgreSQL and file storage.
 - Add structured config reference generated from `config.Config`.
+- Add distributed tracing; request-level latency is currently only visible as
+  an HTTP duration histogram, with no span linking a slow request to the query
+  or plugin call responsible.
 - Add graceful plugin restart and health reporting.
 
 ## 5. Extension Platform

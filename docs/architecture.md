@@ -62,7 +62,19 @@ Important packages:
   retrieval, citations, and source-watermarked conversation documents.
 - `internal/inboxprefs` centralizes VIP, priority, bundling, snooze, and
   timezone-aware work-hour policy.
-- `internal/metrics` exposes Prometheus metrics.
+- `internal/metrics` exposes Prometheus metrics, including PostgreSQL pool
+  saturation and the WebSocket hub's shed-event counters.
+- `internal/ws` authorizes a scoped event against the candidate users this
+  instance currently holds sockets for, and resolves that audience on a
+  dedicated delivery goroutine. Registration and publication therefore stay
+  responsive while a membership lookup is in flight; a saturated delivery queue
+  sheds events and reports the drop rather than applying back-pressure to
+  request handling.
+- `internal/store` sizes the connection pool and applies per-session statement,
+  lock, and idle-in-transaction timeouts. Any value specified in
+  `POSTGRES_DSN` wins. Schema migrations acquire a connection with those
+  timeouts lifted, because a table rewrite legitimately outruns a bound meant
+  for a request-path query.
 
 ## Webapp
 
@@ -72,12 +84,21 @@ The React app initializes the plugin runtime, mounts Redux, and lazy-loads
 login, Moyro Flow, workspace, personal settings, and administrator routes.
 `ProductShell` owns global desktop/mobile navigation. The workspace keeps
 `ChatView.tsx` as its orchestration boundary while rendering the sidebar,
-header, message timeline, composer, and context panel through feature modules;
-CI now holds that boundary below a 150 KB source-size ratchet.
+header, message timeline, composer, and context panel through feature modules.
+Session management, archived channels, and message actions live in their own
+hooks under `features/workspace/model`. CI holds every large module below a
+source-size ratchet (`scripts/check-source-sizes.sh`), including the files each
+split produced, so the concentration cannot simply move to a sibling.
 
 Important modules:
 
-- `api/client.ts` is the typed API boundary for HTTP and WebSocket URLs.
+- `api/client.ts` re-exports the typed API boundary. The request builders live
+  in `api/chat.ts`, `api/integrations.ts`, `api/compat.ts`, `api/moyro.ts`, and
+  `api/media.ts`; `api/transport.ts` owns deadlines, the bounded retry of
+  idempotent reads, and the `APIError` contract.
+- `features/workspace/model/post-window.ts` bounds how many live posts the
+  channel view retains, so a long-lived session in a busy channel cannot grow
+  its state and DOM without limit.
 - `features/theme/ThemePreferenceProvider.tsx` is the single owner of MUI,
   first-paint, local-cache, and server-backed theme state.
 - `features/shell/ProductShell.tsx` owns the global rail and mobile bottom

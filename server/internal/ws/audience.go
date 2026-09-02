@@ -2,6 +2,7 @@ package ws
 
 import (
 	"context"
+	"time"
 
 	"github.com/hkjang/moyro/server/internal/store"
 )
@@ -11,20 +12,36 @@ import (
 // is used for presence/profile events: active regular users may see it, while
 // an active guest may only see itself or a subject with whom it shares a live
 // channel. Missing, deleted, and expired subjects fail closed.
+//
+// The query is driven by the caller's candidate set rather than by the user
+// directory. Fan-out only ever delivers to users this instance currently holds
+// a socket for, so evaluating the membership predicates against the whole
+// `users` table did work proportional to the size of the installation on every
+// broadcast. Joining the candidate ids against the primary key keeps the cost
+// proportional to the number of connected users instead.
+//
+// Guest status reads the stored `users.is_guest` projection. The previous
+// inline regular expression over the whitespace-separated role string could not
+// use an index and ran once per candidate row; migration 000016 proves the
+// projection is equivalent to that predicate.
 func DatabaseAudienceResolver(db *store.DB) AudienceResolver {
-	return func(ctx context.Context, b Broadcast) (map[string]struct{}, error) {
+	return func(ctx context.Context, b Broadcast, candidates []string) (map[string]struct{}, error) {
 		if b.ChannelID == "" && b.TeamID == "" && b.SubjectUserID == "" {
 			return nil, nil
 		}
+		if len(candidates) == 0 {
+			return map[string]struct{}{}, nil
+		}
 
 		rows, err := db.Pool.Query(ctx, `
+			WITH candidate AS (
+				SELECT DISTINCT unnest($4::TEXT[]) AS id
+			)
 			SELECT recipient.id
-			FROM users AS recipient
+			FROM candidate
+			JOIN users AS recipient ON recipient.id = candidate.id
 			WHERE recipient.delete_at = 0
-			  AND (
-				recipient.roles !~ '(^|[[:space:]])system_guest([[:space:]]|$)'
-				OR recipient.guest_expires_at > (EXTRACT(EPOCH FROM clock_timestamp()) * 1000)::BIGINT
-			  )
+			  AND (NOT recipient.is_guest OR recipient.guest_expires_at > $5)
 			  AND (
 				$1 = '' OR EXISTS (
 					SELECT 1
@@ -64,13 +81,10 @@ func DatabaseAudienceResolver(db *store.DB) AudienceResolver {
 					FROM users AS subject
 					WHERE subject.id = $3
 					  AND subject.delete_at = 0
-					  AND (
-						subject.roles !~ '(^|[[:space:]])system_guest([[:space:]]|$)'
-						OR subject.guest_expires_at > (EXTRACT(EPOCH FROM clock_timestamp()) * 1000)::BIGINT
-					  )
+					  AND (NOT subject.is_guest OR subject.guest_expires_at > $5)
 					  AND (
 						recipient.id = subject.id
-						OR recipient.roles !~ '(^|[[:space:]])system_guest([[:space:]]|$)'
+						OR NOT recipient.is_guest
 						OR EXISTS (
 							SELECT 1
 							FROM channel_members AS subject_cm
@@ -100,13 +114,13 @@ func DatabaseAudienceResolver(db *store.DB) AudienceResolver {
 					  )
 				)
 			  )
-		`, b.ChannelID, b.TeamID, b.SubjectUserID)
+		`, b.ChannelID, b.TeamID, b.SubjectUserID, candidates, time.Now().UnixMilli())
 		if err != nil {
 			return nil, err
 		}
 		defer rows.Close()
 
-		out := make(map[string]struct{})
+		out := make(map[string]struct{}, len(candidates))
 		for rows.Next() {
 			var userID string
 			if err := rows.Scan(&userID); err != nil {

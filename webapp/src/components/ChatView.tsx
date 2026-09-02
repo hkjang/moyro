@@ -15,7 +15,6 @@ import {
   type OrderedSidebarCategories,
   type Post,
   type PostList,
-  type SessionRow,
   type SidebarCategory,
   type Team,
   type UserStatusValue,
@@ -50,9 +49,13 @@ import type {
 import { workspaceSlug } from "@/features/workspace/model/workspace-helpers";
 import { parseWorkspaceSearchFilters } from "@/features/workspace/model/search";
 import { selectChannelFileEntries } from "@/features/workspace/model/selectors";
+import { boundPostWindow } from "@/features/workspace/model/post-window";
 import { useChannelSummary } from "@/features/workspace/model/useChannelSummary";
 import { useTypingExpiry } from "@/features/workspace/model/useTypingExpiry";
 import { useInboxPreferences } from "@/features/workspace/model/useInboxPreferences";
+import { useSessionManager } from "@/features/workspace/model/useSessionManager";
+import { useArchivedChannels } from "@/features/workspace/model/useArchivedChannels";
+import { usePostActions } from "@/features/workspace/model/usePostActions";
 import {
   handleWorkspaceWebSocketEvent,
   type WorkspaceWebSocketEvent,
@@ -179,23 +182,29 @@ export function ChatView() {
   const searchRequestGenerationRef = useRef(0);
   const [showStartDM, setShowStartDM] = useState(false);
 
-  // Phase 16 — session-management modal. We lazy-fetch the list when the
-  // modal opens; the list is short-lived and stale data (e.g. a session
-  // that just expired) would just 404 on the revoke call which we handle.
-  const [showSessions, setShowSessions] = useState(false);
-  const [sessions, setSessions] = useState<SessionRow[]>([]);
-  const [sessionsLoading, setSessionsLoading] = useState(false);
+  // Phase 16 — session-management modal, owned by its own hook.
+  const sessionManager = useSessionManager({
+    token,
+    userId: user?.id,
+    clearDraftsOnLogout: systemInfo.capabilities?.drafts?.clear_on_logout !== false,
+    confirmer,
+    onError: setError,
+  });
 
   // Phase 16 — archived channel visibility toggle. Off by default so the
   // sidebar stays lean. When on we re-fetch channels with include_deleted
   // so soft-deleted channels appear dimmed in the sidebar.
   const [showArchived, setShowArchived] = useState(false);
 
-  // Phase 16 — archived-channel list (only populated while showArchived is
-  // true). Kept separate from `channels` so the main list stays focused on
-  // active rows; rendering merges the two below.
-  const [archivedChannels, setArchivedChannels] = useState<Channel[]>([]);
-  const archivedChannelsGenerationRef = useRef(0);
+  // Phase 16 — archived-channel list, owned by its own hook. Kept separate
+  // from `channels` so the main list stays focused on active rows; rendering
+  // merges the two below.
+  const { channels: archivedChannels, reload: loadArchivedChannels } = useArchivedChannels({
+    token,
+    teamId: currentTeamId,
+    enabled: showArchived,
+    onError: setError,
+  });
   const [myStatus, setMyStatus] = useState<UserStatusValue>("online");
   // Profile picture upload — ref hits the hidden <input type="file">, flag
   // disables the button while the multipart upload is in flight so a second
@@ -290,12 +299,10 @@ export function ChatView() {
 
   const selectTeam = useCallback((teamId: string) => {
     searchRequestGenerationRef.current += 1;
-    archivedChannelsGenerationRef.current += 1;
     setSearchResults(null);
     setSearchFilters({});
     setSearchTotal(0);
     setSearchPage(0);
-    setArchivedChannels([]);
     closeContext();
     setMobileSidebarOpen(false);
     setCurrentTeamId(teamId);
@@ -587,7 +594,9 @@ export function ChatView() {
           current
             .filter((post) => post.channel_id === channelID)
             .forEach((post) => merged.set(post.id, post));
-          return Array.from(merged.values()).sort((left, right) => left.create_at - right.create_at);
+          return boundPostWindow(
+            Array.from(merged.values()).sort((left, right) => left.create_at - right.create_at),
+          );
         });
 
         // Collect unique user IDs and file IDs for a single round-trip each.
@@ -736,7 +745,7 @@ export function ChatView() {
             prev.filter((post) => post.channel_id === chanID).map((post) => [post.id, post]),
           );
           ordered.forEach((p) => byId.set(p.id, p));
-          return Array.from(byId.values()).sort((a, b) => a.create_at - b.create_at);
+          return boundPostWindow(Array.from(byId.values()).sort((a, b) => a.create_at - b.create_at));
         });
       }).catch(() => undefined);
     }
@@ -940,192 +949,19 @@ export function ChatView() {
     }
   }
 
-  // Fetch the archived-only slice. Re-runs whenever `showArchived` flips
-  // on or the current team changes. We filter client-side to keep only
-  // rows with a non-zero delete_at since `include_deleted=true` returns
-  // both active and archived in one list.
-  const loadArchivedChannels = useCallback(async () => {
-    const generation = archivedChannelsGenerationRef.current + 1;
-    archivedChannelsGenerationRef.current = generation;
-    if (!token || !currentTeamId) return;
-    const teamID = currentTeamId;
-    try {
-      const all = await api.listChannels(token, teamID, true);
-      if (
-        archivedChannelsGenerationRef.current !== generation
-        || currentTeamIdRef.current !== teamID
-      ) return;
-      setArchivedChannels((all ?? []).filter((c) => (c.delete_at ?? 0) > 0));
-    } catch (e) {
-      if (
-        archivedChannelsGenerationRef.current === generation
-        && currentTeamIdRef.current === teamID
-      ) setError(e instanceof Error ? e.message : "보관 채널 로드 실패");
-    }
-  }, [token, currentTeamId]);
-
-  useEffect(() => {
-    if (!showArchived) {
-      archivedChannelsGenerationRef.current += 1;
-      setArchivedChannels([]);
-      return;
-    }
-    loadArchivedChannels();
-  }, [showArchived, loadArchivedChannels]);
-
-  // ---- Phase 16: session management ----
-  const openSessionModal = useCallback(async () => {
-    if (!token) return;
-    setShowSessions(true);
-    setSessionsLoading(true);
-    try {
-      const list = await api.listMySessions(token);
-      // Newest first so the current-device row typically sits up top.
-      list.sort((a, b) => b.create_at - a.create_at);
-      setSessions(list);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "세션 조회 실패");
-    } finally {
-      setSessionsLoading(false);
-    }
-  }, [token]);
-
-  async function onRevokeOneSession(sessionId: string) {
-    if (!token) return;
-    const ok = await confirmer.confirm({
-      title: "세션 종료",
-      message: "이 세션을 종료할까요?",
-      confirmLabel: "종료",
-      destructive: true,
-    });
-    if (!ok) return;
-    try {
-      await api.revokeSession(token, sessionId);
-      setSessions((prev) => prev.filter((s) => s.id !== sessionId));
-      // If the user just killed their own current session, sign out
-      // locally so the app lands on the login screen.
-      const killedCurrent = sessions.find((s) => s.id === sessionId)?.is_current;
-      if (killedCurrent) {
-        if (user?.id && systemInfo.capabilities?.drafts?.clear_on_logout !== false) {
-          clearMoyroDraftsForUser(user.id);
-        }
-        dispatch(clearAuth());
-      }
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "세션 종료 실패");
-    }
-  }
-
-  async function onRevokeOtherSessions() {
-    if (!token) return;
-    const ok = await confirmer.confirm({
-      title: "다른 기기 로그아웃",
-      message: "다른 모든 기기에서 로그아웃할까요? 이 기기의 세션은 유지됩니다.",
-      confirmLabel: "로그아웃",
-      destructive: true,
-    });
-    if (!ok) return;
-    try {
-      await api.revokeOtherSessions(token);
-      setSessions((prev) => prev.filter((s) => s.is_current));
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "다른 세션 종료 실패");
-    }
-  }
-
-  // Slash-command output rendered as a transient banner above the composer.
-  const [cmdNotice, setCmdNotice] = useState<string | null>(null);
-
-  async function onSendPost(message: string, fileIds: string[]): Promise<boolean> {
-    if (!token || !currentChannelId) return false;
-    const channelID = currentChannelId;
-    const trimmed = message.trim();
-    if (!trimmed && fileIds.length === 0) return false;
-    // Slash command path — only when there are no attachments and the message
-    // starts with "/". Falls back to regular post on the unknown-command 404.
-    if (trimmed.startsWith("/") && fileIds.length === 0) {
-      try {
-        const resp = await api.executeCommand(token, currentTeamId ?? "", channelID, trimmed);
-        if (resp.response_type === "ephemeral") {
-          setCmdNotice(resp.text);
-          setTimeout(() => setCmdNotice(null), 6000);
-        }
-        // in_channel commands produce a server-side post + WS broadcast; nothing else to do.
-        return true;
-      } catch (e) {
-        const msg = e instanceof Error ? e.message : "명령 실행 실패";
-        // If the server says the command is unknown, send the line as a normal message.
-        if (!msg.includes("unknown")) {
-          setError(msg);
-          return false;
-        }
-      }
-    }
-    try {
-      const p = await api.createPost(token, channelID, trimmed, "", fileIds);
-      if (currentChannelIdRef.current === channelID) {
-        setPosts((prev) => prev.some((x) => x.id === p.id) ? prev : [...prev, p]);
-      }
-      // Pre-hydrate file infos we just uploaded (already in filesByID from uploader).
-      return true;
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "전송 실패");
-      return false;
-    }
-  }
-
-  async function onEditPost(postId: string, message: string): Promise<boolean> {
-    if (!token) return false;
-    try {
-      await api.updatePost(token, postId, message);
-      // State refreshes via post_edited WS event; no local mutation needed.
-      return true;
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "수정 실패");
-      return false;
-    }
-  }
-
-  async function onDeletePost(postId: string) {
-    if (!token) return;
-    const ok = await confirmer.confirm({
-      title: "메시지 삭제",
-      message: "이 메시지를 삭제할까요? 되돌릴 수 없습니다.",
-      confirmLabel: "삭제",
-      destructive: true,
-    });
-    if (!ok) return;
-    try {
-      await api.deletePost(token, postId);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "삭제 실패");
-    }
-  }
-
-  // Phase 18 — saved posts toggle. Optimistic patch on the savedIds set;
-  // server emits `saved_post_changed` which will re-reconcile. We skip
-  // the optimistic update only when the server call errors.
-  async function onToggleSaved(post: Post) {
-    if (!token) return;
-    const wasSaved = savedIds.has(post.id);
-    setSavedIds((prev) => {
-      const next = new Set(prev);
-      if (wasSaved) next.delete(post.id); else next.add(post.id);
-      return next;
-    });
-    try {
-      if (wasSaved) await api.unsavePost(token, post.id);
-      else await api.savePost(token, post.id);
-    } catch (e) {
-      // Roll back on error so the star reflects server truth.
-      setSavedIds((prev) => {
-        const next = new Set(prev);
-        if (wasSaved) next.add(post.id); else next.delete(post.id);
-        return next;
-      });
-      setError(e instanceof Error ? e.message : "저장 실패");
-    }
-  }
+  // Message-level actions (send incl. slash commands, edit, delete, save)
+  // live in their own hook.
+  const postActions = usePostActions({
+    token,
+    teamId: currentTeamId,
+    channelId: currentChannelId,
+    currentChannelIdRef,
+    setPosts,
+    savedIds,
+    setSavedIds,
+    confirmer,
+    onError: setError,
+  });
 
   // Phase 19 — scheduled-posts loader keeps the sidebar badge current.
   const loadScheduledList = useCallback(async () => {
@@ -1555,11 +1391,11 @@ export function ChatView() {
                     files={(p.file_ids ?? []).map((id) => filesByID[id]).filter(Boolean) as FileInfo[]}
                     token={token ?? ""}
                     onToggleReaction={(emoji) => onToggleReaction(p, emoji)}
-                    onEdit={onEditPost}
-                    onDelete={onDeletePost}
+                    onEdit={postActions.edit}
+                    onDelete={postActions.remove}
                     onOpenThread={openThread}
                     isSaved={savedIds.has(p.id)}
-                    onToggleSaved={() => onToggleSaved(p)}
+                    onToggleSaved={() => postActions.toggleSaved(p)}
                     compact
                     channelLabel={
                       channels.find((c) => c.id === p.channel_id)?.display_name
@@ -1600,10 +1436,10 @@ export function ChatView() {
                       token={token ?? ""}
                       domAnchorId={`channel-post-${p.id}`}
                       isSaved={savedIds.has(p.id)}
-                      onToggleSaved={() => onToggleSaved(p)}
+                      onToggleSaved={() => postActions.toggleSaved(p)}
                       onToggleReaction={(emoji) => onToggleReaction(p, emoji)}
-                      onEdit={onEditPost}
-                      onDelete={onDeletePost}
+                      onEdit={postActions.edit}
+                      onDelete={postActions.remove}
                       onOpenThread={openThread}
                       onRemindMe={() => setReminderForPostId(p.id)}
                     />
@@ -1614,10 +1450,10 @@ export function ChatView() {
 
             {!searchResults && (
               <>
-                {cmdNotice && (
+                {postActions.commandNotice && (
                   <div className="cmd-notice">
-                    <span>{cmdNotice}</span>
-                    <button type="button" className="action-btn" onClick={() => setCmdNotice(null)}>✕</button>
+                    <span>{postActions.commandNotice}</span>
+                    <button type="button" className="action-btn" onClick={postActions.dismissCommandNotice}>✕</button>
                   </div>
                 )}
                 <TypingIndicator
@@ -1632,7 +1468,7 @@ export function ChatView() {
                   aiPermissionLoaded={aiAvailabilityLoaded}
                   aiStatusLabel={aiStatusLabel}
                   aiPreferences={aiPreferences}
-                  onSend={onSendPost}
+                  onSend={postActions.send}
                   onTyping={sendTyping}
                   onUpload={onUploadFiles}
                   onSchedule={onOpenScheduleModal}
@@ -1672,8 +1508,8 @@ export function ChatView() {
                 currentUserId={user?.id ?? ""}
                 token={token ?? ""}
                 onToggleReaction={onToggleReaction}
-                onEdit={onEditPost}
-                onDelete={onDeletePost}
+                onEdit={postActions.edit}
+                onDelete={postActions.remove}
                 onReply={onReplyInThread}
                 onUpload={onUploadFiles}
                 onSchedule={onOpenScheduleModalFromThread(threadRootId)}
@@ -1729,13 +1565,13 @@ export function ChatView() {
         />
       )}
 
-      {showSessions && (
+      {sessionManager.visible && (
         <SessionManagerModal
-          sessions={sessions}
-          loading={sessionsLoading}
-          onRevoke={onRevokeOneSession}
-          onRevokeOthers={onRevokeOtherSessions}
-          onClose={() => setShowSessions(false)}
+          sessions={sessionManager.sessions}
+          loading={sessionManager.loading}
+          onRevoke={sessionManager.revoke}
+          onRevokeOthers={sessionManager.revokeOthers}
+          onClose={sessionManager.close}
         />
       )}
 
@@ -1910,7 +1746,7 @@ export function ChatView() {
           onUploadAvatar={() => avatarFileRef.current?.click()}
           onOpenProfileFields={() => { setShowUserMenu(false); setShowProfileFields(true); }}
           onOpenNotifyPrefs={() => { setShowUserMenu(false); setShowNotifyPrefs(true); }}
-          onOpenSessions={() => { setShowUserMenu(false); openSessionModal(); }}
+          onOpenSessions={() => { setShowUserMenu(false); sessionManager.open(); }}
           onOpenQuickSwitcher={() => { setShowUserMenu(false); setShowQuickSwitcher(true); }}
           onOpenPersonalSettings={() => { setShowUserMenu(false); navigate("/settings/profile"); }}
           onOpenMyApprovals={() => { setShowUserMenu(false); navigate("/approvals/mine"); }}

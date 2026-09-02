@@ -125,7 +125,7 @@ func TestBroadcastWorkItemIntersectsRecipientsWithCurrentChannelMembership(t *te
 	var assigneeMember atomic.Bool
 	assigneeMember.Store(true)
 	resolved := make(chan struct{}, 8)
-	hub.SetAudienceResolver(func(_ context.Context, _ ws.Broadcast) (map[string]struct{}, error) {
+	hub.SetAudienceResolver(func(_ context.Context, _ ws.Broadcast, _ []string) (map[string]struct{}, error) {
 		audience := map[string]struct{}{"creator": {}}
 		if assigneeMember.Load() {
 			audience["assignee"] = struct{}{}

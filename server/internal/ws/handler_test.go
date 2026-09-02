@@ -127,7 +127,7 @@ func TestHandleChallengeRejectsInvalidCredential(t *testing.T) {
 
 func TestTypingActionRequiresLiveSenderChannelMembership(t *testing.T) {
 	hub := NewHub()
-	hub.SetAudienceResolver(func(_ context.Context, broadcast Broadcast) (map[string]struct{}, error) {
+	hub.SetAudienceResolver(func(_ context.Context, broadcast Broadcast, _ []string) (map[string]struct{}, error) {
 		if broadcast.ChannelID != "allowed-channel" {
 			return map[string]struct{}{}, nil
 		}

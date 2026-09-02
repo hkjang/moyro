@@ -7,10 +7,12 @@ package metrics
 import (
 	"net/http"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
@@ -26,6 +28,15 @@ type Registry struct {
 	webhookDepth prometheus.Gauge
 	ssoStages    *prometheus.CounterVec
 	ssoDuration  *prometheus.HistogramVec
+	wsUsers      prometheus.Gauge
+	wsDrops      *prometheus.CounterVec
+	dbPool       *prometheus.GaugeVec
+
+	// The hub and the pool expose cumulative totals, while Prometheus
+	// counters only move forward by a delta. Remember what was already
+	// reported so a restart of the sampling loop cannot double-count.
+	dropMu      sync.Mutex
+	lastWSDrops map[string]int64
 }
 
 // package-level singleton — single-process server, no isolation needed.
@@ -67,7 +78,23 @@ func New() *Registry {
 		Help:    "SSO stage latency in seconds by bounded provider, stage, and result labels.",
 		Buckets: []float64{0.01, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30},
 	}, []string{"provider", "stage", "result"})
-	reg.MustRegister(r.httpDuration, r.postsCreated, r.wsClients, r.webhookDepth, r.ssoStages, r.ssoDuration)
+	r.wsUsers = prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: "moyro_ws_users",
+		Help: "Distinct users with at least one open WebSocket client.",
+	})
+	r.wsDrops = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "moyro_ws_events_dropped_total",
+		Help: "WebSocket events the hub discarded, by reason: queue_full (delivery fell behind), slow_consumer (a client was not reading), audience_unresolved (authorization failed closed).",
+	}, []string{"reason"})
+	r.dbPool = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "moyro_db_pool_connections",
+		Help: "PostgreSQL pool connections by state: acquired, idle, total, max, constructing.",
+	}, []string{"state"})
+	r.lastWSDrops = map[string]int64{}
+	reg.MustRegister(
+		r.httpDuration, r.postsCreated, r.wsClients, r.webhookDepth,
+		r.ssoStages, r.ssoDuration, r.wsUsers, r.wsDrops, r.dbPool,
+	)
 	return r
 }
 
@@ -111,6 +138,49 @@ func ObserveWSClients(n int) { pkg.wsClients.Set(float64(n)) }
 
 // ObserveWebhookQueue sets the outgoing-webhook queue-depth gauge.
 func ObserveWebhookQueue(n int) { pkg.webhookDepth.Set(float64(n)) }
+
+// ObserveWSUsers sets the distinct-connected-user gauge. Unlike the client
+// gauge this counts people, not tabs, so it can be compared with the audience
+// sizes the fan-out path resolves.
+func ObserveWSUsers(n int) { pkg.wsUsers.Set(float64(n)) }
+
+// ObserveWSDrops advances the dropped-event counters from the hub's cumulative
+// totals. Dropping is how the hub stays responsive under load, but until it is
+// counted an operator has no way to see that clients missed events.
+func ObserveWSDrops(queueFull, slowConsumer, audienceUnresolved int64) {
+	pkg.dropMu.Lock()
+	defer pkg.dropMu.Unlock()
+	for reason, total := range map[string]int64{
+		"queue_full":          queueFull,
+		"slow_consumer":       slowConsumer,
+		"audience_unresolved": audienceUnresolved,
+	} {
+		previous := pkg.lastWSDrops[reason]
+		if total < previous {
+			// A total that moved backwards can only mean a fresh counter;
+			// resynchronise instead of reporting a negative delta.
+			previous = 0
+		}
+		if delta := total - previous; delta > 0 {
+			pkg.wsDrops.WithLabelValues(reason).Add(float64(delta))
+		}
+		pkg.lastWSDrops[reason] = total
+	}
+}
+
+// ObserveDBPool publishes PostgreSQL pool saturation. Exhaustion shows up as
+// acquired approaching max with idle at zero, which is otherwise only visible
+// as unexplained request latency.
+func ObserveDBPool(stat *pgxpool.Stat) {
+	if stat == nil {
+		return
+	}
+	pkg.dbPool.WithLabelValues("acquired").Set(float64(stat.AcquiredConns()))
+	pkg.dbPool.WithLabelValues("idle").Set(float64(stat.IdleConns()))
+	pkg.dbPool.WithLabelValues("total").Set(float64(stat.TotalConns()))
+	pkg.dbPool.WithLabelValues("max").Set(float64(stat.MaxConns()))
+	pkg.dbPool.WithLabelValues("constructing").Set(float64(stat.ConstructingConns()))
+}
 
 func boundedSSOLabel(value string, allowed []string, fallback string) string {
 	for _, candidate := range allowed {

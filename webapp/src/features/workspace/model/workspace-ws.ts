@@ -10,6 +10,7 @@ import {
   type UserStatusValue,
 } from "@/api/client";
 import { parseMentionIDs } from "@/features/workspace/model/workspace-helpers";
+import { appendLivePost } from "@/features/workspace/model/post-window";
 import {
   DEFAULT_INBOX_PREFERENCES,
   inboxNotificationsAllowed,
@@ -101,7 +102,7 @@ export function handleWorkspaceWebSocketEvent(
       hydrateUsers([p.user_id]);
       hydrateFiles(p.file_ids ?? []);
       if (p.channel_id === currentChannelIdRef.current) {
-        setPosts((prev) => prev.some((x) => x.id === p.id) ? prev : [...prev, p]);
+        setPosts((prev) => appendLivePost(prev, p));
         api.viewChannel(token!, p.channel_id).catch(() => undefined);
       }
       // `unread_updated` WS event arrives alongside `posted` for non-author

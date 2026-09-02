@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"sync"
+	"sync/atomic"
 
 	"github.com/gorilla/websocket"
 )
@@ -47,7 +48,14 @@ type Publisher interface {
 // AudienceResolver returns the users allowed to receive a channel-, team-, or
 // subject-user-scoped event. Scoped events fail closed when authorization
 // cannot be resolved. A user target narrows this audience; it never bypasses it.
-type AudienceResolver func(context.Context, Broadcast) (map[string]struct{}, error)
+//
+// `candidates` is the set of user ids the caller could actually deliver to.
+// Resolvers must treat it as an upper bound and never return an id outside it,
+// which lets a database-backed implementation answer the membership question
+// for a handful of connected users instead of the whole directory. Callers
+// never pass an empty slice for a scoped event: fan-out returns early when no
+// candidate exists, so an empty slice means "no recipients", not "everyone".
+type AudienceResolver func(ctx context.Context, broadcast Broadcast, candidates []string) (map[string]struct{}, error)
 
 type Hub struct {
 	mu      sync.RWMutex
@@ -70,15 +78,74 @@ type Hub struct {
 
 	// audience enforces the authorization boundary for channel/team events.
 	audience AudienceResolver
+
+	// deliveries carries sequenced, already-marshalled events from the Run
+	// loop to the delivery goroutine. Authorizing an event requires a
+	// membership lookup, so doing it inside Run would let a slow database
+	// stall client registration and, through the bcast channel, every request
+	// that publishes an event.
+	deliveries chan delivery
+
+	// Counters for behaviour that is otherwise invisible: the hub drops
+	// events rather than blocking, and an operator needs to see that happen.
+	// Read through Stats; published as metrics by the process that owns Run.
+	droppedEvents    atomic.Int64
+	droppedSends     atomic.Int64
+	audienceFailures atomic.Int64
+}
+
+// delivery is one sequenced event with its encoded frame, queued for fan-out.
+type delivery struct {
+	event Event
+	raw   []byte
+}
+
+// deliveryQueueSize bounds how far delivery may lag behind publication before
+// the hub starts shedding events. It is deliberately larger than the publish
+// queue: a transient database stall should be absorbed here rather than
+// propagate back into request handling.
+const deliveryQueueSize = 1024
+
+// HubStats reports hub activity that has no other observable surface.
+type HubStats struct {
+	// Clients is the number of open sockets, not distinct users.
+	Clients int
+	// Users is the number of distinct users with at least one open socket.
+	Users int
+	// DroppedEvents counts events discarded because delivery fell too far
+	// behind. A non-zero value means some clients missed events.
+	DroppedEvents int64
+	// DroppedSends counts per-socket writes discarded because that client's
+	// send buffer was full — a slow or stalled consumer.
+	DroppedSends int64
+	// AudienceFailures counts events dropped because authorization could not
+	// be resolved. These are fail-closed drops, not delivery failures.
+	AudienceFailures int64
+}
+
+// Stats snapshots the hub's counters. Safe to call from any goroutine.
+func (h *Hub) Stats() HubStats {
+	h.mu.RLock()
+	clients := len(h.clients)
+	users := len(h.byUser)
+	h.mu.RUnlock()
+	return HubStats{
+		Clients:          clients,
+		Users:            users,
+		DroppedEvents:    h.droppedEvents.Load(),
+		DroppedSends:     h.droppedSends.Load(),
+		AudienceFailures: h.audienceFailures.Load(),
+	}
 }
 
 func NewHub() *Hub {
 	return &Hub{
-		clients: map[*Client]struct{}{},
-		byUser:  map[string]map[*Client]struct{}{},
-		reg:     make(chan *Client, 16),
-		unreg:   make(chan *Client, 16),
-		bcast:   make(chan Event, 256),
+		clients:    map[*Client]struct{}{},
+		byUser:     map[string]map[*Client]struct{}{},
+		reg:        make(chan *Client, 16),
+		unreg:      make(chan *Client, 16),
+		bcast:      make(chan Event, 256),
+		deliveries: make(chan delivery, deliveryQueueSize),
 	}
 }
 
@@ -129,7 +196,9 @@ func (h *Hub) CanPublish(ctx context.Context, userID string, broadcast Broadcast
 	if resolver == nil {
 		return false, nil
 	}
-	audience, err := resolver(ctx, broadcast)
+	// Only this one actor's membership is in question, so the resolver never
+	// has to consider anybody else.
+	audience, err := resolver(ctx, broadcast, []string{userID})
 	if err != nil {
 		return false, err
 	}
@@ -193,7 +262,21 @@ func (h *Hub) Broadcast(ev Event) {
 	h.bcast <- ev
 }
 
+// Run owns hub state. It assigns each event its sequence number, encodes it,
+// and hands it to a single delivery goroutine; registration and unregistration
+// therefore stay responsive no matter how long authorization takes. Delivery
+// order is preserved because exactly one goroutine drains the queue.
 func (h *Hub) Run(ctx context.Context) {
+	deliveryDone := make(chan struct{})
+	go func() {
+		defer close(deliveryDone)
+		h.runDeliveries(ctx)
+	}()
+	defer func() {
+		close(h.deliveries)
+		<-deliveryDone
+	}()
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -234,8 +317,35 @@ func (h *Hub) Run(ctx context.Context) {
 		case ev := <-h.bcast:
 			h.seq++
 			ev.Seq = h.seq
-			raw, _ := json.Marshal(ev)
-			h.fanout(ctx, ev, raw)
+			raw, err := json.Marshal(ev)
+			if err != nil {
+				h.droppedEvents.Add(1)
+				continue
+			}
+			select {
+			case h.deliveries <- delivery{event: ev, raw: raw}:
+			default:
+				// Delivery is saturated. Shedding here keeps publication
+				// bounded; the alternative is back-pressure that reaches
+				// every request handler that posts a message.
+				h.droppedEvents.Add(1)
+			}
+		}
+	}
+}
+
+// runDeliveries fans out queued events one at a time, preserving the order Run
+// assigned. It exits when the queue is closed or the context is cancelled.
+func (h *Hub) runDeliveries(ctx context.Context) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case item, ok := <-h.deliveries:
+			if !ok {
+				return
+			}
+			h.fanout(ctx, item.event, item.raw)
 		}
 	}
 }
@@ -247,23 +357,48 @@ func (h *Hub) fanout(ctx context.Context, ev Event, raw []byte) {
 	if !validSensitiveEventScope(ev) {
 		return
 	}
+	scoped := ev.Broadcast.ChannelID != "" || ev.Broadcast.TeamID != "" || ev.Broadcast.SubjectUserID != ""
+
+	// Snapshot the resolver and the users we could deliver to before doing any
+	// authorization work, so the lock is never held across the resolver call.
 	h.mu.RLock()
 	audienceResolver := h.audience
+	var candidates []string
+	if scoped {
+		if ev.Broadcast.UserID != "" {
+			candidates = []string{ev.Broadcast.UserID}
+		} else {
+			candidates = make([]string, 0, len(h.byUser))
+			for userID := range h.byUser {
+				candidates = append(candidates, userID)
+			}
+		}
+	}
 	h.mu.RUnlock()
 
 	var audience map[string]struct{}
-	scoped := ev.Broadcast.ChannelID != "" || ev.Broadcast.TeamID != "" || ev.Broadcast.SubjectUserID != ""
 	if scoped {
 		if audienceResolver == nil {
+			h.audienceFailures.Add(1)
 			return
 		}
-		resolved, err := audienceResolver(ctx, ev.Broadcast)
+		// Nobody this instance can reach is a candidate, so there is no
+		// authorization question to ask.
+		if len(candidates) == 0 {
+			return
+		}
+		resolved, err := audienceResolver(ctx, ev.Broadcast, candidates)
 		if err != nil {
+			h.audienceFailures.Add(1)
 			return
 		}
 		audience = resolved
 	}
 
+	// A client that registers between the snapshot and delivery is absent from
+	// the resolved audience and therefore skipped. Missing a single event on a
+	// brand-new socket is the fail-closed direction, and the client's reconnect
+	// reconciliation restores the state either way.
 	h.mu.RLock()
 	defer h.mu.RUnlock()
 
@@ -279,7 +414,7 @@ func (h *Hub) fanout(ctx context.Context, ev Event, raw []byte) {
 			}
 		}
 		for c := range h.byUser[ev.Broadcast.UserID] {
-			trySend(c, raw)
+			h.trySend(c, raw)
 		}
 		return
 	}
@@ -292,7 +427,7 @@ func (h *Hub) fanout(ctx context.Context, ev Event, raw []byte) {
 				continue
 			}
 		}
-		trySend(c, raw)
+		h.trySend(c, raw)
 	}
 }
 
@@ -306,10 +441,13 @@ func validSensitiveEventScope(ev Event) bool {
 	}
 }
 
-func trySend(c *Client, raw []byte) {
+func (h *Hub) trySend(c *Client, raw []byte) {
 	select {
 	case c.Send <- raw:
 	default:
-		// drop slow consumer
+		// Drop rather than block on a slow consumer. The client reconciles
+		// on reconnect, so a missed frame is recoverable; a blocked fan-out
+		// is not.
+		h.droppedSends.Add(1)
 	}
 }

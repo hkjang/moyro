@@ -71,9 +71,14 @@ func main() {
 	hub := ws.NewHub()
 	go hub.Run(ctx)
 
-	// Feed the moyro_ws_clients prometheus gauge on a slow tick. 5s is
-	// fine — the gauge is for trend graphs, not per-request accuracy —
-	// and keeps the hub's hot path free of any metrics coupling.
+	// Sample hub and pool state onto the prometheus collectors on a slow
+	// tick. 5s is fine — these are for trend graphs, not per-request
+	// accuracy — and it keeps the hub's hot path free of metrics coupling.
+	//
+	// The hub's drop counters matter most here: shedding events is how it
+	// stays responsive under load, and without this loop that would be
+	// invisible. Pool saturation is sampled from the same tick because
+	// exhaustion and event shedding usually have the same root cause.
 	go func() {
 		t := time.NewTicker(5 * time.Second)
 		defer t.Stop()
@@ -82,7 +87,11 @@ func main() {
 			case <-ctx.Done():
 				return
 			case <-t.C:
-				metrics.ObserveWSClients(hub.ClientCount())
+				stats := hub.Stats()
+				metrics.ObserveWSClients(stats.Clients)
+				metrics.ObserveWSUsers(stats.Users)
+				metrics.ObserveWSDrops(stats.DroppedEvents, stats.DroppedSends, stats.AudienceFailures)
+				metrics.ObserveDBPool(db.Pool.Stat())
 			}
 		}
 	}()

@@ -55,7 +55,7 @@ func TestDatabaseAudienceResolverRequiresLiveIntersectingMembership(t *testing.T
 		t.Fatalf("seed audience fixture: %v", err)
 	}
 
-	resolve := DatabaseAudienceResolver(db)
+	resolve := allUserCandidateResolver(t, ctx, db)
 	audience, err := resolve(ctx, Broadcast{ChannelID: "audience-channel", TeamID: "audience-team"})
 	if err != nil {
 		t.Fatalf("resolve live channel and team audience: %v", err)
@@ -157,7 +157,7 @@ func TestDatabaseAudienceResolverRejectsArchivedTeam(t *testing.T) {
 		t.Fatalf("seed archived team fixture: %v", err)
 	}
 
-	audience, err := DatabaseAudienceResolver(db)(ctx, Broadcast{TeamID: "audience-archived-team"})
+	audience, err := allUserCandidateResolver(t, ctx, db)(ctx, Broadcast{TeamID: "audience-archived-team"})
 	if err != nil {
 		t.Fatalf("resolve archived team audience: %v", err)
 	}
@@ -216,7 +216,7 @@ func TestDatabaseAudienceResolverLimitsSubjectEventsForGuestsPostgres(t *testing
 		t.Fatalf("seed subject audience channel members: %v", err)
 	}
 
-	resolve := DatabaseAudienceResolver(db)
+	resolve := allUserCandidateResolver(t, ctx, db)
 	audience, err := resolve(ctx, Broadcast{SubjectUserID: "presence-subject"})
 	if err != nil {
 		t.Fatalf("resolve subject audience: %v", err)
@@ -311,4 +311,104 @@ func newAudienceTestDB(t *testing.T) *store.DB {
 		t.Fatalf("migrate audience test schema: %v", err)
 	}
 	return db
+}
+
+// allUserCandidateResolver adapts the candidate-scoped resolver for assertions
+// about the authorization predicate itself: it offers every seeded account as a
+// candidate, so an id missing from the result was excluded by authorization
+// rather than by the candidate restriction.
+func allUserCandidateResolver(t *testing.T, ctx context.Context, db *store.DB) func(context.Context, Broadcast) (map[string]struct{}, error) {
+	t.Helper()
+	resolve := DatabaseAudienceResolver(db)
+	return func(ctx context.Context, broadcast Broadcast) (map[string]struct{}, error) {
+		rows, err := db.Pool.Query(ctx, `SELECT id FROM users`)
+		if err != nil {
+			return nil, err
+		}
+		defer rows.Close()
+		candidates := []string{}
+		for rows.Next() {
+			var id string
+			if err := rows.Scan(&id); err != nil {
+				return nil, err
+			}
+			candidates = append(candidates, id)
+		}
+		if err := rows.Err(); err != nil {
+			return nil, err
+		}
+		return resolve(ctx, broadcast, candidates)
+	}
+}
+
+// TestDatabaseAudienceResolverNeverExceedsCandidateSet locks the contract the
+// hub relies on: the resolver may only ever narrow the candidate set, so a user
+// this instance holds no socket for can never be pulled into a fan-out, and an
+// empty candidate set resolves to nobody rather than to everybody.
+func TestDatabaseAudienceResolverNeverExceedsCandidateSet(t *testing.T) {
+	db := newAudienceTestDB(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+	t.Cleanup(cancel)
+	if _, err := db.Pool.Exec(ctx, `
+		INSERT INTO users (id, username, email, password_hash, roles, create_at, update_at)
+		VALUES
+			('candidate-connected','candidate-connected','candidate-connected@example.test','hash','system_user',1,1),
+			('candidate-offline','candidate-offline','candidate-offline@example.test','hash','system_user',1,1);
+		INSERT INTO teams (id, display_name, name, type, create_at, update_at)
+		VALUES ('candidate-team','Candidate Team','candidate-team','O',1,1);
+		INSERT INTO team_members (team_id, user_id, roles, create_at)
+		VALUES
+			('candidate-team','candidate-connected','team_user',1),
+			('candidate-team','candidate-offline','team_user',1);
+		INSERT INTO channels (id, team_id, type, display_name, name, create_at, update_at)
+		VALUES ('candidate-channel','candidate-team','O','Candidate Channel','candidate-channel',1,1);
+		INSERT INTO channel_members (channel_id, user_id, roles, create_at)
+		VALUES
+			('candidate-channel','candidate-connected','channel_user',1),
+			('candidate-channel','candidate-offline','channel_user',1)
+	`); err != nil {
+		t.Fatalf("seed candidate fixture: %v", err)
+	}
+
+	resolve := DatabaseAudienceResolver(db)
+	scope := Broadcast{ChannelID: "candidate-channel", TeamID: "candidate-team"}
+
+	narrowed, err := resolve(ctx, scope, []string{"candidate-connected"})
+	if err != nil {
+		t.Fatalf("resolve narrowed candidates: %v", err)
+	}
+	if len(narrowed) != 1 {
+		t.Fatalf("narrowed audience = %#v", narrowed)
+	}
+	if _, ok := narrowed["candidate-connected"]; !ok {
+		t.Fatalf("authorized candidate missing: %#v", narrowed)
+	}
+	if _, ok := narrowed["candidate-offline"]; ok {
+		t.Fatalf("resolver returned a user outside the candidate set: %#v", narrowed)
+	}
+
+	// An unauthorized candidate is still excluded, so the restriction narrows
+	// the question without weakening the answer.
+	unauthorized, err := resolve(ctx, Broadcast{ChannelID: "candidate-channel", TeamID: "candidate-team"}, []string{"candidate-unknown"})
+	if err != nil {
+		t.Fatalf("resolve unknown candidate: %v", err)
+	}
+	if len(unauthorized) != 0 {
+		t.Fatalf("unknown candidate entered audience: %#v", unauthorized)
+	}
+
+	empty, err := resolve(ctx, scope, nil)
+	if err != nil {
+		t.Fatalf("resolve empty candidate set: %v", err)
+	}
+	if len(empty) != 0 {
+		t.Fatalf("empty candidate set resolved to %#v", empty)
+	}
+
+	// An unscoped broadcast still reports "no scope" so the hub keeps its
+	// global-delivery semantics rather than treating it as an empty audience.
+	unscoped, err := resolve(ctx, Broadcast{}, []string{"candidate-connected"})
+	if err != nil || unscoped != nil {
+		t.Fatalf("unscoped resolve = %#v, %v (want nil, nil)", unscoped, err)
+	}
 }

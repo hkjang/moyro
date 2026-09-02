@@ -2,7 +2,7 @@ package store
 
 import (
 	"io/fs"
-	"strings"
+	"strconv"
 	"testing"
 	"testing/fstest"
 	"time"
@@ -56,14 +56,30 @@ func TestCollaborationControlsMigrationBoundsExistingActiveGuestsPostgres(t *tes
 	}
 }
 
+// migrationsBeforeCollaborationControls returns every migration that precedes
+// the collaboration-controls migration. It filters by version rather than by a
+// single filename so migrations added after 000015 do not reintroduce a
+// sequence gap in this fixture.
 func migrationsBeforeCollaborationControls(t *testing.T) fstest.MapFS {
 	t.Helper()
+	const collaborationControlsVersion = 15
 	files := fstest.MapFS{}
 	err := fs.WalkDir(embeddedMigrations, "migrations", func(path string, entry fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
 		}
-		if entry.IsDir() || strings.Contains(path, "/000015_") {
+		if entry.IsDir() {
+			return nil
+		}
+		match := migrationFilenamePattern.FindStringSubmatch(entry.Name())
+		if match == nil {
+			return nil
+		}
+		version, err := strconv.ParseInt(match[1], 10, 64)
+		if err != nil {
+			return err
+		}
+		if version >= collaborationControlsVersion {
 			return nil
 		}
 		data, err := fs.ReadFile(embeddedMigrations, path)
