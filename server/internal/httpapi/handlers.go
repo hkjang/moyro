@@ -3328,37 +3328,31 @@ func (h *handlers) emojisByNames(w http.ResponseWriter, r *http.Request) {
 	if len(names) > 200 {
 		names = names[:200]
 	}
-	out := []emojis.Emoji{}
+	wanted := make([]string, 0, len(names))
 	for _, name := range names {
 		name = strings.Trim(strings.ToLower(name), ":")
 		if name == "" {
 			continue
 		}
-		e, err := h.emojis.GetByName(r.Context(), name)
-		if err == nil && e != nil {
-			out = append(out, *e)
-		}
+		wanted = append(wanted, name)
+	}
+	out, err := h.emojis.GetManyByNames(r.Context(), wanted)
+	if err != nil {
+		writeError(w, 500, "api.emoji.names.fail", err.Error())
+		return
 	}
 	writeJSON(w, 200, out)
 }
 
+// writeEmojiSearch backs both autocomplete and search. The match happens in
+// the database so emojis outside the newest page are still reachable.
 func (h *handlers) writeEmojiSearch(w http.ResponseWriter, r *http.Request, term string) {
-	list, err := h.emojis.List(r.Context(), 0, 200)
+	list, err := h.emojis.Search(r.Context(), term, 200)
 	if err != nil {
 		writeError(w, 500, "api.emoji.search.fail", err.Error())
 		return
 	}
-	if term == "" {
-		writeJSON(w, 200, list)
-		return
-	}
-	out := []emojis.Emoji{}
-	for _, e := range list {
-		if strings.Contains(e.Name, term) {
-			out = append(out, e)
-		}
-	}
-	writeJSON(w, 200, out)
+	writeJSON(w, 200, list)
 }
 
 // deleteEmoji is allowed for admin OR creator. We derive admin status via

@@ -172,6 +172,70 @@ func (s *Service) List(ctx context.Context, page, perPage int) ([]Emoji, error) 
 	if err != nil {
 		return nil, err
 	}
+	return collect(rows)
+}
+
+// Search returns live emojis whose name contains term, newest first. The
+// match runs in the database rather than over a fetched page so a workspace
+// with more custom emojis than one page can hold stays fully searchable;
+// filtering a client-side slice silently hid everything but the newest rows.
+//
+// term is matched literally with strpos, not LIKE, so `%` and `_` inside a
+// user-supplied autocomplete term stay ordinary characters. An empty term
+// matches everything, which is what the autocomplete endpoint asks for
+// before the user has typed anything.
+func (s *Service) Search(ctx context.Context, term string, limit int) ([]Emoji, error) {
+	if limit <= 0 || limit > 200 {
+		limit = 200
+	}
+	rows, err := s.db.Pool.Query(ctx, `
+		SELECT id, name, creator_id, file_id, create_at, delete_at
+		FROM emojis
+		WHERE delete_at=0 AND ($1 = '' OR strpos(name, $1) > 0)
+		ORDER BY create_at DESC
+		LIMIT $2
+	`, term, limit)
+	if err != nil {
+		return nil, err
+	}
+	return collect(rows)
+}
+
+// GetManyByNames resolves a batch of names in one round-trip and returns the
+// live matches in the caller's requested order. Names that resolve to nothing
+// are simply absent, mirroring GetByName's per-name contract without paying a
+// query per requested name.
+func (s *Service) GetManyByNames(ctx context.Context, names []string) ([]Emoji, error) {
+	out := []Emoji{}
+	if len(names) == 0 {
+		return out, nil
+	}
+	rows, err := s.db.Pool.Query(ctx, `
+		SELECT id, name, creator_id, file_id, create_at, delete_at
+		FROM emojis WHERE delete_at=0 AND name = ANY($1::text[])
+	`, names)
+	if err != nil {
+		return nil, err
+	}
+	found, err := collect(rows)
+	if err != nil {
+		return nil, err
+	}
+	byName := make(map[string]Emoji, len(found))
+	for _, e := range found {
+		byName[e.Name] = e
+	}
+	for _, name := range names {
+		if e, ok := byName[name]; ok {
+			out = append(out, e)
+		}
+	}
+	return out, nil
+}
+
+// collect drains a rows cursor selecting the standard emoji column list. It
+// always returns a non-nil slice so handlers marshal `[]` instead of `null`.
+func collect(rows pgx.Rows) ([]Emoji, error) {
 	defer rows.Close()
 	out := []Emoji{}
 	for rows.Next() {
