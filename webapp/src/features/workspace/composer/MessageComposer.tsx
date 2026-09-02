@@ -30,6 +30,8 @@ export type MessageComposerProps = {
   onTyping: () => void;
   onUpload: (files: File[]) => Promise<FileInfo[]>;
   onSchedule?: (message: string, fileIds: string[]) => void;
+  /** ↑ on an empty composer; return true when a message was opened for editing. */
+  onEditLast?: () => boolean;
   userId?: string;
   rootId?: string | null;
   resetSeq?: number;
@@ -50,6 +52,7 @@ export function MessageComposer({
   userId,
   rootId,
   resetSeq,
+  onEditLast,
 }: MessageComposerProps) {
   const [value, setValue] = useState("");
   const [pending, setPending] = useState<FileInfo[]>([]);
@@ -419,6 +422,10 @@ export function MessageComposer({
                 if (event.key === "Enter" && !event.shiftKey) {
                   event.preventDefault();
                   void submit();
+                  return;
+                }
+                if (event.key === "ArrowUp" && !value && pending.length === 0 && onEditLast?.()) {
+                  event.preventDefault();
                 }
               }}
             />

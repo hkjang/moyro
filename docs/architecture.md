@@ -70,6 +70,13 @@ Important packages:
   responsive while a membership lookup is in flight; a saturated delivery queue
   sheds events and reports the drop rather than applying back-pressure to
   request handling.
+- `internal/webui` serves the bundle with a Content-Security-Policy: scripts
+  from the bundle and `blob:` (the plugin runtime executes fetched bundles
+  through object URLs), inline styles for MUI's runtime injection, and
+  connections to this origin only, including its WebSocket endpoint.
+- `internal/store` traces every statement through a pgx `QueryTracer`; the
+  process feeds a latency histogram and a rate-limited slow-query log so a
+  slow route can be traced to the statement responsible.
 - `internal/store` sizes the connection pool and applies per-session statement,
   lock, and idle-in-transaction timeouts. Any value specified in
   `POSTGRES_DSN` wins. Schema migrations acquire a connection with those
@@ -110,6 +117,10 @@ Important modules:
 - `components/feedback/ToastProvider.tsx` is the one feedback surface for
   confirmations and failures; `useToast()` is a no-op outside the provider so
   components stay renderable in isolation.
+- `features/workspace/model/useOlderPosts.ts` pages history in above the
+  viewport, anchored on the oldest loaded post; `useTimelineScroll.ts`
+  compensates the scroll position for the inserted height. `useThreadPanel.ts`
+  owns the thread side panel.
 - `features/theme/ThemePreferenceProvider.tsx` is the single owner of MUI,
   first-paint, local-cache, and server-backed theme state.
 - `features/shell/ProductShell.tsx` owns the global rail and mobile bottom

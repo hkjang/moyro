@@ -5,6 +5,7 @@ import (
 	"io/fs"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"testing/fstest"
 )
@@ -89,6 +90,36 @@ func TestHandlerDoesNotFallbackForMissingAssetOrMutation(t *testing.T) {
 		testHandler(t).ServeHTTP(rr, req)
 		if rr.Code != http.StatusNotFound {
 			t.Fatalf("%s %s status=%d, want 404", req.Method, req.URL.Path, rr.Code)
+		}
+	}
+}
+
+// TestHandlerSetsContentSecurityPolicy pins the browser policy: scripts only
+// from the bundle and the plugin runtime's object URLs, connections only to
+// this origin's HTTP and WebSocket endpoints, and no framing.
+func TestHandlerSetsContentSecurityPolicy(t *testing.T) {
+	handler := testHandler(t)
+	for _, path := range []string{"/", "/assets/app.js", "/workspace/team-1"} {
+		req := httptest.NewRequest(http.MethodGet, "http://moyro.example"+path, nil)
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+		csp := rec.Header().Get("Content-Security-Policy")
+		if csp == "" {
+			t.Fatalf("%s: no Content-Security-Policy header", path)
+		}
+		for _, directive := range []string{
+			"script-src 'self' blob:",
+			"connect-src 'self' ws://moyro.example wss://moyro.example",
+			"frame-ancestors 'none'",
+			"object-src 'none'",
+			"style-src 'self' 'unsafe-inline'",
+		} {
+			if !strings.Contains(csp, directive) {
+				t.Fatalf("%s: policy %q lacks %q", path, csp, directive)
+			}
+		}
+		if strings.Contains(csp, "unsafe-eval") || strings.Contains(csp, "http:") && !strings.Contains(csp, "ws://") {
+			t.Fatalf("%s: policy %q is broader than intended", path, csp)
 		}
 	}
 }

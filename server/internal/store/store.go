@@ -87,10 +87,23 @@ func dsnSpecifies(dsn, parameter string) bool {
 	return strings.Contains(dsn, parameter+"=")
 }
 
+// Options tunes what Open wires beyond the pool itself.
+type Options struct {
+	// QueryObserver, when set, sees every completed statement.
+	QueryObserver QueryObserver
+}
+
 func Open(ctx context.Context, url string) (*DB, error) {
+	return OpenWithOptions(ctx, url, Options{})
+}
+
+func OpenWithOptions(ctx context.Context, url string, options Options) (*DB, error) {
 	config, err := poolConfig(url)
 	if err != nil {
 		return nil, err
+	}
+	if options.QueryObserver != nil {
+		config.ConnConfig.Tracer = &queryTracer{observe: options.QueryObserver}
 	}
 	pool, err := pgxpool.NewWithConfig(ctx, config)
 	if err != nil {

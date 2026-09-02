@@ -76,3 +76,13 @@ describe("boundPostWindow", () => {
     expect(MAX_RETAINED_POSTS).toBeGreaterThan(60);
   });
 });
+
+describe("appendLivePost with paged history", () => {
+  it("keeps history the reader loaded and only sheds one for one past it", () => {
+    const paged = series(MAX_RETAINED_POSTS + 100);
+    const next = appendLivePost(paged, post("live", MAX_RETAINED_POSTS + 100));
+    expect(next).toHaveLength(MAX_RETAINED_POSTS + 100);
+    expect(next[0].id).toBe("p1");
+    expect(next[next.length - 1].id).toBe("live");
+  });
+});

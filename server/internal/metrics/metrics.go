@@ -31,6 +31,7 @@ type Registry struct {
 	wsUsers      prometheus.Gauge
 	wsDrops      *prometheus.CounterVec
 	dbPool       *prometheus.GaugeVec
+	dbQuery      *prometheus.HistogramVec
 
 	// The hub and the pool expose cumulative totals, while Prometheus
 	// counters only move forward by a delta. Remember what was already
@@ -90,10 +91,15 @@ func New() *Registry {
 		Name: "moyro_db_pool_connections",
 		Help: "PostgreSQL pool connections by state: acquired, idle, total, max, constructing.",
 	}, []string{"state"})
+	r.dbQuery = prometheus.NewHistogramVec(prometheus.HistogramOpts{
+		Name:    "moyro_db_query_duration_seconds",
+		Help:    "PostgreSQL statement latency by outcome. Unlabelled by statement on purpose: the slow-query log names the statement, the histogram sizes the problem.",
+		Buckets: []float64{0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10},
+	}, []string{"outcome"})
 	r.lastWSDrops = map[string]int64{}
 	reg.MustRegister(
 		r.httpDuration, r.postsCreated, r.wsClients, r.webhookDepth,
-		r.ssoStages, r.ssoDuration, r.wsUsers, r.wsDrops, r.dbPool,
+		r.ssoStages, r.ssoDuration, r.wsUsers, r.wsDrops, r.dbPool, r.dbQuery,
 	)
 	return r
 }
@@ -166,6 +172,17 @@ func ObserveWSDrops(queueFull, slowConsumer, audienceUnresolved int64) {
 		}
 		pkg.lastWSDrops[reason] = total
 	}
+}
+
+// ObserveDBQuery records one completed statement. Statement text is not a
+// label — it would be unbounded — so the histogram only separates success
+// from failure; the slow-query log carries the statement.
+func ObserveDBQuery(duration time.Duration, err error) {
+	outcome := "ok"
+	if err != nil {
+		outcome = "error"
+	}
+	pkg.dbQuery.WithLabelValues(outcome).Observe(duration.Seconds())
 }
 
 // ObserveDBPool publishes PostgreSQL pool saturation. Exhaustion shows up as

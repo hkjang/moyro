@@ -59,6 +59,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Referrer-Policy", "same-origin")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.Header().Set("X-Frame-Options", "DENY")
+	w.Header().Set("Content-Security-Policy", contentSecurityPolicy(r))
 
 	if r.Method != http.MethodGet && r.Method != http.MethodHead {
 		http.NotFound(w, r)
@@ -122,4 +123,41 @@ func (h *Handler) serveIndex(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	http.ServeContent(w, r, "index.html", h.indexTime, bytes.NewReader(h.index))
+}
+
+// contentSecurityPolicy bounds what the browser will run and where it may
+// connect on behalf of the app. The product loads administrator-installed
+// web plugins in the page, so this policy is the line between "a plugin can
+// render UI" and "a plugin, or an injected script, can call anywhere".
+//
+//   - Scripts come from the bundle (`'self'`) and from the `blob:` object
+//     URLs the plugin runtime executes fetched bundles through. No inline
+//     scripts, no eval, no third-party origins.
+//   - Styles allow inline: MUI's emotion runtime injects style elements at
+//     runtime, and a nonce cannot be threaded through that code path today.
+//   - Connections are limited to this origin, including the WebSocket
+//     endpoint, which `'self'` alone does not cover in every browser.
+//   - Images and media may be object URLs because authenticated media is
+//     fetched with credentials and rendered from a Blob.
+//   - Nothing may frame the app, and forms and base URLs stay on-origin.
+func contentSecurityPolicy(r *http.Request) string {
+	host := r.Host
+	websocket := ""
+	if host != "" {
+		websocket = " ws://" + host + " wss://" + host
+	}
+	return strings.Join([]string{
+		"default-src 'self'",
+		"script-src 'self' blob:",
+		"style-src 'self' 'unsafe-inline'",
+		"img-src 'self' data: blob:",
+		"media-src 'self' blob:",
+		"font-src 'self' data:",
+		"connect-src 'self'" + websocket,
+		"worker-src 'self' blob:",
+		"object-src 'none'",
+		"base-uri 'self'",
+		"form-action 'self'",
+		"frame-ancestors 'none'",
+	}, "; ")
 }

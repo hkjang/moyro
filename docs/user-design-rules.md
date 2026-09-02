@@ -61,6 +61,8 @@ not write `html[data-theme]` directly.
   reader scrolls up, rather than moving the view under them.
 - Every timestamp comes from `webapp/src/lib/time.ts`; no surface formats time
   on its own.
+- Every shortcut the workspace implements is listed in the `?` help dialog;
+  a shortcut that is not listed there does not exist.
 - The right side is one context panel with thread, summary, files, and channel
   information—not several competing drawers.
 - My Work owns saved messages, scheduled posts, and reminders. They must not be

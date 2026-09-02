@@ -24,7 +24,11 @@ export const MAX_RETAINED_POSTS = 400;
 export function appendLivePost(current: Post[], post: Post): Post[] {
   if (current.some((existing) => existing.id === post.id)) return current;
   const next = [...current, post];
-  return next.length > MAX_RETAINED_POSTS ? next.slice(next.length - MAX_RETAINED_POSTS) : next;
+  // History the reader paged in on purpose is kept: live arrivals never let
+  // the list grow past the larger of the default window and its current
+  // size, but they do not shrink a list the reader deliberately extended.
+  const limit = Math.max(MAX_RETAINED_POSTS, current.length);
+  return next.length > limit ? next.slice(next.length - limit) : next;
 }
 
 /**

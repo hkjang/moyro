@@ -4,6 +4,7 @@ import StarRounded from "@mui/icons-material/StarRounded";
 import type { Channel, Team, User, UserStatusValue } from "@/api/client";
 import { BrandMark } from "@/components/brand/BrandMark";
 import { WorkspaceAvatar } from "@/features/workspace/sidebar/WorkspaceAvatar";
+import { SidebarSkeleton } from "@/features/workspace/messages/TimelineSkeleton";
 
 export type WorkspaceUnreadEntry = { msg: number; mention: number };
 
@@ -21,6 +22,8 @@ type WorkspaceSidebarProps = {
   statuses: Record<string, UserStatusValue>;
   unread: Record<string, WorkspaceUnreadEntry>;
   showArchived: boolean;
+  /** True while the team's channel list is being fetched. */
+  loading?: boolean;
   isAdmin: boolean;
   onSelectTeam: (teamId: string) => void;
   onSelectChannel: (channelId: string) => void;
@@ -198,6 +201,7 @@ export function WorkspaceSidebar(props: WorkspaceSidebarProps) {
     onToggleFavorite,
     onOpenAdmin,
     onCloseMobile,
+    loading = false,
   } = props;
 
   const channelIsActive = (channelID: string) => channelID === currentChannelId;
@@ -287,6 +291,7 @@ export function WorkspaceSidebar(props: WorkspaceSidebarProps) {
           )}
 
           <SectionTitle>채널</SectionTitle>
+          {loading && publicChannels.length === 0 && <SidebarSkeleton />}
           <div className="item-list">
             {publicChannels.map((channel) => (
               <ChannelRow

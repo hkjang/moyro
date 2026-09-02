@@ -2,6 +2,8 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react
 
 /** How close to the end still counts as "reading the latest messages". */
 const BOTTOM_THRESHOLD_PX = 48;
+/** How close to the start asks for older history. */
+const TOP_THRESHOLD_PX = 160;
 
 export type TimelineScroll = {
   /** Attach to the scrolling message container. */
@@ -30,6 +32,8 @@ export type TimelineScrollOptions = {
    * to the bottom.
    */
   suspended?: boolean;
+  /** Called when the reader nears the start of the loaded history. */
+  onReachTop?: () => void;
 };
 
 /**
@@ -42,11 +46,16 @@ export type TimelineScrollOptions = {
  * always scrolls, because the author wants to see it land.
  */
 export function useTimelineScroll(options: TimelineScrollOptions): TimelineScroll {
-  const { channelId, postIds, latestAuthorId, currentUserId, loading, suspended } = options;
+  const { channelId, postIds, latestAuthorId, currentUserId, loading, suspended, onReachTop } = options;
   const containerRef = useRef<HTMLDivElement>(null);
   const pinnedRef = useRef(true);
   const previousIdsRef = useRef<string[]>([]);
   const previousChannelRef = useRef<string | null>(null);
+  // Content height as of the last layout, so a page of older posts inserted
+  // above the viewport can be compensated for without a visible jump.
+  const lastScrollHeightRef = useRef(0);
+  const onReachTopRef = useRef(onReachTop);
+  onReachTopRef.current = onReachTop;
   const [pendingCount, setPendingCount] = useState(0);
   const [scrolledUp, setScrolledUp] = useState(false);
 
@@ -67,8 +76,10 @@ export function useTimelineScroll(options: TimelineScrollOptions): TimelineScrol
       const distance = node.scrollHeight - node.scrollTop - node.clientHeight;
       const atBottom = distance <= BOTTOM_THRESHOLD_PX;
       pinnedRef.current = atBottom;
+      lastScrollHeightRef.current = node.scrollHeight;
       setScrolledUp(!atBottom);
       if (atBottom) setPendingCount(0);
+      if (node.scrollTop <= TOP_THRESHOLD_PX) onReachTopRef.current?.();
     };
     node.addEventListener("scroll", onScroll, { passive: true });
     return () => node.removeEventListener("scroll", onScroll);
@@ -84,13 +95,28 @@ export function useTimelineScroll(options: TimelineScrollOptions): TimelineScrol
     previousIdsRef.current = postIds;
     previousChannelRef.current = channelId;
 
+    const node = containerRef.current;
     if (channelChanged) {
       scrollToEnd();
+      if (node) lastScrollHeightRef.current = node.scrollHeight;
       return;
     }
 
     const grewAtTail = postIds.length > previousIds.length
       && previousIds.every((id, index) => postIds[index] === id);
+    const grewAtHead = !grewAtTail
+      && postIds.length > previousIds.length
+      && previousIds.length > 0
+      && previousIds.every((id, index) => postIds[index + (postIds.length - previousIds.length)] === id);
+
+    if (grewAtHead && node) {
+      // Older history landed above the viewport. Keep the same post under
+      // the reader's eyes by adding exactly the height that was inserted.
+      node.scrollTop += node.scrollHeight - lastScrollHeightRef.current;
+      lastScrollHeightRef.current = node.scrollHeight;
+      return;
+    }
+    if (node) lastScrollHeightRef.current = node.scrollHeight;
     if (!grewAtTail) return;
 
     const ownMessage = Boolean(currentUserId) && latestAuthorId === currentUserId;

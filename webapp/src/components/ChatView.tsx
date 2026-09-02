@@ -43,6 +43,10 @@ import { MessageItem } from "@/features/workspace/messages/MessageItem";
 import { DateDivider, JumpToLatestButton, UnreadDivider } from "@/features/workspace/messages/TimelineDividers";
 import { buildTimeline } from "@/features/workspace/model/timeline";
 import { useTimelineScroll } from "@/features/workspace/model/useTimelineScroll";
+import { useOlderPosts } from "@/features/workspace/model/useOlderPosts";
+import { useThreadPanel } from "@/features/workspace/model/useThreadPanel";
+import { TimelineSkeleton } from "@/features/workspace/messages/TimelineSkeleton";
+import { ShortcutHelpModal } from "@/features/workspace/dialogs/ShortcutHelpModal";
 import type {
   FilesMap,
   ReactionMap,
@@ -122,6 +126,7 @@ export function ChatView() {
   const [teams, setTeams] = useState<Team[]>([]);
   const [currentTeamId, setCurrentTeamId] = useState<string | null>(routeTeamId ?? null);
   const [channels, setChannels] = useState<Channel[]>([]);
+  const [channelsLoading, setChannelsLoading] = useState(false);
   const [currentChannelId, setCurrentChannelId] = useState<string | null>(routeChannelId ?? null);
   const [posts, setPosts] = useState<Post[]>([]);
   const [loadingPosts, setLoadingPosts] = useState(false);
@@ -164,7 +169,7 @@ export function ChatView() {
       setPosts((current) => current.some((item) => item.id === post.id)
         ? current.map((item) => item.id === post.id ? { ...item, ...post } : item)
         : current);
-      setThreadPosts((current) => current.some((item) => item.id === post.id)
+      thread.setPosts((current) => current.some((item) => item.id === post.id)
         ? current.map((item) => item.id === post.id ? { ...item, ...post } : item)
         : current);
     };
@@ -284,10 +289,22 @@ export function ChatView() {
   // The right context is deliberately closed whenever the primary workspace
   // target changes. Keeping an old thread open while currentChannelId moves
   // would pair the old root with the new channel for replies and uploads.
-  const [threadRootId, setThreadRootId] = useState<string | null>(null);
-  const [threadPosts, setThreadPosts] = useState<Post[]>([]);
-  const [threadLoading, setThreadLoading] = useState(false);
   const [activeContext, setActiveContext] = useState<WorkspaceContextTab | null>(null);
+  const openThreadPanel = useCallback(() => {
+    hideActivePluginRHS();
+    setActiveContext("thread");
+  }, []);
+  const currentChannelIdRef = useRef<string | null>(null);
+  const thread = useThreadPanel({
+    token,
+    currentChannelId,
+    currentChannelIdRef,
+    hydrateUsers: (ids) => { void hydrateUsers(ids); },
+    hydrateFiles: (ids) => { void hydrateFiles(ids); },
+    setReactionsByPost,
+    onOpen: openThreadPanel,
+    onError: setError,
+  });
   const {
     output: channelSummary,
     sources: channelSummarySources,
@@ -310,18 +327,11 @@ export function ChatView() {
     permissionStateLoaded: adminAccess.loaded,
     hasPermission: hasAIPermission,
   });
-  const threadRootIdRef = useRef<string | null>(null);
-  const threadLoadGenerationRef = useRef(0);
-  useEffect(() => { threadRootIdRef.current = threadRootId; }, [threadRootId]);
   const closeContext = useCallback(() => {
-    threadLoadGenerationRef.current += 1;
-    threadRootIdRef.current = null;
+    thread.reset();
     resetChannelSummary();
     setActiveContext(null);
-    setThreadRootId(null);
-    setThreadPosts([]);
-    setThreadLoading(false);
-  }, [resetChannelSummary]);
+  }, [thread.reset, resetChannelSummary]);
 
   const selectTeam = useCallback((teamId: string) => {
     searchRequestGenerationRef.current += 1;
@@ -336,6 +346,7 @@ export function ChatView() {
     navigate(`/workspace/${encodeURIComponent(teamId)}`);
   }, [closeContext, navigate]);
 
+  const selectChannelRef = useRef<((channelId: string) => void) | null>(null);
   const selectChannel = useCallback((channelId: string) => {
     if (!currentTeamId) return;
     closeContext();
@@ -343,6 +354,7 @@ export function ChatView() {
     setCurrentChannelId(channelId);
     navigate(`/workspace/${encodeURIComponent(currentTeamId)}/channel/${encodeURIComponent(channelId)}`);
   }, [closeContext, currentTeamId, navigate]);
+  useEffect(() => { selectChannelRef.current = selectChannel; }, [selectChannel]);
 
   // The URL is the durable workspace navigation state. Personal saved and
   // scheduled lists are global /my-work routes and never become pseudo panes.
@@ -407,6 +419,30 @@ export function ChatView() {
         // …no, actually the whole point is to grab focus from anywhere.
         e.preventDefault();
         setShowQuickSwitcher(true);
+        return;
+      }
+      const target = e.target as HTMLElement | null;
+      const typing = Boolean(target && (
+        target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable
+      ));
+      // "?" is a plain character in a text field; only outside one is it the
+      // help shortcut.
+      if (e.key === "?" && !typing && !mod && !e.altKey) {
+        e.preventDefault();
+        setShowShortcutHelp(true);
+        return;
+      }
+      if (e.altKey && !mod && (e.key === "ArrowUp" || e.key === "ArrowDown")) {
+        const order = channelOrderRef.current;
+        const index = order.indexOf(currentChannelIdRef.current ?? "");
+        if (order.length === 0) return;
+        const next = e.key === "ArrowUp"
+          ? order[(index <= 0 ? order.length : index) - 1]
+          : order[(index + 1) % order.length];
+        if (next && next !== currentChannelIdRef.current) {
+          e.preventDefault();
+          selectChannelRef.current?.(next);
+        }
       }
     };
     window.addEventListener("keydown", onKey);
@@ -513,7 +549,6 @@ export function ChatView() {
   const [searchTotal, setSearchTotal] = useState<number>(0);
   const [searchPage, setSearchPage] = useState<number>(0);
 
-  const currentChannelIdRef = useRef<string | null>(null);
   useEffect(() => { currentChannelIdRef.current = currentChannelId; }, [currentChannelId]);
   const currentTeamIdRef = useRef<string | null>(currentTeamId);
   useEffect(() => {
@@ -544,10 +579,12 @@ export function ChatView() {
     channelsLoadGenerationRef.current = generation;
     if (!token || !currentTeamId) return;
     const teamID = currentTeamId;
+    setChannelsLoading(true);
     try {
       const c = await api.listChannels(token, teamID);
       if (channelsLoadGenerationRef.current !== generation) return;
       setChannels(c ?? []);
+      setChannelsLoading(false);
       setCurrentChannelId((prev) => {
         if (prev && (c ?? []).some((x) => x.id === prev)) return prev;
         return (c ?? [])[0]?.id ?? null;
@@ -569,6 +606,7 @@ export function ChatView() {
       } catch { /* ignore — badges will rebuild from WS events */ }
     } catch (e) {
       if (channelsLoadGenerationRef.current === generation) {
+        setChannelsLoading(false);
         setError(e instanceof Error ? e.message : "채널 로드 실패");
       }
     }
@@ -792,7 +830,7 @@ export function ChatView() {
       channels,
       users,
       currentChannelIdRef,
-      threadRootIdRef,
+      threadRootIdRef: thread.rootIdRef,
       channelNotifyRef,
       inboxPreferences,
       showArchived,
@@ -802,7 +840,7 @@ export function ChatView() {
       loadChannels,
       loadArchivedChannels,
       setPosts,
-      setThreadPosts,
+      setThreadPosts: thread.setPosts,
       setReactionsByPost,
       setTypingUsers,
       setStatuses,
@@ -844,6 +882,16 @@ export function ChatView() {
     [posts, unreadMarkerAt, user?.id],
   );
   const timelinePostIds = useMemo(() => posts.map((post) => post.id), [posts]);
+  const olderPosts = useOlderPosts({
+    token,
+    channelId: currentChannelId,
+    currentChannelIdRef,
+    posts,
+    setPosts,
+    hydrateUsers: (ids) => { void hydrateUsers(ids); },
+    hydrateFiles: (ids) => { void hydrateFiles(ids); },
+    onError: setError,
+  });
   const timelineScroll = useTimelineScroll({
     channelId: currentChannelId,
     postIds: timelinePostIds,
@@ -851,7 +899,26 @@ export function ChatView() {
     currentUserId: user?.id,
     loading: loadingPosts,
     suspended: Boolean(navigationFocusPostID),
+    onReachTop: olderPosts.loadOlder,
   });
+
+  // ↑ on an empty composer opens the author's latest message for editing.
+  const [editRequest, setEditRequest] = useState<{ postId: string; seq: number }>({ postId: "", seq: 0 });
+  const onEditLastMessage = useCallback((): boolean => {
+    if (!user) return false;
+    const mine = [...posts].reverse().find((post) => post.user_id === user.id && !post.root_id);
+    if (!mine) return false;
+    setEditRequest((current) => ({ postId: mine.id, seq: current.seq + 1 }));
+    return true;
+  }, [posts, user]);
+
+  // Alt+↑/↓ walk the sidebar in its rendered order; read through a ref so the
+  // global key handler never closes over a stale list.
+  const channelOrderRef = useRef<string[]>([]);
+  useEffect(() => {
+    channelOrderRef.current = [...favoriteChannels, ...nonFavoritePublic, ...nonFavoriteDM].map((c) => c.id);
+  }, [favoriteChannels, nonFavoritePublic, nonFavoriteDM]);
+  const [showShortcutHelp, setShowShortcutHelp] = useState(false);
 
   function openChannelContext(tab: Exclude<WorkspaceContextTab, "thread">) {
     if (!currentChannel) return;
@@ -1036,7 +1103,7 @@ export function ChatView() {
     // block the UI on a fetch.
     let channelId: string | null = currentChannelId;
     if (source === "thread" && rootId) {
-      const root = threadPosts.find((p) => p.id === rootId) ?? posts.find((p) => p.id === rootId);
+      const root = thread.posts.find((p) => p.id === rootId) ?? posts.find((p) => p.id === rootId);
       channelId = root?.channel_id ?? currentChannelId;
     }
     if (!channelId) return;
@@ -1229,85 +1296,11 @@ export function ChatView() {
   );
 
   // ---- Thread actions ----
-  const openThread = useCallback(async (rootId: string) => {
-    if (!token) return;
-    hideActivePluginRHS();
-    const generation = threadLoadGenerationRef.current + 1;
-    threadLoadGenerationRef.current = generation;
-    threadRootIdRef.current = rootId;
-    setActiveContext("thread");
-    setThreadRootId(rootId);
-    setThreadPosts([]);
-    setThreadLoading(true);
-    try {
-      const list = await api.listThread(token, rootId);
-      if (
-        threadLoadGenerationRef.current !== generation
-        || threadRootIdRef.current !== rootId
-      ) return;
-      const ordered = (list.order ?? []).map((id) => list.posts[id]).filter(Boolean);
-      setThreadPosts((current) => {
-        const merged = new Map(ordered.map((post) => [post.id, post]));
-        current
-          .filter((post) => (post.root_id || post.id) === rootId)
-          .forEach((post) => merged.set(post.id, post));
-        return Array.from(merged.values()).sort((left, right) => left.create_at - right.create_at);
-      });
-      hydrateUsers(Array.from(new Set(ordered.map((p) => p.user_id))));
-      hydrateFiles(Array.from(new Set(ordered.flatMap((p) => p.file_ids ?? []))));
-      ordered.forEach((p) => {
-        api.listReactions(token, p.id)
-          .then((rs) => {
-            if (
-              threadLoadGenerationRef.current === generation
-              && threadRootIdRef.current === rootId
-            ) {
-              setReactionsByPost((prev) => ({ ...prev, [p.id]: rs ?? [] }));
-            }
-          })
-          .catch(() => { /* ignore */ });
-      });
-    } catch (e) {
-      if (
-        threadLoadGenerationRef.current === generation
-        && threadRootIdRef.current === rootId
-      ) setError(e instanceof Error ? e.message : "스레드 로드 실패");
-    } finally {
-      if (
-        threadLoadGenerationRef.current === generation
-        && threadRootIdRef.current === rootId
-      ) setThreadLoading(false);
-    }
-  }, [token]);
-
+  const openThread = thread.open;
   function closeThread() {
     closeContext();
   }
-
-  async function onReplyInThread(message: string, fileIds: string[]): Promise<boolean> {
-    if (!token || !currentChannelId || !threadRootId) return false;
-    const rootID = threadRootId;
-    const rootPost = threadPosts.find((post) => post.id === rootID);
-    const channelID = rootPost?.channel_id;
-    if (!channelID || channelID !== currentChannelId) return false;
-    const trimmed = message.trim();
-    if (!trimmed && fileIds.length === 0) return false;
-    try {
-      const p = await api.createPost(token, channelID, trimmed, rootID, fileIds);
-      // Thread panel updates via the `posted` WS event; keep the reply
-      // visible immediately in case our own broadcast arrives later.
-      if (
-        currentChannelIdRef.current === channelID
-        && threadRootIdRef.current === rootID
-      ) {
-        setThreadPosts((prev) => prev.some((x) => x.id === p.id) ? prev : [...prev, p]);
-      }
-      return true;
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "스레드 전송 실패");
-      return false;
-    }
-  }
+  const onReplyInThread = thread.reply;
 
   // ---- Render ----
   return (
@@ -1317,6 +1310,7 @@ export function ChatView() {
       onCloseMobileSidebar={() => setMobileSidebarOpen(false)}
       sidebar={(
         <WorkspaceSidebar
+          loading={channelsLoading}
           token={token}
           currentUser={user ?? null}
           teams={teams}
@@ -1453,11 +1447,18 @@ export function ChatView() {
               <div className="chat-timeline-host">
                 <div className="chat-messages chat-messages-grouped" ref={timelineScroll.containerRef}>
                   {loadingPosts ? (
-                    <div className="chat-empty">불러오는 중…</div>
+                    <TimelineSkeleton />
                   ) : posts.length === 0 ? (
                     <div className="chat-empty">첫 메시지를 남겨보세요.</div>
                   ) : (
-                    timeline.map((item) => {
+                    <>
+                    {olderPosts.loading && (
+                      <div className="timeline-history-edge" role="status">이전 메시지를 불러오는 중…</div>
+                    )}
+                    {olderPosts.exhausted && !olderPosts.loading && (
+                      <div className="timeline-history-edge">대화의 시작입니다</div>
+                    )}
+                    {timeline.map((item) => {
                       if (item.kind === "date") return <DateDivider key={item.key} label={item.label} at={item.at} />;
                       if (item.kind === "unread") return <UnreadDivider key={item.key} />;
                       const p = item.post;
@@ -1481,9 +1482,11 @@ export function ChatView() {
                           onDelete={postActions.remove}
                           onOpenThread={openThread}
                           onRemindMe={() => setReminderForPostId(p.id)}
+                          editRequestSeq={editRequest.postId === p.id ? editRequest.seq : 0}
                         />
                       );
-                    })
+                    })}
+                    </>
                   )}
                 </div>
                 {(timelineScroll.scrolledUp || timelineScroll.pendingCount > 0) && posts.length > 0 && (
@@ -1513,6 +1516,7 @@ export function ChatView() {
                   aiStatusLabel={aiStatusLabel}
                   aiPreferences={aiPreferences}
                   onSend={postActions.send}
+                  onEditLast={onEditLastMessage}
                   onTyping={sendTyping}
                   onUpload={onUploadFiles}
                   onSchedule={onOpenScheduleModal}
@@ -1539,11 +1543,11 @@ export function ChatView() {
           onTabChange={setActiveContext}
           onClose={closeThread}
           panels={{
-            thread: threadRootId ? (
+            thread: thread.rootId ? (
               <ThreadPanel
-                rootId={threadRootId}
-                posts={threadPosts}
-                loading={threadLoading}
+                rootId={thread.rootId}
+                posts={thread.posts}
+                loading={thread.loading}
                 users={users}
                 statuses={statuses}
                 reactionsByPost={reactionsByPost}
@@ -1555,7 +1559,7 @@ export function ChatView() {
                 onDelete={postActions.remove}
                 onReply={onReplyInThread}
                 onUpload={onUploadFiles}
-                onSchedule={onOpenScheduleModalFromThread(threadRootId)}
+                onSchedule={onOpenScheduleModalFromThread(thread.rootId)}
                 composerResetSeq={threadComposerResetSeq}
                 destinationLabel={`#${currentChannel.display_name} · 스레드에 답글`}
                 canUseAI={canUseAI}
@@ -1696,6 +1700,7 @@ export function ChatView() {
       {/* Phase 21 — Quick Switcher (Cmd+K). Channel + user autocomplete in
           one combined list; arrow keys cycle, Enter selects. On user pick
           we open or create a DM channel. */}
+      {showShortcutHelp && <ShortcutHelpModal onClose={() => setShowShortcutHelp(false)} />}
       {showQuickSwitcher && token && (
         <QuickSwitcherModal
           token={token}

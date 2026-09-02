@@ -1,4 +1,4 @@
-import { useId, useMemo, useRef, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 import AddReactionRounded from "@mui/icons-material/AddReactionRounded";
 import AssignmentTurnedInRounded from "@mui/icons-material/AssignmentTurnedInRounded";
 import AttachFileRounded from "@mui/icons-material/AttachFileRounded";
@@ -88,6 +88,12 @@ export type MessageItemProps = {
    * and in the accessible name.
    */
   continuation?: boolean;
+  /**
+   * Increments each time the host asks this row to enter edit mode (the
+   * composer's ↑ shortcut targets the author's latest message). Zero or
+   * unchanged values do nothing.
+   */
+  editRequestSeq?: number;
 };
 
 export function MessageItem(props: MessageItemProps) {
@@ -116,6 +122,7 @@ export function MessageItem(props: MessageItemProps) {
     onJumpToChannel,
     onRemindMe,
     continuation = false,
+    editRequestSeq = 0,
   } = props;
   const [editing, setEditing] = useState(false);
   const [editSaving, setEditSaving] = useState(false);
@@ -145,6 +152,13 @@ export function MessageItem(props: MessageItemProps) {
     reactions.forEach((reaction) => { (grouped[reaction.emoji_name] ||= []).push(reaction); });
     return grouped;
   }, [reactions]);
+
+  useEffect(() => {
+    if (editRequestSeq > 0 && isMe) {
+      setEditError("");
+      setEditing(true);
+    }
+  }, [editRequestSeq, isMe]);
 
   const authorName = author?.username ?? (isMe ? "나" : post.user_id.slice(0, 8));
   const edited = post.update_at > post.create_at;

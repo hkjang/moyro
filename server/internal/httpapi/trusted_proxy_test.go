@@ -27,7 +27,7 @@ func TestTrustedProxyChainSelectsOriginalUntrustedClient(t *testing.T) {
 	})
 	r := httptest.NewRequest(http.MethodGet, "http://internal.local/path", nil)
 	r.RemoteAddr = "10.0.0.4:8443"
-	r.Header.Set("X-Forwarded-For", "198.51.100.7, 192.0.2.8")
+	r.Header.Set("X-Forwarded-For", "198.51.100.7, 192.0.2.9")
 	r.Header.Set("X-Forwarded-Proto", "https")
 	r.Header.Set("X-Forwarded-Host", "chat.example.test")
 	if got := h.clientIP(r); got != "198.51.100.7" {

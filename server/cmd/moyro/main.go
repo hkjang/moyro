@@ -39,7 +39,17 @@ func main() {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 
-	db, err := store.Open(ctx, cfg.PostgresDSN)
+	// Every statement feeds the latency histogram; only the slow ones reach
+	// the log, with their text, so a slow route can be traced to its query.
+	slowQueries := store.SlowQueryLog(500*time.Millisecond, func(query string, duration time.Duration, err error) {
+		logger.Warn("slow query", "duration_ms", duration.Milliseconds(), "query", query, "err", err)
+	})
+	db, err := store.OpenWithOptions(ctx, cfg.PostgresDSN, store.Options{
+		QueryObserver: func(query string, duration time.Duration, err error) {
+			metrics.ObserveDBQuery(duration, err)
+			slowQueries(query, duration, err)
+		},
+	})
 	if err != nil {
 		logger.Error("db open", "err", err)
 		os.Exit(1)

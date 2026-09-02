@@ -62,13 +62,16 @@ func (s *Service) MarkRead(ctx context.Context, userID, teamID, rootID string, v
 	if viewedAt <= 0 {
 		viewedAt = time.Now().UnixMilli()
 	}
+	// The row is keyed by (user, root); the team is only needed when a row
+	// has to be created below. Binding it here as an unused parameter made
+	// PostgreSQL reject the statement (42P18) for every existing membership.
 	tag, err := s.db.Pool.Exec(ctx, `
 		UPDATE thread_memberships
-		SET last_viewed_at = $4,
+		SET last_viewed_at = $3,
 		    unread_mentions = 0,
 		    unread_replies = 0
-		WHERE user_id = $1 AND root_id = $3
-	`, userID, teamID, rootID, viewedAt)
+		WHERE user_id = $1 AND root_id = $2
+	`, userID, rootID, viewedAt)
 	if err != nil {
 		return 0, err
 	}
@@ -120,9 +123,9 @@ func (s *Service) MarkUnreadFromPost(ctx context.Context, userID, teamID, rootID
 	boundary := postCreateAt - 1
 	tag, err := s.db.Pool.Exec(ctx, `
 		UPDATE thread_memberships
-		SET last_viewed_at = $4
-		WHERE user_id = $1 AND root_id = $3
-	`, userID, teamID, rootID, boundary)
+		SET last_viewed_at = $3
+		WHERE user_id = $1 AND root_id = $2
+	`, userID, rootID, boundary)
 	if err != nil {
 		return 0, err
 	}

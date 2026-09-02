@@ -645,6 +645,13 @@ export const api = {
       token,
       `/channels/${channelId}/posts?page=${page}&per_page=${perPage}`,
     ),
+  // Older history, newest-first, strictly before the anchor post. The server
+  // returns Mattermost's cursor order (descending); callers reverse it.
+  listPostsBefore: (token: string, channelId: string, beforePostId: string, perPage = 60) =>
+    request<PostList>(
+      token,
+      `/channels/${channelId}/posts?before=${encodeURIComponent(beforePostId)}&per_page=${perPage}`,
+    ),
   createPost: (
     token: string,
     channelId: string,

@@ -62,13 +62,10 @@ Next polish:
   source-size ratchet; session management, archived channels, message actions,
   the timeline model, and scroll ownership already live in their own hooks,
   and the legacy global stylesheet is split by area.
-- Add skeleton placeholders for the message list and sidebar; spinners still
-  cause a layout jump on first paint.
-- Add a keyboard-shortcut reference; only the Cmd+K switcher is discoverable
-  today.
-- Replace the bounded live-post window with real timeline virtualization and
-  history paging so scrolling back through long history stops depending on how
-  much the client is willing to retain.
+- Add virtualization to the message list; history now pages in but every
+  loaded row stays in the DOM.
+- Merge the create-post authorization and membership checks into one query;
+  the posting path still spends two round-trips answering one question.
 - Expand focus management and roving keyboard navigation across older dialogs
   and menus.
 
@@ -90,9 +87,9 @@ Next polish:
 - Add deployment notes for local Docker, single VM, and Kubernetes.
 - Add backup/restore guidance for PostgreSQL and file storage.
 - Add structured config reference generated from `config.Config`.
-- Add distributed tracing; request-level latency is currently only visible as
-  an HTTP duration histogram, with no span linking a slow request to the query
-  or plugin call responsible.
+- Add distributed tracing. The slow-query log and statement histogram now
+  name a slow statement, but nothing yet links it to the request or plugin
+  call that issued it.
 - Add graceful plugin restart and health reporting.
 
 ## 5. Extension Platform
