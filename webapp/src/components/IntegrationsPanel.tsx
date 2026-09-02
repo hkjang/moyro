@@ -1476,7 +1476,7 @@ export function IntegrationsPanel({
                 style={{ width: "auto", padding: "0 12px", height: 34 }}
                 onClick={onReloadConfig}
                 disabled
-                title="레거시 전체 설정 리로드는 v0.2.12에서 지원하지 않습니다. moyro 관리 설정과 플러그인 설정은 저장 즉시 적용됩니다."
+                title="레거시 전체 설정 리로드는 v0.2.13에서 지원하지 않습니다. moyro 관리 설정과 플러그인 설정은 저장 즉시 적용됩니다."
               >레거시 리로드 미지원</button>
               <button
                 type="button"
