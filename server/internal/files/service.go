@@ -196,11 +196,45 @@ func (s *Service) generateThumbnailAsync(fileID, origPath string) {
 
 	// Persist the thumbnail path + dimensions. We store the *original*
 	// width/height so clients can compute aspect ratio without decoding.
-	_, _ = s.db.Pool.Exec(ctx, `
+	//
+	// A concurrent Discard may have removed the row while we were resampling.
+	// In that case nothing will ever reference the thumbnail we just wrote, so
+	// reclaim it here rather than leave it behind.
+	tag, err := s.db.Pool.Exec(ctx, `
 		UPDATE file_infos
 		SET thumbnail_path=$1, width=$2, height=$3, update_at=$4
 		WHERE id=$5
 	`, thumbPath, ow, oh, time.Now().UnixMilli(), fileID)
+	if err != nil || tag.RowsAffected() == 0 {
+		_ = s.storage.Remove(thumbPath)
+	}
+}
+
+// Discard reclaims an upload that never became part of anything. It is the
+// cleanup path for callers that must upload before they can tell whether the
+// upload is keepable — custom emoji creation, for one, learns the byte size
+// and hits the shortcode uniqueness constraint only after the bytes are
+// stored. Without it every rejected attempt left a file on disk and a
+// file_infos row nothing referenced.
+//
+// Only unattached files are eligible, so a discard can never pull bytes out
+// from under a live post. A missing or already-attached id is a no-op.
+func (s *Service) Discard(ctx context.Context, id string) error {
+	var path, thumbnailPath string
+	err := s.db.Pool.QueryRow(ctx, `
+		DELETE FROM file_infos WHERE id=$1 AND post_id IS NULL
+		RETURNING path, thumbnail_path
+	`, id).Scan(&path, &thumbnailPath)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil
+		}
+		return err
+	}
+	if thumbnailPath != "" {
+		_ = s.storage.Remove(thumbnailPath)
+	}
+	return s.storage.Remove(path)
 }
 
 func (s *Service) GetInfo(ctx context.Context, id string) (*FileInfo, error) {
