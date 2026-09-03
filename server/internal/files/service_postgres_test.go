@@ -2,6 +2,7 @@ package files
 
 import (
 	"context"
+	"errors"
 	"os"
 	"reflect"
 	"strings"
@@ -50,6 +51,73 @@ func TestAssociateWithPostReturnsCanonicalRequestedSubsetOnReplay(t *testing.T) 
 		if !reflect.DeepEqual(got, want) {
 			t.Fatalf("associate attempt %d = %#v, want %#v", attempt, got, want)
 		}
+	}
+}
+
+// TestDiscardReclaimsOnlyUnattachedUploads covers the cleanup path callers use
+// when they can only tell an upload is unusable after the bytes are stored.
+// A discard must take the row and the bytes together, and must never touch a
+// file a post already depends on.
+func TestDiscardReclaimsOnlyUnattachedUploads(t *testing.T) {
+	db := newFilesTestDB(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	if _, err := db.Pool.Exec(ctx, `
+		INSERT INTO users (id, username, email, password_hash, create_at, update_at)
+			VALUES ('discard-owner', 'discard-owner', 'discard@example.test', 'hash', 1, 1);
+		INSERT INTO teams (id, name, display_name, create_at, update_at)
+			VALUES ('discard-team', 'discard-team', 'Discard Team', 1, 1);
+		INSERT INTO channels (id, team_id, type, display_name, name, create_at, update_at)
+			VALUES ('discard-channel', 'discard-team', 'O', 'Discard Channel', 'discard-channel', 1, 1);
+		INSERT INTO posts (id, channel_id, user_id, message, create_at, update_at)
+			VALUES ('discard-post', 'discard-channel', 'discard-owner', 'post', 1, 1);
+	`); err != nil {
+		t.Fatalf("seed discard test: %v", err)
+	}
+
+	root := t.TempDir()
+	service := New(db, NewFSStorage(root))
+
+	// An unattached upload goes away completely: row first, then bytes.
+	loose, err := service.Upload(ctx, "discard-owner", "", "loose.txt", "text/plain", strings.NewReader("loose bytes"))
+	if err != nil {
+		t.Fatalf("upload loose file: %v", err)
+	}
+	if err := service.Discard(ctx, loose.ID); err != nil {
+		t.Fatalf("discard loose file: %v", err)
+	}
+	if _, err := service.GetInfo(ctx, loose.ID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("discarded file still has a row: %v", err)
+	}
+	if _, err := os.Stat(loose.Path); !os.IsNotExist(err) {
+		t.Fatalf("discarded file still has bytes at %s: %v", loose.Path, err)
+	}
+
+	// A file a post depends on is off limits, even if the caller asks.
+	attached, err := service.Upload(ctx, "discard-owner", "discard-channel", "kept.txt", "text/plain", strings.NewReader("kept bytes"))
+	if err != nil {
+		t.Fatalf("upload attached file: %v", err)
+	}
+	if _, err := service.AssociateWithPost(ctx, "discard-owner", []string{attached.ID}, "discard-post", "discard-channel"); err != nil {
+		t.Fatalf("associate attached file: %v", err)
+	}
+	if err := service.Discard(ctx, attached.ID); err != nil {
+		t.Fatalf("discard attached file: %v", err)
+	}
+	if _, err := service.GetInfo(ctx, attached.ID); err != nil {
+		t.Fatalf("attached file was reclaimed out from under its post: %v", err)
+	}
+	if _, err := os.Stat(attached.Path); err != nil {
+		t.Fatalf("attached file lost its bytes: %v", err)
+	}
+
+	// Discarding something that is already gone is a no-op, so an abort path
+	// can call it without first checking whether there is anything to clean.
+	if err := service.Discard(ctx, loose.ID); err != nil {
+		t.Fatalf("repeat discard: %v", err)
+	}
+	if err := service.Discard(ctx, uuid.NewString()); err != nil {
+		t.Fatalf("discard unknown id: %v", err)
 	}
 }
 

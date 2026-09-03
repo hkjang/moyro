@@ -9,10 +9,12 @@
 package emojis
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"regexp"
 	"time"
 
@@ -60,9 +62,9 @@ var (
 	ErrUnsupportedMIME = errors.New("unsupported emoji image type")
 )
 
-// Create uploads the image through files.Service and inserts the row. The
-// caller is responsible for validating the image byte-stream size before
-// passing it in; we re-check here from the uploaded FileInfo to be safe.
+// Create validates and buffers the image, uploads it through files.Service,
+// and inserts the row. Every failure after the upload reclaims the file, so a
+// rejected attempt leaves nothing behind.
 func (s *Service) Create(ctx context.Context, creatorID, name, mime string, body io.Reader) (*Emoji, error) {
 	if !nameRE.MatchString(name) {
 		return nil, ErrInvalidName
@@ -71,11 +73,34 @@ func (s *Service) Create(ctx context.Context, creatorID, name, mime string, body
 		return nil, ErrUnsupportedMIME
 	}
 
-	// Probe for name collision before the upload so we don't orphan a file
-	// on conflict. The unique index on (name) WHERE delete_at=0 is still
-	// the source of truth for race protection below.
+	// Buffer the image before storage sees it. Reading one byte past the cap
+	// is enough to tell "exactly at the limit" from "over it", and it keeps an
+	// oversized upload from ever reaching files.Service: the size check used to
+	// run on the returned FileInfo, so every too-large attempt wrote the bytes
+	// and a file_infos row and only then reported ErrTooLarge, leaving both
+	// behind forever. A 256KB buffer is well under the 1MiB the multipart
+	// parser in front of this already holds in memory.
+	image, err := io.ReadAll(io.LimitReader(body, maxEmojiSize+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(image) > maxEmojiSize {
+		return nil, ErrTooLarge
+	}
+	// The declared MIME arrives in a client-supplied multipart header, so trust
+	// the bytes instead: sniff the real format and store that. An emoji whose
+	// content type says one thing and whose bytes say another is served back to
+	// every client from our own origin.
+	sniffed, ok := sniffImageMIME(image)
+	if !ok {
+		return nil, ErrUnsupportedMIME
+	}
+
+	// Probe for name collision before the upload so we don't upload a file we
+	// already know we can't index. The partial unique index on (name) WHERE
+	// delete_at=0 is still the source of truth for race protection below.
 	var dummy string
-	err := s.db.Pool.QueryRow(ctx, `
+	err = s.db.Pool.QueryRow(ctx, `
 		SELECT id FROM emojis WHERE name=$1 AND delete_at=0
 	`, name).Scan(&dummy)
 	if err == nil {
@@ -86,15 +111,9 @@ func (s *Service) Create(ctx context.Context, creatorID, name, mime string, body
 	}
 
 	// Reuse the files upload path. channelID="" => unattached file.
-	fi, err := s.files.Upload(ctx, creatorID, "", fmt.Sprintf("emoji-%s", name), mime, body)
+	fi, err := s.files.Upload(ctx, creatorID, "", fmt.Sprintf("emoji-%s", name), sniffed, bytes.NewReader(image))
 	if err != nil {
 		return nil, err
-	}
-	if fi.Size > maxEmojiSize {
-		// Clean up: the file row exists with a path; we don't currently
-		// have a public Delete() on files.Service, so we soft-abort by
-		// reporting the error — a future cleanup pass can reclaim it.
-		return nil, ErrTooLarge
 	}
 
 	id := uuid.NewString()
@@ -103,6 +122,9 @@ func (s *Service) Create(ctx context.Context, creatorID, name, mime string, body
 		INSERT INTO emojis (id, name, creator_id, file_id, create_at)
 		VALUES ($1,$2,$3,$4,$5)
 	`, id, name, creatorID, fi.ID, now); err != nil {
+		// Nothing references the upload now, so hand it back to files.Service
+		// instead of stranding it.
+		s.discard(ctx, fi.ID)
 		// Duplicate-name race: someone inserted concurrently between our
 		// probe and this insert. Return the human-friendly error.
 		var pgErr *pgconn.PgError
@@ -118,6 +140,27 @@ func (s *Service) Create(ctx context.Context, creatorID, name, mime string, body
 		FileID:    fi.ID,
 		CreateAt:  now,
 	}, nil
+}
+
+// discard reclaims an upload on an abort path. It runs on its own timeout
+// because the request context may already be the reason we're aborting, and a
+// failed cleanup must not mask the error that triggered it.
+func (s *Service) discard(ctx context.Context, fileID string) {
+	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+	defer cancel()
+	_ = s.files.Discard(cleanupCtx, fileID)
+}
+
+// sniffImageMIME reports the canonical content type of an image we are willing
+// to store, derived from its magic bytes. http.DetectContentType never returns
+// the `image/jpg` alias that isSupportedMIME accepts from clients, so the
+// stored type is always the canonical spelling.
+func sniffImageMIME(image []byte) (string, bool) {
+	switch detected := http.DetectContentType(image); detected {
+	case "image/png", "image/jpeg", "image/gif", "image/webp":
+		return detected, true
+	}
+	return "", false
 }
 
 // GetByName resolves by lowercased name. Returns ErrNotFound when no live

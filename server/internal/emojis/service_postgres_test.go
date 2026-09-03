@@ -1,15 +1,19 @@
 package emojis
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/hkjang/moyro/server/internal/files"
 	"github.com/hkjang/moyro/server/internal/store"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -187,6 +191,158 @@ func TestDeletedEmojiNameCanBeReused(t *testing.T) {
 	if deletedAt == 0 {
 		t.Fatal("original row is not soft-deleted")
 	}
+}
+
+// TestCreateRejectsAnOversizedImageBeforeStoringIt pins the leak fix: the size
+// cap used to be checked against the FileInfo the upload returned, so a
+// rejected 300KB "emoji" still left its bytes on disk and its file_infos row in
+// the database, with nothing that could ever reference or reclaim them. Any
+// logged-in user could repeat that as often as they liked.
+func TestCreateRejectsAnOversizedImageBeforeStoringIt(t *testing.T) {
+	db := newEmojisTestDB(t)
+	ctx := emojisTestContext(t)
+	seedEmojisFixture(t, ctx, db)
+	root := t.TempDir()
+	service := New(db, files.New(db, files.NewFSStorage(root)))
+
+	oversized := pngBytesOfSize(maxEmojiSize + 1)
+	if _, err := service.Create(ctx, "user-a", "toobig", "image/png", bytes.NewReader(oversized)); !errors.Is(err, ErrTooLarge) {
+		t.Fatalf("create oversized emoji = %v, want ErrTooLarge", err)
+	}
+	assertNoStoredUploads(t, ctx, db, root)
+
+	// The cap itself is inclusive, so an image sitting exactly on it is still
+	// accepted — the extra byte the reader takes is only there to tell the two
+	// cases apart.
+	atCap := pngBytesOfSize(maxEmojiSize)
+	if _, err := service.Create(ctx, "user-a", "atcap", "image/png", bytes.NewReader(atCap)); err != nil {
+		t.Fatalf("create emoji at the size cap: %v", err)
+	}
+}
+
+// TestCreateStoresTheSniffedImageType keeps the multipart Content-Type header,
+// which the client controls outright, from deciding what we serve back from our
+// own origin.
+func TestCreateStoresTheSniffedImageType(t *testing.T) {
+	db := newEmojisTestDB(t)
+	ctx := emojisTestContext(t)
+	seedEmojisFixture(t, ctx, db)
+	root := t.TempDir()
+	fileService := files.New(db, files.NewFSStorage(root))
+	service := New(db, fileService)
+
+	// Bytes that are not an image at all are refused, whatever the header says.
+	notAnImage := []byte("<!doctype html><script>alert(1)</script>")
+	if _, err := service.Create(ctx, "user-a", "sneaky", "image/png", bytes.NewReader(notAnImage)); !errors.Is(err, ErrUnsupportedMIME) {
+		t.Fatalf("create non-image emoji = %v, want ErrUnsupportedMIME", err)
+	}
+	if _, err := service.Create(ctx, "user-a", "empty", "image/png", bytes.NewReader(nil)); !errors.Is(err, ErrUnsupportedMIME) {
+		t.Fatalf("create empty emoji = %v, want ErrUnsupportedMIME", err)
+	}
+	assertNoStoredUploads(t, ctx, db, root)
+
+	// A mislabeled but genuine image is stored under the type its bytes say.
+	created, err := service.Create(ctx, "user-a", "mislabeled", "image/png", bytes.NewReader(gifBytes()))
+	if err != nil {
+		t.Fatalf("create mislabeled emoji: %v", err)
+	}
+	info, err := fileService.GetInfo(ctx, created.FileID)
+	if err != nil {
+		t.Fatalf("read stored emoji file: %v", err)
+	}
+	if info.MimeType != "image/gif" {
+		t.Fatalf("stored mime = %q, want image/gif", info.MimeType)
+	}
+}
+
+// TestCreateReclaimsTheUploadWhenTheNameIsClaimedMidFlight drives the abort path
+// that survives the pre-upload collision probe. A second transaction holds an
+// uncommitted row for the same shortcode, so the probe sees nothing, the upload
+// goes through, and only the INSERT discovers the conflict.
+func TestCreateReclaimsTheUploadWhenTheNameIsClaimedMidFlight(t *testing.T) {
+	db := newEmojisTestDB(t)
+	ctx := emojisTestContext(t)
+	seedEmojisFixture(t, ctx, db)
+	root := t.TempDir()
+	service := New(db, files.New(db, files.NewFSStorage(root)))
+
+	holder, err := db.Pool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin claiming transaction: %v", err)
+	}
+	defer func() { _ = holder.Rollback(ctx) }()
+	if _, err := holder.Exec(ctx, `
+		INSERT INTO emojis (id, name, creator_id, file_id, create_at)
+		VALUES ($1, 'contested', 'user-a', 'file-a', 9000)
+	`, uuid.NewString()); err != nil {
+		t.Fatalf("claim the name in a held transaction: %v", err)
+	}
+
+	result := make(chan error, 1)
+	go func() {
+		_, createErr := service.Create(ctx, "user-a", "contested", "image/png", bytes.NewReader(pngBytes()))
+		result <- createErr
+	}()
+
+	// Let the probe pass and the upload land before the conflicting row becomes
+	// visible; the INSERT then blocks on the partial unique index until commit.
+	time.Sleep(500 * time.Millisecond)
+	if err := holder.Commit(ctx); err != nil {
+		t.Fatalf("commit the claiming transaction: %v", err)
+	}
+
+	select {
+	case err := <-result:
+		if !errors.Is(err, ErrNameTaken) {
+			t.Fatalf("contested create = %v, want ErrNameTaken", err)
+		}
+	case <-ctx.Done():
+		t.Fatal("contested create never returned")
+	}
+	assertNoStoredUploads(t, ctx, db, root)
+}
+
+// assertNoStoredUploads fails when a rejected emoji left anything behind. The
+// seeded fixture row is expected; it points at no real bytes.
+func assertNoStoredUploads(t *testing.T, ctx context.Context, db *store.DB, root string) {
+	t.Helper()
+	var extra int
+	if err := db.Pool.QueryRow(ctx, `SELECT count(*) FROM file_infos WHERE id <> 'file-a'`).Scan(&extra); err != nil {
+		t.Fatalf("count file rows: %v", err)
+	}
+	if extra != 0 {
+		t.Fatalf("%d orphaned file_infos rows survived a rejected emoji", extra)
+	}
+	stored := 0
+	if err := filepath.WalkDir(root, func(path string, entry fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if !entry.IsDir() {
+			stored++
+		}
+		return nil
+	}); err != nil {
+		t.Fatalf("walk emoji storage: %v", err)
+	}
+	if stored != 0 {
+		t.Fatalf("%d orphaned files survived a rejected emoji under %s", stored, root)
+	}
+}
+
+// pngBytes is the smallest thing http.DetectContentType calls a PNG. The bytes
+// never need to decode: thumbnailing is best-effort and these tests only care
+// about how the emoji path routes them.
+func pngBytes() []byte { return []byte("\x89PNG\r\n\x1a\nmoyro-emoji-fixture") }
+
+func gifBytes() []byte { return []byte("GIF89amoyro-emoji-fixture") }
+
+// pngBytesOfSize pads the PNG signature out to an exact byte count so the size
+// cap can be probed from either side.
+func pngBytesOfSize(size int) []byte {
+	out := make([]byte, size)
+	copy(out, pngBytes())
+	return out
 }
 
 func insertEmoji(t *testing.T, ctx context.Context, db *store.DB, name string, createAt int64) {
