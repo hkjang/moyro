@@ -1,9 +1,9 @@
 openapi: 3.1.0
 info:
   title: moyro MM Compatibility API
-  version: 0.2.13
+  version: 0.2.14
   description: |
-    moyro v0.2.13의 Mattermost v4 호환 API 계약. 필드명과 경로는 Mattermost REST
+    moyro v0.2.14의 Mattermost v4 호환 API 계약. 필드명과 경로는 Mattermost REST
     API v4와 최대한 일치시켜 기존 클라이언트·봇·플러그인의 이식성을 높인다.
     이 문서는 구현된 핵심 workflow를 명세하며 전체 route-shape 목록은
     mattermost-api-compatibility.md에서 별도로 관리한다. Moyro-native 관리·AI·MCP
