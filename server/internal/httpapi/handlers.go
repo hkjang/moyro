@@ -892,9 +892,12 @@ func (h *handlers) uploadProfileImage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer file.Close()
-	mime := hdr.Header.Get("Content-Type")
-	if !strings.HasPrefix(mime, "image/") {
-		writeError(w, 400, "api.user.image.not_image", "file must be image/*")
+	// Accept only the raster types getUserImage is willing to serve back
+	// inline. `image/*` would admit image/svg+xml, which is a scriptable
+	// document rather than a picture.
+	mime, ok := inlineImageContentType(hdr.Header.Get("Content-Type"))
+	if !ok {
+		writeError(w, 400, "api.user.image.not_image", "file must be a PNG, JPEG, GIF, WebP, BMP, or AVIF image")
 		return
 	}
 	// Reuse the general file upload pipeline — gives us id, storage layout,
@@ -953,6 +956,7 @@ func (h *handlers) getUserImage(w http.ResponseWriter, r *http.Request) {
 		if fi.MimeType != "" {
 			w.Header().Set("Content-Type", "image/jpeg")
 		}
+		w.Header().Set("X-Content-Type-Options", "nosniff")
 		// 1 hour client-side cache — picture updates bump users.update_at,
 		// which the webapp appends as ?v= to bust the cache.
 		w.Header().Set("Cache-Control", "private, max-age=3600")
@@ -965,9 +969,7 @@ func (h *handlers) getUserImage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer rc.Close()
-	if fi.MimeType != "" {
-		w.Header().Set("Content-Type", fi.MimeType)
-	}
+	writeInlineImageHeaders(w, fi.MimeType, fi.Name)
 	w.Header().Set("Cache-Control", "private, max-age=3600")
 	_, _ = io.Copy(w, rc)
 }
@@ -1000,7 +1002,10 @@ func (h *handlers) getDefaultProfileImage(w http.ResponseWriter, r *http.Request
 		idx = (idx + int(r)) % len(palette)
 	}
 	svg := fmt.Sprintf(`<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128"><rect width="128" height="128" rx="24" fill="%s"/><text x="64" y="78" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="56" font-weight="700" fill="#fff">%s</text></svg>`, palette[idx], html.EscapeString(label))
+	// Server-generated SVG from a fixed template, so inline rendering is safe
+	// here — unlike the uploaded-bytes routes, which never serve SVG.
 	w.Header().Set("Content-Type", "image/svg+xml; charset=utf-8")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.Header().Set("Cache-Control", "public, max-age=86400")
 	w.WriteHeader(200)
 	_, _ = w.Write([]byte(svg))
@@ -2020,8 +2025,8 @@ func (h *handlers) selfJoinChannel(w http.ResponseWriter, r *http.Request) {
 // linkPreviewImage streams a remote image through the server so the browser
 // never dials third-party hosts directly (which would leak IP / user-agent
 // to every site a link previews from). Same SSRF guard as Fetch, a 5MB cap,
-// and a strict `image/*` Content-Type check keep this endpoint from being
-// repurposed as an open HTTP proxy.
+// and a raster-image-only Content-Type allowlist keep this endpoint from being
+// repurposed as an open HTTP proxy or as a same-origin script host.
 func (h *handlers) linkPreviewImage(w http.ResponseWriter, r *http.Request) {
 	if h.links == nil {
 		writeError(w, 404, "api.link_preview.disabled", "link previews disabled")
@@ -2042,7 +2047,15 @@ func (h *handlers) linkPreviewImage(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 502, "api.link_preview.fetch", err.Error())
 		return
 	}
-	w.Header().Set("Content-Type", ct)
+	// FetchImage only gates on an `image/` prefix, which lets a remote host
+	// return image/svg+xml. Proxying that back would execute the remote
+	// document's script on our own origin.
+	contentType, ok := inlineImageContentType(ct)
+	if !ok {
+		writeError(w, 502, "api.link_preview.not_image", "unsupported image type")
+		return
+	}
+	w.Header().Set("Content-Type", contentType)
 	w.Header().Set("Cache-Control", "public, max-age=3600")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.WriteHeader(200)
@@ -2667,10 +2680,13 @@ func (h *handlers) downloadFile(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 403, "api.file.get.forbidden", err.Error())
 		return
 	}
+	// Always an attachment, always nosniff: the stored MIME is whatever the
+	// uploader declared, so the browser must never parse these bytes.
+	w.Header().Set("X-Content-Type-Options", "nosniff")
 	if fi.MimeType != "" {
 		w.Header().Set("Content-Type", fi.MimeType)
 	}
-	w.Header().Set("Content-Disposition", "attachment; filename=\""+fi.Name+"\"")
+	w.Header().Set("Content-Disposition", contentDispositionAttachment(fi.Name))
 	if fi.Size > 0 {
 		w.Header().Set("Content-Length", strconv.FormatInt(fi.Size, 10))
 	}
@@ -3395,9 +3411,7 @@ func (h *handlers) getEmojiImage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer rc.Close()
-	if fi.MimeType != "" {
-		w.Header().Set("Content-Type", fi.MimeType)
-	}
+	writeInlineImageHeaders(w, fi.MimeType, e.Name)
 	w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
 	w.WriteHeader(200)
 	_, _ = io.Copy(w, rc)
@@ -3433,6 +3447,7 @@ func (h *handlers) fileThumbnail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "image/jpeg")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.WriteHeader(200)
 	_, _ = io.Copy(w, rc)
 }
@@ -3448,7 +3463,10 @@ func (h *handlers) filePreview(w http.ResponseWriter, r *http.Request) {
 			writeError(w, 404, "api.file.preview.not_found", err.Error())
 			return
 		}
-		if !strings.HasPrefix(strings.ToLower(fi.MimeType), "image/") {
+		// `image/*` is too wide a gate here: image/svg+xml is a scriptable
+		// document, and the stored MIME is uploader-declared. Only the raster
+		// types we are willing to render inline get a preview at all.
+		if _, ok := inlineImageContentType(fi.MimeType); !ok {
 			rc.Close()
 			writeError(w, 404, "api.file.preview.unsupported", "preview not available")
 			return
@@ -3470,9 +3488,7 @@ func (h *handlers) filePreview(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 403, "api.file.preview.forbidden", authorizeErr.Error())
 		return
 	}
-	if fi.MimeType != "" {
-		w.Header().Set("Content-Type", fi.MimeType)
-	}
+	writeInlineImageHeaders(w, fi.MimeType, fi.Name)
 	w.WriteHeader(200)
 	_, _ = io.Copy(w, rc)
 }

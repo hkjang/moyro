@@ -2,7 +2,6 @@ package httpapi
 
 import (
 	"encoding/json"
-	"fmt"
 	"net/http"
 	"strings"
 	"time"
@@ -175,7 +174,9 @@ func (h *handlers) getComplianceReport(w http.ResponseWriter, r *http.Request) {
 
 func (h *handlers) downloadComplianceReport(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/csv; charset=utf-8")
-	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="compliance-%s.csv"`, chi.URLParam(r, "reportID")))
+	// reportID is a caller-supplied path segment, so it can carry a quote that
+	// would otherwise close the header's quoted-string early.
+	w.Header().Set("Content-Disposition", contentDispositionAttachment("compliance-"+chi.URLParam(r, "reportID")+".csv"))
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write([]byte("post_id,user_id,channel_id,create_at,message\n"))
 }
