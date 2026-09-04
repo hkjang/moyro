@@ -163,6 +163,12 @@ func (s *Service) loadCategories(ctx context.Context, userID, teamID string) ([]
 // channels; channels not yet placed in a custom category fall into either
 // "direct_messages" (D/G) or "channels" (O/P). Favorites are read from the
 // explicit join table only (never auto-classified).
+//
+// The live membership set gates *every* source, not just the auto-classified
+// remainder. `sidebar_category_channels` rows and `favorite_channel`
+// preferences both outlive access — archiving a channel or removing a member
+// leaves the row intact, and preferences carry no team, so a star in one team
+// would otherwise surface in every other team's Favorites.
 func (s *Service) fillChannelIDs(ctx context.Context, userID, teamID string, cats []Category) error {
 	if len(cats) == 0 {
 		return nil
@@ -184,7 +190,18 @@ func (s *Service) fillChannelIDs(ctx context.Context, userID, teamID string, cat
 		}
 	}
 
-	// Pull explicit category memberships first.
+	// Every channel the user is a member of in this team (or DM/G, which have
+	// NULL team_id). Read first because it is the authority the two stored
+	// sources below are filtered against.
+	memberTypes, memberOrder, err := s.memberChannels(ctx, userID, teamID)
+	if err != nil {
+		return err
+	}
+
+	// Pull explicit category memberships. Placement is recorded for every
+	// category of this (user, team) — including ones absent from `cats`, which
+	// is how Get on a default category learns a channel already lives in a
+	// custom one and must not be auto-classified here.
 	explicit := make(map[string]string) // channel_id -> category_id
 	rows, err := s.db.Pool.Query(ctx, `
 		SELECT scc.category_id, scc.channel_id
@@ -202,53 +219,37 @@ func (s *Service) fillChannelIDs(ctx context.Context, userID, teamID string, cat
 			rows.Close()
 			return err
 		}
+		if _, member := memberTypes[chanID]; !member {
+			continue
+		}
+		explicit[chanID] = catID
 		if c, ok := byID[catID]; ok {
 			c.ChannelIDs = append(c.ChannelIDs, chanID)
-			explicit[chanID] = catID
 		}
 	}
 	rows.Close()
-
-	// Pull every channel the user is a member of in this team (or DM/G,
-	// which have NULL team_id) and route the unrouted ones into the right
-	// default category.
-	rows, err = s.db.Pool.Query(ctx, `
-		SELECT c.id, c.type
-		FROM channels c
-		JOIN channel_members m ON m.channel_id = c.id
-		WHERE m.user_id = $1 AND c.delete_at = 0
-		  AND (c.team_id = $2 OR c.type IN ('D','G'))
-		ORDER BY c.display_name ASC
-	`, userID, teamID)
-	if err != nil {
-		return err
-	}
-	defer rows.Close()
-	for rows.Next() {
-		var id, typ string
-		if err := rows.Scan(&id, &typ); err != nil {
-			return err
-		}
-		if _, placed := explicit[id]; placed {
-			continue
-		}
-		if typ == "D" || typ == "G" {
-			if defDM != nil {
-				defDM.ChannelIDs = append(defDM.ChannelIDs, id)
-			}
-		} else {
-			if defChannels != nil {
-				defChannels.ChannelIDs = append(defChannels.ChannelIDs, id)
-			}
-		}
-	}
 	if err := rows.Err(); err != nil {
 		return err
 	}
 
+	// Route the channels no category claimed into the right default.
+	for _, id := range memberOrder {
+		if _, placed := explicit[id]; placed {
+			continue
+		}
+		if typ := memberTypes[id]; typ == "D" || typ == "G" {
+			if defDM != nil {
+				defDM.ChannelIDs = append(defDM.ChannelIDs, id)
+			}
+		} else if defChannels != nil {
+			defChannels.ChannelIDs = append(defChannels.ChannelIDs, id)
+		}
+	}
+
 	// Favorites: also populate from `favorite_channel` preference rows so
 	// Phase 21 stars survive the upgrade. Idempotent: rows already in the
-	// explicit join table for this category aren't double-added.
+	// explicit join table for this category aren't double-added, and a star on
+	// a channel some other category already claimed stays where it was put.
 	if favCat != nil {
 		seen := make(map[string]bool, len(favCat.ChannelIDs))
 		for _, id := range favCat.ChannelIDs {
@@ -267,14 +268,55 @@ func (s *Service) fillChannelIDs(ctx context.Context, userID, teamID string, cat
 			if err := favRows.Scan(&chanID); err != nil {
 				return err
 			}
+			if _, member := memberTypes[chanID]; !member {
+				continue
+			}
+			if _, placed := explicit[chanID]; placed {
+				continue
+			}
 			if !seen[chanID] {
 				favCat.ChannelIDs = append(favCat.ChannelIDs, chanID)
 				seen[chanID] = true
 			}
 		}
+		if err := favRows.Err(); err != nil {
+			return err
+		}
 	}
 
 	return nil
+}
+
+// memberChannels returns the channels the user can still see from this team —
+// live channels they are a member of, plus the team-less DM/group-DM ones —
+// as both a type lookup and a display-name-ordered list.
+func (s *Service) memberChannels(ctx context.Context, userID, teamID string) (map[string]string, []string, error) {
+	rows, err := s.db.Pool.Query(ctx, `
+		SELECT c.id, c.type
+		FROM channels c
+		JOIN channel_members m ON m.channel_id = c.id
+		WHERE m.user_id = $1 AND c.delete_at = 0
+		  AND (c.team_id = $2 OR c.type IN ('D','G'))
+		ORDER BY c.display_name ASC
+	`, userID, teamID)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer rows.Close()
+	types := map[string]string{}
+	order := []string{}
+	for rows.Next() {
+		var id, typ string
+		if err := rows.Scan(&id, &typ); err != nil {
+			return nil, nil, err
+		}
+		types[id] = typ
+		order = append(order, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, nil, err
+	}
+	return types, order, nil
 }
 
 // Get returns a single category with its channel IDs filled.
