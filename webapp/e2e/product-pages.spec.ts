@@ -1509,7 +1509,7 @@ async function seedProductData(context: APIRequestContext, session: AuthSession)
     },
     {
       kind: "decision",
-      title: "v0.2.14은 검증된 단일 오프라인 자산으로 배포",
+      title: "v0.2.15은 검증된 단일 오프라인 자산으로 배포",
       description: "PostgreSQL, 브라우저, 플러그인 호환과 재시작 검증을 모두 통과한 자산만 배포합니다.",
       assignee_id: "",
       due_at: 0,
