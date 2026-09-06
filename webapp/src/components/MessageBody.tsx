@@ -19,7 +19,7 @@
 // - We only rewrite tokens whose name is present in the Phase 13 emoji
 //   cache; unknown `:whatever:` stays as literal text so we don't create
 //   broken image requests.
-import { useMemo } from "react";
+import { useMemo, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import rehypeSanitize from "rehype-sanitize";
@@ -60,6 +60,32 @@ function isSafeImageSrc(src: string | undefined): src is string {
   return /^\/api\/v4\/(?:files\/[^/?#]+(?:\/thumbnail)?|emoji\/[^/?#]+\/image)$/.test(src);
 }
 
+// A fenced code block with a copy affordance. The button reads the rendered
+// text, so whatever the sanitizer left in the block is what gets copied.
+function CodeBlock({ children }: { children?: React.ReactNode }) {
+  const ref = useRef<HTMLPreElement>(null);
+  const [copied, setCopied] = useState(false);
+  return (
+    <div className="msg-code-block">
+      <pre ref={ref}>{children}</pre>
+      <button
+        type="button"
+        className="msg-code-copy"
+        aria-label="코드 복사"
+        onClick={() => {
+          const text = ref.current?.innerText ?? "";
+          void navigator.clipboard?.writeText(text).then(() => {
+            setCopied(true);
+            window.setTimeout(() => setCopied(false), 1500);
+          }).catch(() => undefined);
+        }}
+      >
+        {copied ? "복사됨" : "복사"}
+      </button>
+    </div>
+  );
+}
+
 export function MessageBody({ source, token, linkMetadata }: Props) {
   // Memoize the emoji-rewritten string so ReactMarkdown only re-parses
   // when the source actually changes, not on every parent re-render.
@@ -75,6 +101,7 @@ export function MessageBody({ source, token, linkMetadata }: Props) {
         remarkPlugins={[remarkGfm]}
         rehypePlugins={[rehypeSanitize]}
         components={{
+          pre: ({ children }) => <CodeBlock>{children}</CodeBlock>,
           // External-link hardening. Without rel=noopener, `window.opener`
           // leaks to the destination and enables reverse-tab phishing.
           a: ({ href, children, ...rest }) => (

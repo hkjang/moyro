@@ -36,7 +36,7 @@ Product site: <https://hkjang.github.io/moyro/>
 - A workspace context panel for threads, user-triggered AI summary of currently
   loaded messages, files from those messages, and channel information
 - Search, saved posts, public channel discovery, and a link-preview foundation
-  (outbound previews are disabled by the offline-safe v0.2.15 runtime)
+  (outbound previews are disabled by the offline-safe v0.2.16 runtime)
 - Incoming/outgoing webhooks, slash commands, bots, personal access tokens
 - OAuth compatibility hooks, limited-use member and restricted guest invites,
   guest expiry/file policy, audit logs, and metrics
@@ -91,6 +91,12 @@ Product site: <https://hkjang.github.io/moyro/>
   is reached
 - Keyboard: `?` lists every shortcut the workspace implements, Alt+↑/↓ walk
   the sidebar, and ↑ on an empty composer edits the author's latest message
+- Root posts carry an inline thread summary ("답글 N개 · 마지막 답글") served by
+  the list endpoints as `reply_count`/`last_reply_at`; the context panel adds
+  a member roster with presence and a pinned-message list; the composer
+  autocompletes `:emoji`, accepts dropped and pasted files, and messages offer
+  copy-link (a permalink that survives a fresh tab), copy-text, and a copy
+  button on code blocks
 - A Content-Security-Policy on the web UI that allows scripts only from the
   bundle and the plugin runtime's object URLs and connections only to this
   origin, a per-statement PostgreSQL latency histogram, and a rate-limited
@@ -151,7 +157,7 @@ variables. See the [Offline Deployment Guide](docs/offline-deployment.md) for
 the complete load, run, backup, and upgrade procedure. A redacted four-key
 template is available at [`deploy/docker/moyro.env.example`](deploy/docker/moyro.env.example).
 
-The supported v0.2.15 topology is one moyro application container connected to
+The supported v0.2.16 topology is one moyro application container connected to
 external PostgreSQL, with uploads on the local `/var/lib/moyro` volume. The
 four-variable production contract does not expose SMTP configuration, so email
 is reported unavailable and no digest worker records false delivery success.
@@ -168,7 +174,7 @@ Administrators may explicitly allow those back-channel endpoints only for an
 isolated, trusted private network; the browser-facing authorization endpoint
 remains HTTPS-only and the setting warns that secrets and codes cross HTTP in
 plaintext and that the traffic, including JWKS, can be intercepted or modified.
-After a successful provider callback, v0.2.15 sends the browser a five-minute,
+After a successful provider callback, v0.2.16 sends the browser a five-minute,
 browser-bound handoff code instead of a session JWT. The atomic exchange sets
 the reusable login credential only in an HttpOnly, SameSite cookie and returns
 the local user without exposing that credential to JavaScript. If the exchange

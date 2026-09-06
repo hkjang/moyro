@@ -1,12 +1,14 @@
 import { useEffect, useRef, type KeyboardEvent, type ReactNode } from "react";
 import CloseRounded from "@mui/icons-material/CloseRounded";
 
-export type WorkspaceContextTab = "thread" | "summary" | "files" | "info";
+export type WorkspaceContextTab = "thread" | "summary" | "files" | "pinned" | "members" | "info";
 
 const CONTEXT_TABS: readonly { id: WorkspaceContextTab; label: string }[] = [
   { id: "thread", label: "스레드" },
   { id: "summary", label: "요약" },
   { id: "files", label: "최근 파일" },
+  { id: "pinned", label: "고정" },
+  { id: "members", label: "멤버" },
   { id: "info", label: "정보" },
 ];
 

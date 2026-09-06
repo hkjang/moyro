@@ -399,3 +399,63 @@ func postsTestContext(t *testing.T) context.Context {
 	t.Cleanup(cancel)
 	return ctx
 }
+
+// TestListingsCarryThreadSummaries pins the inline thread summary the
+// channel view renders: root posts report how many live replies they have
+// and when the last one landed, replies report nothing, and a deleted reply
+// drops out of both numbers.
+func TestListingsCarryThreadSummaries(t *testing.T) {
+	db := newPostsTestDB(t)
+	ctx := postsTestContext(t)
+	seedPostsFixture(t, ctx, db)
+	service := New(db)
+
+	root := createPostAt(t, ctx, db, service, "channel-general", "user-author", "", "root", 1_000)
+	first := createPostAt(t, ctx, db, service, "channel-general", "user-other", root.ID, "first reply", 2_000)
+	second := createPostAt(t, ctx, db, service, "channel-general", "user-author", root.ID, "second reply", 3_000)
+	lonely := createPostAt(t, ctx, db, service, "channel-general", "user-other", "", "no replies", 4_000)
+
+	list, err := service.ListForChannel(ctx, "channel-general", 0, 60)
+	if err != nil {
+		t.Fatalf("list channel: %v", err)
+	}
+	if got := list.Posts[root.ID]; got.ReplyCount != 2 || got.LastReplyAt != second.CreateAt {
+		t.Fatalf("root summary = count %d, last %d", got.ReplyCount, got.LastReplyAt)
+	}
+	if got := list.Posts[lonely.ID]; got.ReplyCount != 0 || got.LastReplyAt != 0 {
+		t.Fatalf("root without replies = %#v", got)
+	}
+	for _, reply := range []*Post{first, second} {
+		if got := list.Posts[reply.ID]; got.ReplyCount != 0 {
+			t.Fatalf("reply %s carries a summary: %#v", reply.ID, got)
+		}
+	}
+
+	// The cursor-paged variant and the pinned list carry the same summary.
+	paged, err := service.ListForChannelPaged(ctx, "channel-general", PageOpts{Before: lonely.ID, PerPage: 60})
+	if err != nil {
+		t.Fatalf("list paged: %v", err)
+	}
+	if got := paged.Posts[root.ID]; got == nil || got.ReplyCount != 2 {
+		t.Fatalf("paged root summary = %#v", got)
+	}
+	if _, err := service.SetPinned(ctx, root.ID, true); err != nil {
+		t.Fatalf("pin root: %v", err)
+	}
+	pinned, err := service.ListPinned(ctx, "channel-general")
+	if err != nil {
+		t.Fatalf("list pinned: %v", err)
+	}
+	if got := pinned.Posts[root.ID]; got == nil || got.ReplyCount != 2 {
+		t.Fatalf("pinned root summary = %#v", got)
+	}
+
+	// Deleting a reply removes it from the count and moves the last-reply time.
+	if ok, err := service.Delete(ctx, second.ID, "user-author"); err != nil || !ok {
+		t.Fatalf("delete reply = %v, %v", ok, err)
+	}
+	list, _ = service.ListForChannel(ctx, "channel-general", 0, 60)
+	if got := list.Posts[root.ID]; got.ReplyCount != 1 || got.LastReplyAt != first.CreateAt {
+		t.Fatalf("root summary after delete = count %d, last %d", got.ReplyCount, got.LastReplyAt)
+	}
+}

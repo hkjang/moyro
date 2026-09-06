@@ -8,6 +8,8 @@ import DescriptionRounded from "@mui/icons-material/DescriptionRounded";
 import EditOutlined from "@mui/icons-material/EditOutlined";
 import GavelRounded from "@mui/icons-material/GavelRounded";
 import MoreHorizRounded from "@mui/icons-material/MoreHorizRounded";
+import LinkRounded from "@mui/icons-material/LinkRounded";
+import ContentCopyRounded from "@mui/icons-material/ContentCopyRounded";
 import NotificationsNoneRounded from "@mui/icons-material/NotificationsNoneRounded";
 import PushPinRounded from "@mui/icons-material/PushPinRounded";
 import StarBorderRounded from "@mui/icons-material/StarBorderRounded";
@@ -26,7 +28,8 @@ import { useDocumentCreation } from "@/features/knowledge/DocumentCreationProvid
 import { WorkspaceAvatar } from "@/features/workspace/sidebar/WorkspaceAvatar";
 import { PluginSurface } from "@/plugins/PluginSurface";
 import { usePluginRegistryState } from "@/plugins/registry";
-import { formatClockTime, formatDateTime } from "@/lib/time";
+import { formatClockTime, formatDateTime, formatRelativeTime } from "@/lib/time";
+import { useToast } from "@/components/feedback/ToastProvider";
 import "@/features/workspace/messages/message-item.css";
 
 const QUICK_EMOJIS = ["+1", "heart", "tada", "laughing", "eyes", "rocket"];
@@ -94,6 +97,8 @@ export type MessageItemProps = {
    * unchanged values do nothing.
    */
   editRequestSeq?: number;
+  /** Builds a shareable URL for this post; enables "링크 복사" when provided. */
+  permalinkFor?: (post: Post) => string;
 };
 
 export function MessageItem(props: MessageItemProps) {
@@ -123,7 +128,9 @@ export function MessageItem(props: MessageItemProps) {
     onRemindMe,
     continuation = false,
     editRequestSeq = 0,
+    permalinkFor,
   } = props;
+  const toast = useToast();
   const [editing, setEditing] = useState(false);
   const [editSaving, setEditSaving] = useState(false);
   const [editError, setEditError] = useState("");
@@ -298,6 +305,19 @@ export function MessageItem(props: MessageItemProps) {
         </>
       )}
 
+      {!compact && !post.root_id && (post.reply_count ?? 0) > 0 && onOpenThread && (
+        <button
+          type="button"
+          className="msg-thread-summary"
+          onClick={() => onOpenThread(post.id)}
+          aria-label={`스레드 열기, 답글 ${post.reply_count}개`}
+        >
+          <ChatBubbleOutlineRounded fontSize="inherit" aria-hidden />
+          <span>답글 {post.reply_count}개</span>
+          {post.last_reply_at ? <span className="msg-thread-summary-time">마지막 답글 {formatRelativeTime(post.last_reply_at)}</span> : null}
+        </button>
+      )}
+
       {Object.keys(groupedReactions).length > 0 && (
         <div className="reactions">
           {Object.entries(groupedReactions).map(([emoji, matchingReactions]) => {
@@ -457,6 +477,32 @@ export function MessageItem(props: MessageItemProps) {
             >
               <GavelRounded fontSize="small" aria-hidden />
               <span>결정으로 기록</span>
+            </MenuItem>
+          )}
+          {permalinkFor && (
+            <MenuItem
+              className="message-action-menu-item"
+              onClick={() => runMoreAction(() => {
+                void navigator.clipboard?.writeText(permalinkFor(post))
+                  .then(() => toast.success("메시지 링크를 복사했습니다."))
+                  .catch(() => toast.error("클립보드에 복사하지 못했습니다."));
+              })}
+            >
+              <LinkRounded fontSize="small" aria-hidden />
+              <span>링크 복사</span>
+            </MenuItem>
+          )}
+          {post.message && (
+            <MenuItem
+              className="message-action-menu-item"
+              onClick={() => runMoreAction(() => {
+                void navigator.clipboard?.writeText(post.message)
+                  .then(() => toast.success("메시지 텍스트를 복사했습니다."))
+                  .catch(() => toast.error("클립보드에 복사하지 못했습니다."));
+              })}
+            >
+              <ContentCopyRounded fontSize="small" aria-hidden />
+              <span>텍스트 복사</span>
             </MenuItem>
           )}
           {isMe && (

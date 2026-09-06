@@ -7,6 +7,7 @@ import StopCircleRounded from "@mui/icons-material/StopCircleRounded";
 import type { FileInfo, PersonalAIPreferences } from "@/api/client";
 import { moyroMeApi } from "@/api/client";
 import { useMentionAutocomplete } from "@/components/MentionPicker";
+import { useEmojiAutocomplete } from "@/components/EmojiAutocomplete";
 import { clearMoyroDraft, useDraft } from "@/features/workspace/composer/useDraft";
 import "@/features/workspace/composer/message-composer.css";
 
@@ -77,6 +78,8 @@ export function MessageComposer({
     setValue,
     textareaRef,
   });
+  const emojis = useEmojiAutocomplete({ token, value, setValue, textareaRef });
+  const [dragging, setDragging] = useState(false);
 
   const draftKey = userId && channelID
     ? `moyro:draft:${userId}:${channelID}:${rootId || "root"}`
@@ -273,7 +276,26 @@ export function MessageComposer({
   const aiStatus = aiPermissionLoaded ? aiStatusLabel : "AI 사용 상태 확인 중";
 
   return (
-    <form className="composer workspace-message-composer" onSubmit={(event) => { event.preventDefault(); void submit(); }}>
+    <form
+      className={`composer workspace-message-composer ${dragging ? "is-dragging" : ""}`}
+      onSubmit={(event) => { event.preventDefault(); void submit(); }}
+      onDragOver={(event) => {
+        if (!event.dataTransfer.types.includes("Files")) return;
+        event.preventDefault();
+        setDragging(true);
+      }}
+      onDragLeave={(event) => {
+        if (event.currentTarget.contains(event.relatedTarget as Node | null)) return;
+        setDragging(false);
+      }}
+      onDrop={(event) => {
+        if (!event.dataTransfer.files?.length) return;
+        event.preventDefault();
+        setDragging(false);
+        void selectFiles(event.dataTransfer.files);
+      }}
+    >
+      {dragging && <div className="composer-drop-hint" aria-hidden>여기에 놓아 파일 첨부</div>}
       <div className="composer-layout">
         <div className="composer-context-bar">
           <span className="composer-destination">{destinationLabel}</span>
@@ -397,7 +419,18 @@ export function MessageComposer({
                 setValue(event.target.value);
                 setSendError("");
                 mentions.onChange(event);
+                emojis.onChange(event);
                 notifyTyping();
+              }}
+              onPaste={(event) => {
+                // Pasted images (screenshots) become attachments; text pastes
+                // are left to the browser.
+                const files = Array.from(event.clipboardData?.files ?? []);
+                if (files.length === 0) return;
+                event.preventDefault();
+                const list = new DataTransfer();
+                files.forEach((file) => list.items.add(file));
+                void selectFiles(list.files);
               }}
               onCompositionStart={() => {
                 composingRef.current = true;
@@ -411,6 +444,7 @@ export function MessageComposer({
               }}
               onKeyDown={(event) => {
                 if (mentions.handleKeyDown(event)) return;
+                if (emojis.handleKeyDown(event)) return;
                 const nativeEvent = event.nativeEvent;
                 if (
                   composingRef.current
@@ -430,6 +464,7 @@ export function MessageComposer({
               }}
             />
             {mentions.render()}
+            {!mentions.open && emojis.render()}
           </div>
           <button
             type="submit"

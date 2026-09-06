@@ -1162,18 +1162,19 @@ test("workspace context info supports tabs, keyboard close and focus return", as
   const panel = page.getByRole("complementary", { name: "컨텍스트 패널" });
   const tabs = panel.getByRole("tablist", { name: "채널 컨텍스트" });
   const infoTab = tabs.getByRole("tab", { name: "정보", exact: true });
-  const filesTab = tabs.getByRole("tab", { name: "최근 파일", exact: true });
+  const membersTab = tabs.getByRole("tab", { name: "멤버", exact: true });
   await expect(panel).toBeVisible();
-  await expect(tabs.getByRole("tab")).toHaveCount(4);
+  await expect(tabs.getByRole("tab")).toHaveCount(6);
   await expect(infoTab).toHaveAttribute("aria-selected", "true");
   await expect(infoTab).toBeFocused();
   await expect(panel.getByRole("tabpanel", { name: "정보", exact: true })).toBeVisible();
   await expect(panel.getByRole("region", { name: "채널 정보" })).toBeVisible();
 
   await infoTab.press("ArrowLeft");
-  await expect(filesTab).toHaveAttribute("aria-selected", "true");
-  await expect(filesTab).toBeFocused();
-  await filesTab.press("ArrowRight");
+  await expect(membersTab).toHaveAttribute("aria-selected", "true");
+  await expect(membersTab).toBeFocused();
+  await expect(panel.getByRole("region", { name: "채널 멤버" })).toBeVisible();
+  await membersTab.press("ArrowRight");
   await expect(infoTab).toHaveAttribute("aria-selected", "true");
   await expect(infoTab).toBeFocused();
 
@@ -1509,7 +1510,7 @@ async function seedProductData(context: APIRequestContext, session: AuthSession)
     },
     {
       kind: "decision",
-      title: "v0.2.15은 검증된 단일 오프라인 자산으로 배포",
+      title: "v0.2.16은 검증된 단일 오프라인 자산으로 배포",
       description: "PostgreSQL, 브라우저, 플러그인 호환과 재시작 검증을 모두 통과한 자산만 배포합니다.",
       assignee_id: "",
       due_at: 0,

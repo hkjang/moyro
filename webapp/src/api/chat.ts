@@ -61,6 +61,9 @@ export type Post = {
   props: Record<string, unknown>;
   file_ids?: string[];
   is_pinned?: boolean;
+  // Thread summary on root posts, filled by list endpoints.
+  reply_count?: number;
+  last_reply_at?: number;
   // Phase 18 link previews. Up to 3 OpenGraph-extracted entries per post.
   // Populated asynchronously after post creation; clients get a
   // post_edited event when it lands.

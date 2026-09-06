@@ -70,6 +70,9 @@ Important packages:
   responsive while a membership lookup is in flight; a saturated delivery queue
   sheds events and reports the drop rather than applying back-pressure to
   request handling.
+- `internal/posts` list endpoints attach a per-root thread summary
+  (`reply_count`, `last_reply_at`) with one GROUP BY over the page's root
+  ids, so the channel view summarises threads without opening them.
 - `internal/webui` serves the bundle with a Content-Security-Policy: scripts
   from the bundle and `blob:` (the plugin runtime executes fetched bundles
   through object URLs), inline styles for MUI's runtime injection, and
@@ -117,6 +120,9 @@ Important modules:
 - `components/feedback/ToastProvider.tsx` is the one feedback surface for
   confirmations and failures; `useToast()` is a no-op outside the provider so
   components stay renderable in isolation.
+- `features/workspace/context/ChannelPeopleViews.tsx` renders the member and
+  pinned tabs; `model/useChannelPanels.ts` loads them only while open.
+  `components/EmojiAutocomplete.tsx` mirrors the mention picker for `:name`.
 - `features/workspace/model/useOlderPosts.ts` pages history in above the
   viewport, anchored on the oldest loaded post; `useTimelineScroll.ts`
   compensates the scroll position for the inserted height. `useThreadPanel.ts`

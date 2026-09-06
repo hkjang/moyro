@@ -29,6 +29,12 @@ type Post struct {
 	// Phase 18: server-generated OpenGraph unfurl cards. Empty by default;
 	// populated asynchronously after creation and re-broadcast via post_edited.
 	LinkMetadata []LinkPreview `json:"link_metadata"`
+	// Thread summary for root posts, filled by list endpoints so the channel
+	// view can show "답글 N개 · 마지막 답글" without opening every thread.
+	// Zero on replies and on single-post reads. Mattermost clients read the
+	// same `reply_count` field.
+	ReplyCount  int64 `json:"reply_count"`
+	LastReplyAt int64 `json:"last_reply_at"`
 }
 
 // LinkPreview is one OpenGraph card attached to a post. Fields other than
@@ -282,6 +288,57 @@ func (s *Service) UpdateLinkMetadata(ctx context.Context, postID string, preview
 	return err
 }
 
+// attachThreadSummaries fills ReplyCount and LastReplyAt on every root post
+// in the map with one aggregate query. Listing endpoints call it after
+// scanning so the channel view can summarise threads inline; the extra
+// round-trip is one GROUP BY over the page's root ids, not one query per
+// post.
+func (s *Service) attachThreadSummaries(ctx context.Context, posts map[string]*Post) error {
+	roots := make([]string, 0, len(posts))
+	for id, post := range posts {
+		if post.RootID == "" {
+			roots = append(roots, id)
+		}
+	}
+	if len(roots) == 0 {
+		return nil
+	}
+	rows, err := s.db.Pool.Query(ctx, `
+		SELECT root_id, COUNT(*), MAX(create_at)
+		FROM posts
+		WHERE root_id = ANY($1) AND delete_at = 0
+		GROUP BY root_id
+	`, roots)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var rootID string
+		var count, last int64
+		if err := rows.Scan(&rootID, &count, &last); err != nil {
+			return err
+		}
+		if post := posts[rootID]; post != nil {
+			post.ReplyCount = count
+			post.LastReplyAt = last
+		}
+	}
+	return rows.Err()
+}
+
+// finishList closes out a scanned list: it surfaces the iterator error and
+// attaches thread summaries before the list is returned.
+func (s *Service) finishList(ctx context.Context, list *PostList, rows pgx.Rows) (*PostList, error) {
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if err := s.attachThreadSummaries(ctx, list.Posts); err != nil {
+		return nil, err
+	}
+	return list, nil
+}
+
 func (s *Service) ListForChannel(ctx context.Context, channelID string, page, perPage int) (*PostList, error) {
 	if perPage <= 0 || perPage > 200 {
 		perPage = 60
@@ -309,7 +366,7 @@ func (s *Service) ListForChannel(ctx context.Context, channelID string, page, pe
 		list.Order = append(list.Order, p.ID)
 		list.Posts[p.ID] = p
 	}
-	return list, rows.Err()
+	return s.finishList(ctx, list, rows)
 }
 
 // PageOpts is the union of the four cursor modes Mattermost's
@@ -364,7 +421,7 @@ func (s *Service) ListForChannelPaged(ctx context.Context, channelID string, opt
 			list.Order = append(list.Order, p.ID)
 			list.Posts[p.ID] = p
 		}
-		return list, rows.Err()
+		return s.finishList(ctx, list, rows)
 
 	case opts.Before != "":
 		// "give me the page just *before* this post id". Resolve the
@@ -391,7 +448,7 @@ func (s *Service) ListForChannelPaged(ctx context.Context, channelID string, opt
 			list.Order = append(list.Order, p.ID)
 			list.Posts[p.ID] = p
 		}
-		return list, rows.Err()
+		return s.finishList(ctx, list, rows)
 
 	case opts.After != "":
 		var anchor int64
@@ -416,7 +473,7 @@ func (s *Service) ListForChannelPaged(ctx context.Context, channelID string, opt
 			list.Order = append(list.Order, p.ID)
 			list.Posts[p.ID] = p
 		}
-		return list, rows.Err()
+		return s.finishList(ctx, list, rows)
 
 	default:
 		page := opts.Page
@@ -552,7 +609,13 @@ func (s *Service) Search(ctx context.Context, userID, teamID, terms string, filt
 		result.Order = append(result.Order, p.ID)
 		result.Posts[p.ID] = p
 	}
-	return result, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if err := s.attachThreadSummaries(ctx, result.Posts); err != nil {
+		return nil, err
+	}
+	return result, nil
 }
 
 // prefixedCols returns allPostColumns with each bare identifier prefixed by
@@ -608,7 +671,7 @@ func (s *Service) ListPinned(ctx context.Context, channelID string) (*PostList, 
 		list.Order = append(list.Order, p.ID)
 		list.Posts[p.ID] = p
 	}
-	return list, rows.Err()
+	return s.finishList(ctx, list, rows)
 }
 
 // ListThread returns the root post plus every live reply whose root_id
@@ -634,7 +697,7 @@ func (s *Service) ListThread(ctx context.Context, rootID string) (*PostList, err
 		list.Order = append(list.Order, p.ID)
 		list.Posts[p.ID] = p
 	}
-	return list, rows.Err()
+	return s.finishList(ctx, list, rows)
 }
 
 // Update rewrites message/props for a post the caller owns. Returns the

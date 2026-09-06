@@ -117,6 +117,7 @@ describe("MessageItem mobile and keyboard actions", () => {
       "스레드 열기",
       "저장",
       "나중에 알림",
+      "텍스트 복사",
       "편집",
       "삭제",
     ]);
@@ -251,5 +252,86 @@ describe("MessageItem mobile and keyboard actions", () => {
 
     expect(source).toHaveBeenCalledWith("session-token", "post-1", expect.any(AbortSignal));
     expect(document.querySelector('[role="dialog"]')?.textContent).toContain("대화에서 문서 만들기");
+  });
+});
+
+describe("MessageItem thread summary and copy actions", () => {
+  let container: HTMLDivElement;
+  let root: Root;
+
+  beforeEach(() => {
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+  });
+
+  afterEach(async () => {
+    await act(async () => root.unmount());
+    container.remove();
+  });
+
+  it("summarises replies on a root post and opens the thread from it", async () => {
+    const onOpenThread = vi.fn();
+    const rootPost = { ...post, id: "root-9", root_id: "", reply_count: 3, last_reply_at: Date.now() - 60_000 };
+    await act(async () => root.render(
+      <MessageItem
+        post={rootPost as never}
+        isMe={false}
+        reactions={[]}
+        currentUserId="user-2"
+        files={[]}
+        token="t"
+        onToggleReaction={vi.fn()}
+        onEdit={vi.fn(async () => true)}
+        onDelete={vi.fn()}
+        onOpenThread={onOpenThread}
+      />,
+    ));
+    const summary = container.querySelector<HTMLButtonElement>(".msg-thread-summary");
+    expect(summary?.textContent).toContain("답글 3개");
+    expect(summary?.textContent).toContain("마지막 답글");
+    await act(async () => summary?.click());
+    expect(onOpenThread).toHaveBeenCalledWith("root-9");
+  });
+
+  it("does not render a summary on replies or on posts without replies", async () => {
+    await act(async () => root.render(
+      <MessageItem
+        post={{ ...post, reply_count: 5 } as never}
+        isMe={false}
+        reactions={[]}
+        currentUserId="user-2"
+        files={[]}
+        token="t"
+        onToggleReaction={vi.fn()}
+        onEdit={vi.fn(async () => true)}
+        onDelete={vi.fn()}
+        onOpenThread={vi.fn()}
+      />,
+    ));
+    // `post` is a reply (root_id set), so even a stray count is ignored.
+    expect(container.querySelector(".msg-thread-summary")).toBeNull();
+  });
+
+  it("offers link and text copy only when a permalink builder is provided", async () => {
+    await act(async () => root.render(
+      <MessageItem
+        post={{ ...post, root_id: "" } as never}
+        isMe={false}
+        reactions={[]}
+        currentUserId="user-2"
+        files={[]}
+        token="t"
+        onToggleReaction={vi.fn()}
+        onEdit={vi.fn(async () => true)}
+        onDelete={vi.fn()}
+        permalinkFor={(p) => `https://moyro.test/p/${p.id}`}
+      />,
+    ));
+    const trigger = container.querySelector<HTMLButtonElement>('button[aria-label="메시지 작업 더보기"]');
+    await act(async () => trigger?.click());
+    const labels = [...document.querySelectorAll('[role="menuitem"]')].map((item) => item.textContent?.trim());
+    expect(labels).toContain("링크 복사");
+    expect(labels).toContain("텍스트 복사");
   });
 });

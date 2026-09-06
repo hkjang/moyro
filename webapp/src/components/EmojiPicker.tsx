@@ -19,7 +19,7 @@ type Props = {
 let emojiCache: Emoji[] | null = null;
 let emojiPromise: Promise<Emoji[]> | null = null;
 
-function loadEmojis(token: string): Promise<Emoji[]> {
+export function loadEmojis(token: string): Promise<Emoji[]> {
   if (emojiCache) return Promise.resolve(emojiCache);
   if (!emojiPromise) {
     emojiPromise = api.listEmojis(token).then(
@@ -44,7 +44,9 @@ export function customEmojiByName(name: string): Emoji | null {
   return emojiCache.find((e) => e.name === name) ?? null;
 }
 
-const EMOJI_CHAR: Record<string, string> = {
+/** Built-in emoji the composer and reaction chips render as glyphs. The
+ *  autocomplete offers these by name; the message body shows the glyph. */
+export const EMOJI_CHAR: Record<string, string> = {
   "+1": "👍",
   "-1": "👎",
   heart: "❤️",
@@ -55,6 +57,27 @@ const EMOJI_CHAR: Record<string, string> = {
   fire: "🔥",
   clap: "👏",
   check: "✅",
+  smile: "😊",
+  joy: "😂",
+  thinking: "🤔",
+  pray: "🙏",
+  ok_hand: "👌",
+  wave: "👋",
+  raised_hands: "🙌",
+  sparkles: "✨",
+  star: "⭐",
+  warning: "⚠️",
+  x: "❌",
+  question: "❓",
+  bulb: "💡",
+  memo: "📝",
+  calendar: "📅",
+  coffee: "☕",
+  party: "🥳",
+  sob: "😭",
+  sweat_smile: "😅",
+  muscle: "💪",
+  hundred: "💯",
 };
 
 export function EmojiPicker({ token, quick, onPick, onClose }: Props) {

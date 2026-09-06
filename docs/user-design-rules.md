@@ -1,6 +1,6 @@
 # Moyro Flow Design Rules
 
-Status date: 2026-09-02
+Status date: 2026-09-07
 
 Moyro keeps familiar channel, message, thread, and keyboard behavior at its
 Mattermost-compatible boundary. Its product interface is independently
@@ -63,8 +63,8 @@ not write `html[data-theme]` directly.
   on its own.
 - Every shortcut the workspace implements is listed in the `?` help dialog;
   a shortcut that is not listed there does not exist.
-- The right side is one context panel with thread, summary, files, and channel
-  information—not several competing drawers.
+- The right side is one context panel with thread, summary, files, pinned
+  messages, members, and channel information—not several competing drawers.
 - My Work owns saved messages, scheduled posts, and reminders. They must not be
   styled or routed as pseudo-channels; the workspace sidebar no longer lists
   them.

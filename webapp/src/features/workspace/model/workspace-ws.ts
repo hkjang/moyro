@@ -102,7 +102,14 @@ export function handleWorkspaceWebSocketEvent(
       hydrateUsers([p.user_id]);
       hydrateFiles(p.file_ids ?? []);
       if (p.channel_id === currentChannelIdRef.current) {
-        setPosts((prev) => appendLivePost(prev, p));
+        setPosts((prev) => {
+          const next = appendLivePost(prev, p);
+          if (!p.root_id) return next;
+          // A live reply updates its root's inline summary without a refetch.
+          return next.map((post) => post.id === p.root_id
+            ? { ...post, reply_count: (post.reply_count ?? 0) + 1, last_reply_at: p.create_at }
+            : post);
+        });
         api.viewChannel(token!, p.channel_id).catch(() => undefined);
       }
       // `unread_updated` WS event arrives alongside `posted` for non-author

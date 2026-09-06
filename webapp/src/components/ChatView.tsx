@@ -36,6 +36,9 @@ import {
   ChannelSummaryView,
   EmptyThreadView,
 } from "@/features/workspace/context/ChannelContextViews";
+import { ChannelMembersView, ChannelPinnedView } from "@/features/workspace/context/ChannelPeopleViews";
+import { useChannelContextData } from "@/features/workspace/model/useChannelContextData";
+import { useWorkspaceShortcuts } from "@/features/workspace/model/useWorkspaceShortcuts";
 import { ChannelHeader } from "@/features/workspace/header/ChannelHeader";
 import { MessageComposer } from "@/features/workspace/composer/MessageComposer";
 import { clearMoyroDraftsForUser } from "@/features/workspace/composer/useDraft";
@@ -110,9 +113,13 @@ export function ChatView() {
     (entry) => entry.id === pluginRegistry.activeRhsComponentId,
   );
   const navigationFocusPostID = (() => {
-    if (!location.state || typeof location.state !== "object") return "";
-    const candidate = (location.state as { focusPostId?: unknown }).focusPostId;
-    return typeof candidate === "string" ? candidate : "";
+    if (location.state && typeof location.state === "object") {
+      const candidate = (location.state as { focusPostId?: unknown }).focusPostId;
+      if (typeof candidate === "string" && candidate) return candidate;
+    }
+    // A copied message link carries the post in the query string so it
+    // survives being opened in a fresh tab, where router state does not.
+    return new URLSearchParams(location.search).get("post") ?? "";
   })();
   const navigationPostLoadRef = useRef("");
   const navigationPostFocusedRef = useRef("");
@@ -411,43 +418,20 @@ export function ChatView() {
   // navigation surface. Combines channel autocomplete + user autocomplete so
   // a user can jump to a channel or open a DM in one shortcut.
   const [showQuickSwitcher, setShowQuickSwitcher] = useState(false);
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      const mod = e.metaKey || e.ctrlKey;
-      if (mod && (e.key === "k" || e.key === "K")) {
-        // Skip if the user is mid-text-input ⇢ we'd kidnap their typing.
-        // …no, actually the whole point is to grab focus from anywhere.
-        e.preventDefault();
-        setShowQuickSwitcher(true);
-        return;
-      }
-      const target = e.target as HTMLElement | null;
-      const typing = Boolean(target && (
-        target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable
-      ));
-      // "?" is a plain character in a text field; only outside one is it the
-      // help shortcut.
-      if (e.key === "?" && !typing && !mod && !e.altKey) {
-        e.preventDefault();
-        setShowShortcutHelp(true);
-        return;
-      }
-      if (e.altKey && !mod && (e.key === "ArrowUp" || e.key === "ArrowDown")) {
-        const order = channelOrderRef.current;
-        const index = order.indexOf(currentChannelIdRef.current ?? "");
-        if (order.length === 0) return;
-        const next = e.key === "ArrowUp"
-          ? order[(index <= 0 ? order.length : index) - 1]
-          : order[(index + 1) % order.length];
-        if (next && next !== currentChannelIdRef.current) {
-          e.preventDefault();
-          selectChannelRef.current?.(next);
-        }
-      }
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, []);
+  const shortcutHandlers = useMemo(() => ({
+    onQuickSwitch: () => setShowQuickSwitcher(true),
+    onHelp: () => setShowShortcutHelp(true),
+    onChannelStep: (direction: -1 | 1) => {
+      const order = channelOrderRef.current;
+      if (order.length === 0) return;
+      const index = order.indexOf(currentChannelIdRef.current ?? "");
+      const next = direction < 0
+        ? order[(index <= 0 ? order.length : index) - 1]
+        : order[(index + 1) % order.length];
+      if (next && next !== currentChannelIdRef.current) selectChannelRef.current?.(next);
+    },
+  }), []);
+  useWorkspaceShortcuts(shortcutHandlers);
 
   // Phase 21 — channel stats (member/pinned/files counts). Fetched lazily
   // when the active channel changes; a ChannelStats object is cached per id
@@ -919,6 +903,15 @@ export function ChatView() {
     channelOrderRef.current = [...favoriteChannels, ...nonFavoritePublic, ...nonFavoriteDM].map((c) => c.id);
   }, [favoriteChannels, nonFavoritePublic, nonFavoriteDM]);
   const [showShortcutHelp, setShowShortcutHelp] = useState(false);
+
+  const contextData = useChannelContextData({
+    token,
+    teamId: currentTeamId,
+    channelId: currentChannelId,
+    activeContext,
+    hydrateUsers: (ids) => { void hydrateUsers(ids); },
+  });
+  const { members: channelMembers, pinned: channelPinned, permalinkFor } = contextData;
 
   function openChannelContext(tab: Exclude<WorkspaceContextTab, "thread">) {
     if (!currentChannel) return;
@@ -1483,6 +1476,7 @@ export function ChatView() {
                           onOpenThread={openThread}
                           onRemindMe={() => setReminderForPostId(p.id)}
                           editRequestSeq={editRequest.postId === p.id ? editRequest.seq : 0}
+                          permalinkFor={permalinkFor}
                         />
                       );
                     })}
@@ -1589,6 +1583,28 @@ export function ChatView() {
                 token={token ?? ""}
                 entries={channelFileEntries}
                 onJumpToPost={jumpToChannelPost}
+              />
+            ),
+            pinned: (
+              <ChannelPinnedView
+                token={token ?? ""}
+                posts={channelPinned.posts}
+                users={users}
+                loading={channelPinned.loading}
+                error={channelPinned.error}
+                onJumpToPost={jumpToChannelPost}
+              />
+            ),
+            members: (
+              <ChannelMembersView
+                token={token ?? ""}
+                members={channelMembers.members}
+                users={users}
+                statuses={statuses}
+                currentUserId={user?.id ?? ""}
+                loading={channelMembers.loading}
+                error={channelMembers.error}
+                onOpenDirect={(userId) => void onStartDirect(userId)}
               />
             ),
             info: (
