@@ -97,12 +97,18 @@ Product site: <https://hkjang.github.io/moyro/>
   autocompletes `:emoji`, accepts dropped and pasted files, and messages offer
   copy-link (a permalink that survives a fresh tab), copy-text, and a copy
   button on code blocks
-- KakaoTalk-style emoticons: 42 built-in stickers in four packs (감정 · 반응 ·
-  업무 · 인사) drawn as SVG so they ship offline, plus any administrator
-  custom emoji sent large. An emoticon post is an ordinary message whose text
+- KakaoTalk-style emoticons: 102 built-in stickers across nine packs — four
+  by theme (감정 · 반응 · 업무 · 인사) and five by character, each with its own
+  voice (도도한 냥이 "~냥", 신나는 멍이 "~멍", 느긋한 곰돌이, 발랄한 토끼, 엉뚱한
+  오리 "꽥") — drawn as cartoon line art (posed chibi bodies, big highlighted
+  eyes, comic effects, a speech-bubble caption) so they ship offline, plus
+  any administrator custom emoji sent large. An emoticon post is an ordinary message whose text
   is the caption and whose `props.sticker` names the image, so other
   Mattermost clients show the caption. Each user can switch emoticons off in
   개인 설정 › 화면; then the picker hides and received emoticons show as text
+- While typing, the composer offers emoticons whose keywords match the words
+  at the caret ("고마워" → 고마워요, "퇴근" → 퇴근!, "ㅋㅋ" → ㅋㅋㅋ); one tap sends
+  the emoticon, and a text that was only the keyword is cleared with it
 - A Content-Security-Policy on the web UI that allows scripts only from the
   bundle and the plugin runtime's object URLs and connections only to this
   origin, a per-statement PostgreSQL latency histogram, and a rate-limited

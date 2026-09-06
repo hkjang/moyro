@@ -45,7 +45,18 @@
   display: flex;
   gap: 2px;
   padding: 6px 6px 0;
+  overflow-x: auto;
   border-bottom: 1px solid var(--flow-border, #dfe3ea);
+  scrollbar-width: none;
+}
+
+.sticker-picker-tabs::-webkit-scrollbar {
+  display: none;
+}
+
+.sticker-picker-tab {
+  flex: 0 0 auto;
+  white-space: nowrap;
 }
 
 .sticker-picker-tab {
@@ -121,5 +132,77 @@
 @media (prefers-reduced-motion: reduce) {
   .sticker-float {
     animation: none;
+  }
+}
+
+/* ── Suggestions while typing ─────────────────────────────────────────── */
+.sticker-suggestions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 4px 6px;
+  border: 1px solid var(--flow-border, #dfe3ea);
+  border-radius: var(--flow-radius-input, 8px);
+  background: var(--flow-surface-subtle, #f6f7f9);
+}
+
+.sticker-suggestions-label {
+  flex: 0 0 auto;
+  color: var(--flow-text-muted, #667085);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.sticker-suggestions-list {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  gap: 4px;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.sticker-suggestions-list::-webkit-scrollbar {
+  display: none;
+}
+
+.sticker-suggestion {
+  display: flex;
+  flex: 0 0 auto;
+  flex-direction: column;
+  align-items: center;
+  gap: 0;
+  min-width: 60px;
+  padding: 2px 4px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  cursor: pointer;
+}
+
+.sticker-suggestion:hover,
+.sticker-suggestion:focus-visible {
+  border-color: var(--flow-border, #dfe3ea);
+  background: var(--flow-surface, #fff);
+}
+
+.sticker-suggestion-caption {
+  max-width: 64px;
+  overflow: hidden;
+  color: var(--flow-text, #182033);
+  font-size: 11px;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sticker-suggestions-close {
+  flex: 0 0 auto;
+}
+
+@media (max-width: 640px) {
+  .sticker-suggestions-label {
+    display: none;
   }
 }

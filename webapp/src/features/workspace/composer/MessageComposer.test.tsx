@@ -239,3 +239,68 @@ describe("MessageComposer keyboard submission", () => {
     expect(onSend).not.toHaveBeenCalled();
   });
 });
+
+describe("MessageComposer emoticon suggestions", () => {
+  let container: HTMLDivElement;
+  let root: Root;
+
+  const baseProps: Omit<ComponentProps<typeof MessageComposer>, "onSend"> = {
+    token: "user-token",
+    channelID: "channel-id",
+    destinationLabel: "#general에 전송",
+    canUseAI: false,
+    aiPermissionLoaded: true,
+    aiStatusLabel: "AI 사용 불가",
+    onTyping: vi.fn(),
+    onUpload: vi.fn(async () => []),
+  };
+
+  beforeEach(async () => {
+    Object.defineProperty(globalThis, "localStorage", { configurable: true, value: memoryStorage() });
+    Object.defineProperty(globalThis, "sessionStorage", { configurable: true, value: memoryStorage() });
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+  });
+
+  afterEach(async () => {
+    await act(async () => root.unmount());
+    container.remove();
+  });
+
+  it("offers a matching emoticon while typing and sends it on tap, clearing a keyword-only text", async () => {
+    const onSendSticker = vi.fn(async () => true);
+    await act(async () => root.render(<MessageComposer {...baseProps} onSend={mockOnSend()} onSendSticker={onSendSticker} />));
+    const input = messageInput(container);
+    expect(container.querySelector(".sticker-suggestions")).toBeNull();
+
+    await changeValue(input, "고마워");
+    const suggestion = container.querySelector<HTMLButtonElement>('.sticker-suggestion[aria-label="고마워요 이모티콘 보내기"]');
+    expect(suggestion).not.toBeNull();
+
+    await act(async () => { suggestion?.click(); await Promise.resolve(); });
+    expect(onSendSticker).toHaveBeenCalledWith("moyo:reaction-7", "고마워요");
+    expect(messageInput(container).value).toBe("");
+  });
+
+  it("keeps longer text after sending and hides the strip until the text changes", async () => {
+    const onSendSticker = vi.fn(async () => true);
+    await act(async () => root.render(<MessageComposer {...baseProps} onSend={mockOnSend()} onSendSticker={onSendSticker} />));
+    const input = messageInput(container);
+    await changeValue(input, "자료 정리해줘서 고마워");
+    const suggestion = container.querySelector<HTMLButtonElement>('.sticker-suggestion[aria-label="고마워요 이모티콘 보내기"]');
+    await act(async () => { suggestion?.click(); await Promise.resolve(); });
+    expect(onSendSticker).toHaveBeenCalledOnce();
+    expect(messageInput(container).value).toBe("자료 정리해줘서 고마워");
+    expect(container.querySelector(".sticker-suggestions")).toBeNull();
+
+    await changeValue(input, "자료 정리해줘서 고마워 퇴근");
+    expect(container.querySelector('.sticker-suggestion[aria-label="퇴근! 이모티콘 보내기"]')).not.toBeNull();
+  });
+
+  it("shows nothing when emoticons are disabled for the reader", async () => {
+    await act(async () => root.render(<MessageComposer {...baseProps} onSend={mockOnSend()} />));
+    await changeValue(messageInput(container), "고마워");
+    expect(container.querySelector(".sticker-suggestions")).toBeNull();
+  });
+});

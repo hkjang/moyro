@@ -61,6 +61,9 @@ not write `html[data-theme]` directly.
   reader scrolls up, rather than moving the view under them.
 - Every timestamp comes from `webapp/src/lib/time.ts`; no surface formats time
   on its own.
+- Emoticon suggestions follow the caret: they match keywords in the tail of
+  the text, never steal focus from the textarea, and a dismissed strip stays
+  hidden until the text changes.
 - Emoticons are large stand-alone images sent with one tap; they never
   replace text a reader has disabled them for, which is why every emoticon
   post also carries its caption as the message body.

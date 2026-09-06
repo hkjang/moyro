@@ -121,7 +121,8 @@ Important modules:
   confirmations and failures; `useToast()` is a no-op outside the provider so
   components stay renderable in isolation.
 - `features/workspace/stickers/` holds the built-in emoticon packs as render
-  specs, the SVG character renderer, and the one-tap picker. A sent emoticon
+  specs (six characters, each with its own body and voice), the SVG renderer,
+  the one-tap picker, and the keyword matcher behind the typing suggestions. A sent emoticon
   is a post whose message is the caption and whose `props.sticker` is the
   id; `model/useEmoticonPreference.ts` stores the per-user switch as a
   `display_settings/emoticons` preference.

@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import AttachFileRounded from "@mui/icons-material/AttachFileRounded";
 import CloseRounded from "@mui/icons-material/CloseRounded";
 import ScheduleRounded from "@mui/icons-material/ScheduleRounded";
@@ -9,6 +9,8 @@ import { moyroMeApi } from "@/api/client";
 import { useMentionAutocomplete } from "@/components/MentionPicker";
 import { useEmojiAutocomplete } from "@/components/EmojiAutocomplete";
 import { StickerPicker } from "@/features/workspace/stickers/StickerPicker";
+import { StickerSuggestions } from "@/features/workspace/stickers/StickerSuggestions";
+import { BUILTIN_PREFIX, suggestStickers, textIsOnlyKeyword, type StickerSpec } from "@/features/workspace/stickers/stickers";
 import EmojiEmotionsOutlined from "@mui/icons-material/EmojiEmotionsOutlined";
 import { clearMoyroDraft, useDraft } from "@/features/workspace/composer/useDraft";
 import "@/features/workspace/composer/message-composer.css";
@@ -86,10 +88,34 @@ export function MessageComposer({
   const emojis = useEmojiAutocomplete({ token, value, setValue, textareaRef });
   const [dragging, setDragging] = useState(false);
   const [stickerOpen, setStickerOpen] = useState(false);
+  // Emoticons matching what is being typed. Dismissing hides the strip until
+  // the text changes again, so "닫기" never has to be pressed twice for the
+  // same words.
+  const stickerSuggestions = useMemo(() => (onSendSticker ? suggestStickers(value) : []), [onSendSticker, value]);
+  const [dismissedSuggestionsFor, setDismissedSuggestionsFor] = useState<string | null>(null);
+  const suggestionsVisible = stickerSuggestions.length > 0 && dismissedSuggestionsFor !== value;
+
+  async function sendSuggestedSticker(spec: StickerSpec) {
+    if (!onSendSticker) return;
+    const onlyKeyword = textIsOnlyKeyword(value, spec);
+    const sent = await onSendSticker(`${BUILTIN_PREFIX}${spec.id}`, spec.caption);
+    if (!sent) return;
+    if (onlyKeyword) {
+      // The emoticon said it all; clear the word that summoned it.
+      clearRewrite();
+      setValue("");
+      draft.clearSaved();
+    } else {
+      setDismissedSuggestionsFor(value);
+    }
+    window.requestAnimationFrame(() => textareaRef.current?.focus());
+  }
   // Three tool buttons leave a phone-width composer little room; a shorter
   // placeholder keeps it to one line. Read once per mount — orientation
   // changes are rare enough that the next mount can catch them.
-  const narrowViewport = typeof window !== "undefined" && window.matchMedia("(max-width: 640px)").matches;
+  const narrowViewport = typeof window !== "undefined"
+    && typeof window.matchMedia === "function"
+    && window.matchMedia("(max-width: 640px)").matches;
 
   const draftKey = userId && channelID
     ? `moyro:draft:${userId}:${channelID}:${rootId || "root"}`
@@ -384,6 +410,13 @@ export function MessageComposer({
           </div>
         )}
 
+        {suggestionsVisible && (
+          <StickerSuggestions
+            suggestions={stickerSuggestions}
+            onPick={(spec) => void sendSuggestedSticker(spec)}
+            onDismiss={() => setDismissedSuggestionsFor(value)}
+          />
+        )}
         <div className="composer-input-row">
           <button
             type="button"
