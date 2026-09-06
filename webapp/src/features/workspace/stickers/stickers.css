@@ -1,0 +1,125 @@
+/* Emoticons: large stand-alone images in the timeline, and the picker that
+ * sends them. Colours come from the shared tokens; the characters themselves
+ * carry their own palette so they read the same in both themes. */
+
+.sticker {
+  display: block;
+  max-width: 100%;
+}
+
+.sticker-custom {
+  object-fit: contain;
+}
+
+.msg-sticker {
+  margin: 2px 0;
+}
+
+.msg-sticker-caption {
+  color: var(--flow-text-muted, #667085);
+  font-size: 12px;
+}
+
+.sticker-float {
+  animation: sticker-float 2.4s ease-in-out infinite;
+}
+
+@keyframes sticker-float {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-2px); }
+}
+
+.sticker-picker {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 8px);
+  z-index: 20;
+  width: min(360px, calc(100vw - 24px));
+  border: 1px solid var(--flow-border, #dfe3ea);
+  border-radius: var(--flow-radius-popover, 12px);
+  background: var(--flow-surface, #fff);
+  box-shadow: 0 12px 32px rgba(16, 26, 59, 0.18);
+}
+
+.sticker-picker-tabs {
+  display: flex;
+  gap: 2px;
+  padding: 6px 6px 0;
+  border-bottom: 1px solid var(--flow-border, #dfe3ea);
+}
+
+.sticker-picker-tab {
+  min-height: 36px;
+  padding: 0 12px;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: var(--flow-text-muted, #667085);
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.sticker-picker-tab.is-active {
+  border-bottom-color: var(--flow-brand, #3157d5);
+  color: var(--flow-brand, #3157d5);
+}
+
+.sticker-picker-grid {
+  display: grid;
+  max-height: 280px;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 4px;
+  padding: 8px;
+  overflow-y: auto;
+}
+
+.sticker-picker-item {
+  display: grid;
+  place-items: center;
+  padding: 2px;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  background: transparent;
+  cursor: pointer;
+}
+
+.sticker-picker-item:hover,
+.sticker-picker-item:focus-visible {
+  border-color: var(--flow-border, #dfe3ea);
+  background: var(--flow-surface-subtle, #f6f7f9);
+}
+
+.sticker-picker-custom {
+  width: 64px;
+  height: 64px;
+  object-fit: contain;
+}
+
+.sticker-picker-hint {
+  padding: 6px 10px 8px;
+  color: var(--flow-text-muted, #667085);
+  font-size: 11px;
+  text-align: right;
+}
+
+.composer-input-row {
+  position: relative;
+}
+
+@media (max-width: 640px) {
+  .sticker-picker {
+    right: -8px;
+    width: calc(100vw - 16px);
+  }
+  .sticker-picker-grid {
+    grid-template-columns: repeat(4, 1fr);
+    max-height: 240px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sticker-float {
+    animation: none;
+  }
+}

@@ -14,6 +14,8 @@ export type ThreadPanel = {
   reset: () => void;
   /** Posts a reply into the open thread; false when it could not be sent. */
   reply: (message: string, fileIds: string[]) => Promise<boolean>;
+  /** Posts an emoticon reply into the open thread. */
+  replySticker: (stickerId: string, caption: string) => Promise<boolean>;
 };
 
 export type ThreadPanelOptions = {
@@ -117,5 +119,22 @@ export function useThreadPanel({
     }
   }, [token, currentChannelId, currentChannelIdRef, rootId, posts, onError]);
 
-  return { rootId, posts, loading, rootIdRef, setPosts, open, reset, reply };
+  const replySticker = useCallback(async (stickerId: string, caption: string): Promise<boolean> => {
+    if (!token || !currentChannelId || !rootId) return false;
+    const rootPost = posts.find((post) => post.id === rootId);
+    const channelID = rootPost?.channel_id;
+    if (!channelID || channelID !== currentChannelId) return false;
+    try {
+      const p = await api.createPost(token, channelID, caption, rootId, [], { sticker: stickerId });
+      if (currentChannelIdRef.current === channelID && rootIdRef.current === rootId) {
+        setPosts((prev) => (prev.some((x) => x.id === p.id) ? prev : [...prev, p]));
+      }
+      return true;
+    } catch (e) {
+      onError(e instanceof Error ? e.message : "이모티콘 전송 실패");
+      return false;
+    }
+  }, [token, currentChannelId, currentChannelIdRef, rootId, posts, onError]);
+
+  return { rootId, posts, loading, rootIdRef, setPosts, open, reset, reply, replySticker };
 }

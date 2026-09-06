@@ -38,6 +38,8 @@ type ThreadPanelProps = {
   // scheduled because the server already supports root_id on
   // scheduled_posts; we just had to pipe it through.
   onSchedule?: (message: string, fileIds: string[]) => void;
+  onSendSticker?: (stickerId: string, caption: string) => Promise<boolean>;
+  emoticonsEnabled?: boolean;
   composerResetSeq?: number;
   destinationLabel: string;
   canUseAI: boolean;
@@ -50,6 +52,7 @@ export function ThreadPanel(props: ThreadPanelProps) {
   const {
     rootId, posts, loading, users, statuses, reactionsByPost, filesByID,
     currentUserId, token, onToggleReaction, onEdit, onDelete, onReply, onUpload,
+    onSendSticker, emoticonsEnabled = true,
     onSchedule, composerResetSeq, destinationLabel, canUseAI, aiPermissionLoaded,
     aiStatusLabel, aiPreferences,
   } = props;
@@ -68,6 +71,7 @@ export function ThreadPanel(props: ThreadPanelProps) {
           <>
             <MessageItem
               post={root}
+              emoticonsEnabled={emoticonsEnabled}
               isMe={root.user_id === currentUserId}
               author={users[root.user_id]}
               status={statuses[root.user_id]}
@@ -85,6 +89,7 @@ export function ThreadPanel(props: ThreadPanelProps) {
               <MessageItem
                 key={p.id}
                 post={p}
+                emoticonsEnabled={emoticonsEnabled}
                 isMe={p.user_id === currentUserId}
                 author={users[p.user_id]}
                 status={statuses[p.user_id]}
@@ -113,6 +118,7 @@ export function ThreadPanel(props: ThreadPanelProps) {
         aiStatusLabel={aiStatusLabel}
         aiPreferences={aiPreferences}
         onSend={onReply}
+        onSendSticker={onSendSticker}
         onTyping={() => { /* typing in threads is best-effort; skip for now */ }}
         onUpload={onUpload}
         userId={currentUserId}

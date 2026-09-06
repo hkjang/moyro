@@ -39,6 +39,7 @@ import {
 import { ChannelMembersView, ChannelPinnedView } from "@/features/workspace/context/ChannelPeopleViews";
 import { useChannelContextData } from "@/features/workspace/model/useChannelContextData";
 import { useWorkspaceShortcuts } from "@/features/workspace/model/useWorkspaceShortcuts";
+import { useEmoticonPreference } from "@/features/workspace/model/useEmoticonPreference";
 import { ChannelHeader } from "@/features/workspace/header/ChannelHeader";
 import { MessageComposer } from "@/features/workspace/composer/MessageComposer";
 import { clearMoyroDraftsForUser } from "@/features/workspace/composer/useDraft";
@@ -912,6 +913,7 @@ export function ChatView() {
     hydrateUsers: (ids) => { void hydrateUsers(ids); },
   });
   const { members: channelMembers, pinned: channelPinned, permalinkFor } = contextData;
+  const emoticons = useEmoticonPreference(token, user?.id);
 
   function openChannelContext(tab: Exclude<WorkspaceContextTab, "thread">) {
     if (!currentChannel) return;
@@ -1477,6 +1479,7 @@ export function ChatView() {
                           onRemindMe={() => setReminderForPostId(p.id)}
                           editRequestSeq={editRequest.postId === p.id ? editRequest.seq : 0}
                           permalinkFor={permalinkFor}
+                          emoticonsEnabled={emoticons.enabled}
                         />
                       );
                     })}
@@ -1510,6 +1513,7 @@ export function ChatView() {
                   aiStatusLabel={aiStatusLabel}
                   aiPreferences={aiPreferences}
                   onSend={postActions.send}
+                  onSendSticker={emoticons.enabled ? postActions.sendSticker : undefined}
                   onEditLast={onEditLastMessage}
                   onTyping={sendTyping}
                   onUpload={onUploadFiles}
@@ -1554,6 +1558,8 @@ export function ChatView() {
                 onReply={onReplyInThread}
                 onUpload={onUploadFiles}
                 onSchedule={onOpenScheduleModalFromThread(thread.rootId)}
+                onSendSticker={emoticons.enabled ? thread.replySticker : undefined}
+                emoticonsEnabled={emoticons.enabled}
                 composerResetSeq={threadComposerResetSeq}
                 destinationLabel={`#${currentChannel.display_name} · 스레드에 답글`}
                 canUseAI={canUseAI}

@@ -335,3 +335,59 @@ describe("MessageItem thread summary and copy actions", () => {
     expect(labels).toContain("텍스트 복사");
   });
 });
+
+describe("MessageItem emoticons", () => {
+  let container: HTMLDivElement;
+  let root: Root;
+
+  beforeEach(() => {
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+  });
+
+  afterEach(async () => {
+    await act(async () => root.unmount());
+    container.remove();
+  });
+
+  const stickerPost = { ...post, root_id: "", message: "파이팅!", props: { sticker: "moyo:reaction-10" } };
+
+  it("draws a built-in emoticon in place of the caption when enabled", async () => {
+    await act(async () => root.render(
+      <MessageItem
+        post={stickerPost as never}
+        isMe={false}
+        reactions={[]}
+        currentUserId="user-2"
+        files={[]}
+        token="t"
+        onToggleReaction={vi.fn()}
+        onEdit={vi.fn(async () => true)}
+        onDelete={vi.fn()}
+      />,
+    ));
+    const sticker = container.querySelector('svg.sticker[role="img"]');
+    expect(sticker?.getAttribute("aria-label")).toContain("이모티콘");
+    expect(container.querySelector(".msg-body")).toBeNull();
+  });
+
+  it("falls back to the caption text when the reader disabled emoticons", async () => {
+    await act(async () => root.render(
+      <MessageItem
+        post={stickerPost as never}
+        isMe={false}
+        reactions={[]}
+        currentUserId="user-2"
+        files={[]}
+        token="t"
+        onToggleReaction={vi.fn()}
+        onEdit={vi.fn(async () => true)}
+        onDelete={vi.fn()}
+        emoticonsEnabled={false}
+      />,
+    ));
+    expect(container.querySelector("svg.sticker")).toBeNull();
+    expect(container.querySelector(".msg-body")?.textContent).toContain("파이팅!");
+  });
+});

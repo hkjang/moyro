@@ -28,6 +28,7 @@ import { AuthenticatedImage, isExternalImageURL } from "@/components/Authenticat
 import { SettingsCard, SettingsPage } from "@/components/settings/SettingsPrimitives";
 import { useSystemInfo } from "@/features/system/SystemInfoContext";
 import { useThemePreference } from "@/features/theme/ThemePreferenceProvider";
+import { useEmoticonPreference } from "@/features/workspace/model/useEmoticonPreference";
 import type { RootState } from "@/store";
 import { setAuth } from "@/store/authSlice";
 
@@ -108,6 +109,19 @@ export function PersonalProfilePage() {
 export function AppearanceSettingsPage() {
   const { theme, setTheme } = useThemePreference();
   const [saved, setSaved] = useState("");
+  const token = useSelector((state: RootState) => state.auth.token);
+  const user = useSelector((state: RootState) => state.auth.user);
+  const emoticons = useEmoticonPreference(token, user?.id);
+  const [emoticonSaved, setEmoticonSaved] = useState("");
+
+  async function toggleEmoticons(next: boolean) {
+    try {
+      await emoticons.setEnabled(next);
+      setEmoticonSaved(next ? "이모티콘을 사용합니다. 받은 이모티콘은 그림으로 보입니다." : "이모티콘을 껐습니다. 받은 이모티콘은 글자로만 보입니다.");
+    } catch (err) {
+      setEmoticonSaved(err instanceof Error ? err.message : "설정을 저장하지 못했습니다.");
+    }
+  }
 
   async function apply(next: "light" | "dark" | "system") {
     try {
@@ -127,6 +141,22 @@ export function AppearanceSettingsPage() {
           <FormControlLabel value="dark" control={<Radio />} label="어둡게" />
         </RadioGroup>
         {saved && <Typography variant="body2" color="text.secondary" sx={{ mt: 2 }} role="status">{saved}</Typography>}
+      </SettingsCard>
+      <SettingsCard title="이모티콘">
+        <FormControlLabel
+          control={(
+            <Switch
+              checked={emoticons.enabled}
+              disabled={!emoticons.loaded}
+              onChange={(event) => void toggleEmoticons(event.target.checked)}
+            />
+          )}
+          label="이모티콘 사용"
+        />
+        <Typography variant="body2" color="text.secondary">
+          켜면 메시지 입력창에 이모티콘 버튼이 나타나고, 받은 이모티콘이 그림으로 보입니다. 끄면 이모티콘은 글자(캡션)로만 표시됩니다.
+        </Typography>
+        {emoticonSaved && <Typography variant="body2" color="text.secondary" sx={{ mt: 2 }} role="status">{emoticonSaved}</Typography>}
       </SettingsCard>
       <Alert severity="info">본문은 16px, 메뉴는 14px, 보조 정보는 최소 13px을 기준으로 표시합니다.</Alert>
     </SettingsPage>

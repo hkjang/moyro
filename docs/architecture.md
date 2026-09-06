@@ -120,6 +120,11 @@ Important modules:
 - `components/feedback/ToastProvider.tsx` is the one feedback surface for
   confirmations and failures; `useToast()` is a no-op outside the provider so
   components stay renderable in isolation.
+- `features/workspace/stickers/` holds the built-in emoticon packs as render
+  specs, the SVG character renderer, and the one-tap picker. A sent emoticon
+  is a post whose message is the caption and whose `props.sticker` is the
+  id; `model/useEmoticonPreference.ts` stores the per-user switch as a
+  `display_settings/emoticons` preference.
 - `features/workspace/context/ChannelPeopleViews.tsx` renders the member and
   pinned tabs; `model/useChannelPanels.ts` loads them only while open.
   `components/EmojiAutocomplete.tsx` mirrors the mention picker for `:name`.

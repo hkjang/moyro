@@ -18,6 +18,8 @@ export type PostActions = {
   dismissCommandNotice: () => void;
   /** Returns false when the message was rejected and the composer should keep it. */
   send: (message: string, fileIds: string[]) => Promise<boolean>;
+  /** Sends an emoticon: the caption is the message text, the id rides in props. */
+  sendSticker: (stickerId: string, caption: string) => Promise<boolean>;
   edit: (postId: string, message: string) => Promise<boolean>;
   remove: (postId: string) => Promise<void>;
   toggleSaved: (post: Post) => Promise<void>;
@@ -108,6 +110,24 @@ export function usePostActions({
     [token, teamId, channelId, currentChannelIdRef, setPosts, onError],
   );
 
+  const sendSticker = useCallback(
+    async (stickerId: string, caption: string): Promise<boolean> => {
+      if (!token || !channelId) return false;
+      const targetChannelId = channelId;
+      try {
+        const post = await api.createPost(token, targetChannelId, caption, "", [], { sticker: stickerId });
+        if (currentChannelIdRef.current === targetChannelId) {
+          setPosts((prev) => appendLivePost(prev, post));
+        }
+        return true;
+      } catch (e) {
+        onError(e instanceof Error ? e.message : "이모티콘 전송 실패");
+        return false;
+      }
+    },
+    [token, channelId, currentChannelIdRef, setPosts, onError],
+  );
+
   const edit = useCallback(
     async (postId: string, message: string): Promise<boolean> => {
       if (!token) return false;
@@ -170,5 +190,5 @@ export function usePostActions({
 
   const dismissCommandNotice = useCallback(() => setCommandNotice(null), []);
 
-  return { commandNotice, dismissCommandNotice, send, edit, remove, toggleSaved };
+  return { commandNotice, dismissCommandNotice, send, sendSticker, edit, remove, toggleSaved };
 }

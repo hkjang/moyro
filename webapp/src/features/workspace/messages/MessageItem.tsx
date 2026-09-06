@@ -29,6 +29,8 @@ import { WorkspaceAvatar } from "@/features/workspace/sidebar/WorkspaceAvatar";
 import { PluginSurface } from "@/plugins/PluginSurface";
 import { usePluginRegistryState } from "@/plugins/registry";
 import { formatClockTime, formatDateTime, formatRelativeTime } from "@/lib/time";
+import { Sticker } from "@/features/workspace/stickers/Sticker";
+import { stickerFromProps } from "@/features/workspace/stickers/stickers";
 import { useToast } from "@/components/feedback/ToastProvider";
 import "@/features/workspace/messages/message-item.css";
 
@@ -99,6 +101,8 @@ export type MessageItemProps = {
   editRequestSeq?: number;
   /** Builds a shareable URL for this post; enables "링크 복사" when provided. */
   permalinkFor?: (post: Post) => string;
+  /** False renders emoticon posts as their caption text instead of an image. */
+  emoticonsEnabled?: boolean;
 };
 
 export function MessageItem(props: MessageItemProps) {
@@ -129,7 +133,9 @@ export function MessageItem(props: MessageItemProps) {
     continuation = false,
     editRequestSeq = 0,
     permalinkFor,
+    emoticonsEnabled = true,
   } = props;
+  const stickerId = emoticonsEnabled ? stickerFromProps(post.props) : undefined;
   const toast = useToast();
   const [editing, setEditing] = useState(false);
   const [editSaving, setEditSaving] = useState(false);
@@ -294,6 +300,10 @@ export function MessageItem(props: MessageItemProps) {
               componentProps={{ post }}
               label={`${pluginPostType.pluginId} post`}
             />
+          ) : stickerId ? (
+            <div className="msg-sticker">
+              <Sticker id={stickerId} token={token} size={compact ? 96 : 140} />
+            </div>
           ) : post.message && (
             <MessageBody source={post.message} token={token} linkMetadata={post.link_metadata} />
           )}

@@ -661,10 +661,11 @@ export const api = {
     message: string,
     rootId = "",
     fileIds: string[] = [],
+    props?: Record<string, unknown>,
   ) =>
     request<Post>(token, `/posts`, {
       method: "POST",
-      body: { channel_id: channelId, message, root_id: rootId, file_ids: fileIds },
+      body: { channel_id: channelId, message, root_id: rootId, file_ids: fileIds, ...(props ? { props } : {}) },
     }),
   updatePost: (token: string, postId: string, message: string, props?: Record<string, unknown>) =>
     request<Post>(token, `/posts/${postId}`, {

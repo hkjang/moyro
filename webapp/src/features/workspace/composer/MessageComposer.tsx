@@ -8,6 +8,8 @@ import type { FileInfo, PersonalAIPreferences } from "@/api/client";
 import { moyroMeApi } from "@/api/client";
 import { useMentionAutocomplete } from "@/components/MentionPicker";
 import { useEmojiAutocomplete } from "@/components/EmojiAutocomplete";
+import { StickerPicker } from "@/features/workspace/stickers/StickerPicker";
+import EmojiEmotionsOutlined from "@mui/icons-material/EmojiEmotionsOutlined";
 import { clearMoyroDraft, useDraft } from "@/features/workspace/composer/useDraft";
 import "@/features/workspace/composer/message-composer.css";
 
@@ -33,6 +35,8 @@ export type MessageComposerProps = {
   onSchedule?: (message: string, fileIds: string[]) => void;
   /** ↑ on an empty composer; return true when a message was opened for editing. */
   onEditLast?: () => boolean;
+  /** Sends an emoticon immediately; the picker button appears only when set. */
+  onSendSticker?: (stickerId: string, caption: string) => Promise<boolean>;
   userId?: string;
   rootId?: string | null;
   resetSeq?: number;
@@ -54,6 +58,7 @@ export function MessageComposer({
   rootId,
   resetSeq,
   onEditLast,
+  onSendSticker,
 }: MessageComposerProps) {
   const [value, setValue] = useState("");
   const [pending, setPending] = useState<FileInfo[]>([]);
@@ -80,6 +85,11 @@ export function MessageComposer({
   });
   const emojis = useEmojiAutocomplete({ token, value, setValue, textareaRef });
   const [dragging, setDragging] = useState(false);
+  const [stickerOpen, setStickerOpen] = useState(false);
+  // Three tool buttons leave a phone-width composer little room; a shorter
+  // placeholder keeps it to one line. Read once per mount — orientation
+  // changes are rare enough that the next mount can catch them.
+  const narrowViewport = typeof window !== "undefined" && window.matchMedia("(max-width: 640px)").matches;
 
   const draftKey = userId && channelID
     ? `moyro:draft:${userId}:${channelID}:${rootId || "root"}`
@@ -385,6 +395,30 @@ export function MessageComposer({
           >
             <AttachFileRounded fontSize="inherit" aria-hidden />
           </button>
+          {onSendSticker && (
+            <button
+              type="button"
+              className={`btn-ghost composer-tool-button ${stickerOpen ? "is-active" : ""}`}
+              disabled={uploading || sending}
+              onClick={() => setStickerOpen((open) => !open)}
+              title="이모티콘"
+              aria-label="이모티콘 보내기"
+              aria-expanded={stickerOpen}
+              aria-haspopup="dialog"
+            >
+              <EmojiEmotionsOutlined fontSize="inherit" aria-hidden />
+            </button>
+          )}
+          {onSendSticker && stickerOpen && (
+            <StickerPicker
+              token={token}
+              onClose={() => setStickerOpen(false)}
+              onPick={(id, caption) => {
+                setStickerOpen(false);
+                void onSendSticker(id, caption);
+              }}
+            />
+          )}
           {onSchedule && (
             <button
               type="button"
@@ -411,7 +445,7 @@ export function MessageComposer({
               rows={1}
               aria-label="메시지 입력"
               title="Shift+Enter로 줄바꿈"
-              placeholder={uploading ? "업로드 중…" : "메시지를 입력하세요…"}
+              placeholder={uploading ? "업로드 중…" : narrowViewport ? "메시지 입력…" : "메시지를 입력하세요…"}
               value={value}
               onChange={(event) => {
                 if (rewriteMode || rewriteError) clearRewrite();
