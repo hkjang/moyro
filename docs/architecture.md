@@ -122,7 +122,11 @@ Important modules:
   components stay renderable in isolation.
 - `features/workspace/stickers/` holds the built-in emoticon packs as render
   specs (six characters, each with its own body and voice), the SVG renderer,
-  the one-tap picker, and the keyword matcher behind the typing suggestions. A sent emoticon
+  the one-tap picker, and the keyword matcher behind the typing suggestions.
+  The drawing rules — chibi proportions, ink line weights, cel shading, the
+  expression and pose systems, and the render-and-look verification loop —
+  live in the project skill `.claude/skills/emoticon-art/SKILL.md`, so a
+  restyle or a new character follows the same method. A sent emoticon
   is a post whose message is the caption and whose `props.sticker` is the
   id; `model/useEmoticonPreference.ts` stores the per-user switch as a
   `display_settings/emoticons` preference.

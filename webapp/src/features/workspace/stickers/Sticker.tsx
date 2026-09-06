@@ -14,8 +14,8 @@ import "./stickers.css";
 //
 // Canvas is 128×128. The head centre is (64, 50); the body hangs below it.
 
-const INK = "#24304A";
-const STROKE = 3.2;
+const INK = "#22304B";
+const STROKE = 3.6;
 
 const CHARACTER_COLOR: Record<NonNullable<StickerSpec["character"]>, string> = {
   moyo: "#4F6FE6",
@@ -73,19 +73,46 @@ function Legs({ color, pose }: { color: string; pose: StickerPose }) {
   const lift = pose === "run" ? 6 : 0;
   return (
     <g>
-      <ellipse cx={54 - spread} cy={112 - lift} rx="8" ry="5" fill={color} {...outlined} strokeWidth={2.6} />
-      <ellipse cx={74 + spread} cy={112} rx="8" ry="5" fill={color} {...outlined} strokeWidth={2.6} />
+      <ellipse cx={54 - spread} cy={112 - lift} rx="8.5" ry="5.5" fill={color} {...outlined} strokeWidth={2.6} />
+      <ellipse cx={74 + spread} cy={112} rx="8.5" ry="5.5" fill={color} {...outlined} strokeWidth={2.6} />
+      <path d={`M${46 - spread} ${114 - lift} q8 4 16 0`} fill="none" stroke={darken(color, 0.3)} strokeWidth="2.4" strokeLinecap="round" />
+      <path d={`M${66 + spread} 114 q8 4 16 0`} fill="none" stroke={darken(color, 0.3)} strokeWidth="2.4" strokeLinecap="round" />
     </g>
   );
 }
 
-function Body({ ctx, pose }: { ctx: Ctx; pose: StickerPose }) {
+function Tail({ ctx, mood }: { ctx: Ctx; mood: "up" | "down" }) {
+  if (ctx.character === "cat") {
+    return mood === "down"
+      ? <path d="M84 104 q18 6 22 -6" fill="none" stroke={ctx.color} strokeWidth="6" strokeLinecap="round" style={{ filter: `drop-shadow(0 0 0 ${INK})` }} />
+      : <path d="M84 100 q22 -4 14 -24 q-4 -8 -10 -2" fill="none" stroke={INK} strokeWidth="9.5" strokeLinecap="round" />;
+  }
+  if (ctx.character === "dog") {
+    return <path d="M84 98 q14 -2 16 -14" fill="none" stroke={INK} strokeWidth="9" strokeLinecap="round" />;
+  }
+  return null;
+}
+
+function TailFill({ ctx, mood }: { ctx: Ctx; mood: "up" | "down" }) {
+  if (ctx.character === "cat") {
+    return mood === "down"
+      ? <path d="M84 104 q18 6 22 -6" fill="none" stroke={ctx.color} strokeWidth="5.5" strokeLinecap="round" />
+      : <path d="M84 100 q22 -4 14 -24 q-4 -8 -10 -2" fill="none" stroke={ctx.color} strokeWidth="5.5" strokeLinecap="round" />;
+  }
+  if (ctx.character === "dog") {
+    return <path d="M84 98 q14 -2 16 -14" fill="none" stroke={ctx.color} strokeWidth="5" strokeLinecap="round" />;
+  }
+  return null;
+}
+
+function Body({ ctx, pose, fill }: { ctx: Ctx; pose: StickerPose; fill: string }) {
   const lean = pose === "run" ? -8 : pose === "slump" ? 3 : 0;
+  const bellyColor = ctx.character === "bear" ? "#EBCFB0" : ctx.character === "dog" ? "#F5E6D6" : ctx.character === "cat" ? "#FFF1CC" : ctx.character === "rabbit" ? "#FFFFFF" : null;
   return (
     <g transform={`rotate(${lean} 64 90)`}>
-      <path d="M46 78 q0 -8 18 -8 q18 0 18 8 v20 q0 12 -18 12 q-18 0 -18 -12 z" fill={ctx.color} {...outlined} />
-      <path d="M50 96 q14 10 28 0 v4 q-14 10 -28 0 z" fill={ctx.shade} opacity="0.55" />
-      {ctx.character === "bear" && <ellipse cx="64" cy="94" rx="9" ry="10" fill="#EBCFB0" opacity="0.9" />}
+      <path d="M46 78 q0 -8 18 -8 q18 0 18 8 v20 q0 12 -18 12 q-18 0 -18 -12 z" fill={fill} {...outlined} />
+      {bellyColor && <ellipse cx="64" cy="94" rx="9" ry="10" fill={bellyColor} opacity="0.9" />}
+      <path d="M47 84 q0 22 16 24 q-10 -6 -12 -24 z" fill={ctx.shade} opacity="0.5" />
       {ctx.character === "duck" && (
         <g>
           <path d="M46 86 q-10 4 -8 12 q6 2 10 -6 z" fill={ctx.color} {...outlined} strokeWidth={2.4} />
@@ -201,7 +228,7 @@ function Arms({ ctx, pose, prop }: { ctx: Ctx; pose: StickerPose; prop?: string 
 
 /* ── Head & features ──────────────────────────────────────────────────── */
 
-function HeadShape({ ctx }: { ctx: Ctx }) {
+function HeadShape({ ctx, fill, droop }: { ctx: Ctx; fill: string; droop: boolean }) {
   const { color, shade, character } = ctx;
   return (
     <g>
@@ -221,14 +248,19 @@ function HeadShape({ ctx }: { ctx: Ctx }) {
           <circle cx="92" cy="26" r="5.5" fill="#EBCFB0" />
         </g>
       )}
-      {character === "rabbit" && (
+      {character === "rabbit" && (droop ? (
+        <g>
+          <path d="M40 34 q-26 -4 -22 12 q10 4 22 -4 z" fill={color} {...outlined} />
+          <path d="M88 34 q26 -4 22 12 q-10 4 -22 -4 z" fill={color} {...outlined} />
+        </g>
+      ) : (
         <g>
           <path d="M44 32 q-8 -30 6 -30 q12 2 8 30 z" fill={color} {...outlined} />
           <path d="M84 32 q8 -30 -6 -30 q-12 2 -8 30 z" fill={color} {...outlined} />
           <path d="M47 28 q-4 -20 4 -20 q6 2 4 20 z" fill="#F8C3CF" />
           <path d="M81 28 q4 -20 -4 -20 q-6 2 -4 20 z" fill="#F8C3CF" />
         </g>
-      )}
+      ))}
       {character === "dog" && (
         <g>
           <path d="M34 40 q-14 22 0 40 q12 6 14 -8 z" fill={darken(color, 0.28)} {...outlined} />
@@ -238,9 +270,17 @@ function HeadShape({ ctx }: { ctx: Ctx }) {
       {character === "duck" && (
         <path d="M58 20 q6 -12 12 0 q-3 -4 -6 2 q-3 -6 -6 -2 z" fill={color} {...outlined} strokeWidth={2.4} />
       )}
-      <ellipse cx="64" cy="50" rx="32" ry="30" fill={color} {...outlined} />
-      <path d="M38 62 q26 26 52 0 q-2 12 -26 14 q-24 -2 -26 -14 z" fill={shade} opacity="0.45" />
-      <ellipse cx="50" cy="32" rx="9" ry="5" fill="#fff" opacity="0.35" transform="rotate(-20 50 32)" />
+      <ellipse cx="64" cy="50" rx="32" ry="30" fill={fill} {...outlined} />
+      {/* One cel shadow along the lower-left and one highlight upper-left. */}
+      <path d="M34 54 q4 24 30 26 q-14 -2 -22 -10 q-6 -6 -8 -16 z" fill={shade} opacity="0.5" />
+      <path d="M52 78 q12 3 24 0 q-2 4 -12 4 q-10 0 -12 -4 z" fill={shade} opacity="0.5" />
+      <ellipse cx="50" cy="31" rx="10" ry="5.5" fill="#fff" opacity="0.42" transform="rotate(-20 50 31)" />
+      {character === "cat" && (
+        <g fill={darken(color, 0.3)} opacity="0.75">
+          <path d="M56 22 l3 -8 l3 8 z" /><path d="M62 21 l2 -9 l2 9 z" /><path d="M68 22 l3 -8 l3 8 z" />
+        </g>
+      )}
+      {character === "duck" && <path d="M46 40 q10 -6 22 -2" fill="none" stroke="#fff" strokeWidth="3" strokeLinecap="round" opacity="0.5" />}
       {character === "cat" && (
         <g stroke={INK} strokeWidth="2" strokeLinecap="round" opacity="0.8">
           <path d="M26 56 h12" /><path d="M26 63 h12" /><path d="M90 56 h12" /><path d="M90 63 h12" />
@@ -263,9 +303,15 @@ function HeadShape({ ctx }: { ctx: Ctx }) {
   );
 }
 
-function Eyes({ kind, hide }: { kind: StickerSpec["eyes"]; hide: boolean }) {
+function Eyes({ kind, hide, iris }: { kind: StickerSpec["eyes"]; hide: boolean; iris: string }) {
   if (hide) return null;
-  const highlight = (cx: number, cy: number) => <circle cx={cx + 2} cy={cy - 2.5} r="2" fill="#fff" />;
+  const lash = (cx: number) => <path d={`M${cx - 8} 44 q8 -6 16 0`} fill="none" stroke={INK} strokeWidth="3" strokeLinecap="round" />;
+  const highlight = (cx: number, cy: number) => (
+    <g fill="#fff">
+      <circle cx={cx + 2.2} cy={cy - 2.8} r="2.2" />
+      <circle cx={cx - 2} cy={cy + 2} r="1" opacity="0.9" />
+    </g>
+  );
   switch (kind) {
     case "happy":
       return (
@@ -289,9 +335,10 @@ function Eyes({ kind, hide }: { kind: StickerSpec["eyes"]; hide: boolean }) {
     case "wide":
       return (
         <g>
-          <ellipse cx="51" cy="50" rx="9" ry="10" fill="#fff" {...outlined} strokeWidth={2.4} />
-          <ellipse cx="77" cy="50" rx="9" ry="10" fill="#fff" {...outlined} strokeWidth={2.4} />
-          <circle cx="51" cy="51" r="4" fill={INK} /><circle cx="77" cy="51" r="4" fill={INK} />
+          <ellipse cx="51" cy="50" rx="9.5" ry="10.5" fill="#fff" {...outlined} strokeWidth={2.4} />
+          <ellipse cx="77" cy="50" rx="9.5" ry="10.5" fill="#fff" {...outlined} strokeWidth={2.4} />
+          <circle cx="51" cy="51" r="4.5" fill={iris} /><circle cx="77" cy="51" r="4.5" fill={iris} />
+          <circle cx="51" cy="51.5" r="2.2" fill={INK} /><circle cx="77" cy="51.5" r="2.2" fill={INK} />
           {highlight(51, 50)}{highlight(77, 50)}
         </g>
       );
@@ -300,7 +347,8 @@ function Eyes({ kind, hide }: { kind: StickerSpec["eyes"]; hide: boolean }) {
         <g>
           <ellipse cx="51" cy="50" rx="7.5" ry="8.5" fill="#fff" {...outlined} strokeWidth={2.4} />
           <ellipse cx="77" cy="50" rx="7.5" ry="8.5" fill="#fff" {...outlined} strokeWidth={2.4} />
-          <circle cx="51" cy="52" r="4" fill={INK} /><circle cx="77" cy="52" r="4" fill={INK} />
+          <circle cx="51" cy="52" r="4.6" fill={iris} /><circle cx="77" cy="52" r="4.6" fill={iris} />
+          <circle cx="51" cy="52.5" r="2.4" fill={INK} /><circle cx="77" cy="52.5" r="2.4" fill={INK} />
           {highlight(51, 50)}{highlight(77, 50)}
           <path d="M46 60 q-5 12 2 14 q7 -2 2 -14 z" fill="#63B3F5" {...outlined} strokeWidth={1.6} />
           <path d="M82 60 q5 12 -2 14 q-7 -2 -2 -14 z" fill="#63B3F5" {...outlined} strokeWidth={1.6} />
@@ -309,8 +357,8 @@ function Eyes({ kind, hide }: { kind: StickerSpec["eyes"]; hide: boolean }) {
     case "wink":
       return (
         <g>
-          <ellipse cx="51" cy="50" rx="7" ry="8" fill="#fff" {...outlined} strokeWidth={2.4} />
-          <circle cx="51" cy="51" r="3.8" fill={INK} />{highlight(51, 50)}
+          <ellipse cx="51" cy="50" rx="7.5" ry="8.5" fill="#fff" {...outlined} strokeWidth={2.4} />
+          <circle cx="51" cy="51" r="5" fill={iris} /><circle cx="51" cy="51.5" r="2.6" fill={INK} />{highlight(51, 50)}{lash(51)}
           <path d="M70 50 q7 -9 14 0" fill="none" stroke={INK} strokeWidth="3.4" strokeLinecap="round" />
         </g>
       );
@@ -324,10 +372,12 @@ function Eyes({ kind, hide }: { kind: StickerSpec["eyes"]; hide: boolean }) {
     default:
       return (
         <g>
-          <ellipse cx="51" cy="50" rx="7" ry="8" fill="#fff" {...outlined} strokeWidth={2.4} />
-          <ellipse cx="77" cy="50" rx="7" ry="8" fill="#fff" {...outlined} strokeWidth={2.4} />
-          <circle cx="51" cy="51" r="3.8" fill={INK} /><circle cx="77" cy="51" r="3.8" fill={INK} />
+          <ellipse cx="51" cy="50" rx="7.5" ry="8.5" fill="#fff" {...outlined} strokeWidth={2.4} />
+          <ellipse cx="77" cy="50" rx="7.5" ry="8.5" fill="#fff" {...outlined} strokeWidth={2.4} />
+          <circle cx="51" cy="51" r="5" fill={iris} /><circle cx="77" cy="51" r="5" fill={iris} />
+          <circle cx="51" cy="51.5" r="2.6" fill={INK} /><circle cx="77" cy="51.5" r="2.6" fill={INK} />
           {highlight(51, 50)}{highlight(77, 50)}
+          {lash(51)}{lash(77)}
         </g>
       );
   }
@@ -346,6 +396,14 @@ function Mouth({ kind, ctx }: { kind: StickerSpec["mouth"]; ctx: Ctx }) {
     );
   }
   const y = ctx.character === "dog" || ctx.character === "bear" ? 74 : 68;
+  if (ctx.character === "dog" && (kind === "smile" || kind === "grin")) {
+    return (
+      <g>
+        <path d={`M50 ${y} q14 12 28 0`} {...line} />
+        <path d={`M60 ${y + 5} q4 12 10 4 q-1 -6 -10 -4 z`} fill="#F28FA8" {...outlined} strokeWidth={2} />
+      </g>
+    );
+  }
   switch (kind) {
     case "grin":
       return (
@@ -387,7 +445,8 @@ function Brow({ kind }: { kind: StickerSpec["brow"] }) {
   if (kind === "angry") return <g {...line}><path d="M42 36 l16 6" /><path d="M86 36 l-16 6" /></g>;
   if (kind === "sad") return <g {...line}><path d="M42 42 l16 -6" /><path d="M86 42 l-16 -6" /></g>;
   if (kind === "raised") return <g {...line}><path d="M42 38 q8 -8 16 -2" /><path d="M70 34 h16" /></g>;
-  return null;
+  // Neutral faces still get faint brows; a face without any reads as blank.
+  return <g {...line} strokeWidth={2.2} opacity="0.55"><path d="M43 38 q8 -4 15 -1" /><path d="M85 38 q-8 -4 -15 -1" /></g>;
 }
 
 function Effects({ spec }: { spec: StickerSpec }) {
@@ -411,11 +470,13 @@ function Effects({ spec }: { spec: StickerSpec }) {
 }
 
 function Bubble({ caption }: { caption: string }) {
-  const width = Math.min(112, Math.max(44, caption.length * 10 + 16));
+  const width = Math.min(116, Math.max(46, caption.length * 10.5 + 18));
   const x = 64 - width / 2;
   return (
     <g>
-      <rect x={x} y="112" width={width} height="16" rx="8" fill="#fff" {...outlined} strokeWidth={2} />
+      <path d={`M58 112 l3 -5 l5 5 z`} fill="#fff" {...outlined} strokeWidth={2} />
+      <rect x={x} y="111" width={width} height="17" rx="8.5" fill="#fff" {...outlined} strokeWidth={2.2} />
+      <path d={`M60 111.5 l2 -3 l3 3 z`} fill="#fff" />
       <text x="64" y="123.5" textAnchor="middle" fontSize="10.5" fontWeight="800" fill={INK}>{caption}</text>
     </g>
   );
@@ -428,6 +489,9 @@ export function BuiltinSticker({ spec, size = 140, showCaption = true }: { spec:
   const ctx: Ctx = { color, shade: darken(color), character };
   const pose = spec.pose ?? "stand";
   const tilt = pose === "slump" ? 8 : pose === "run" ? -10 : pose === "cheer" ? -4 : 0;
+  const sad = spec.eyes === "tear" || spec.eyes === "sleepy" || spec.mouth === "frown" || spec.brow === "sad" || pose === "slump";
+  // Flat colour with hard-edged cel shadows; gradients read as plastic.
+  const fill = color;
   return (
     <svg
       className="sticker"
@@ -440,17 +504,19 @@ export function BuiltinSticker({ spec, size = 140, showCaption = true }: { spec:
       {/* The figure sits a little above the caption bubble so feet and bubble never overlap. */}
       <g transform="translate(0 -7)">
       <ellipse cx="64" cy="117" rx="30" ry="4" fill="rgba(36,48,74,0.12)" />
-      <Body ctx={ctx} pose={pose} />
+      <Tail ctx={ctx} mood={sad ? "down" : "up"} />
+      <TailFill ctx={ctx} mood={sad ? "down" : "up"} />
+      <Body ctx={ctx} pose={pose} fill={fill} />
       <Legs color={color} pose={pose} />
       <g transform={`rotate(${tilt} 64 50)`}>
-        <HeadShape ctx={ctx} />
+        <HeadShape ctx={ctx} fill={fill} droop={sad} />
         {spec.blush && (
           <g fill="#F7A1B5" opacity="0.85">
             <ellipse cx="40" cy="60" rx="6" ry="3.5" /><ellipse cx="88" cy="60" rx="6" ry="3.5" />
           </g>
         )}
         <Brow kind={spec.brow} />
-        <Eyes kind={spec.eyes} hide={pose === "hide"} />
+        <Eyes kind={spec.eyes} hide={pose === "hide"} iris={character === "bear" || character === "dog" ? "#5B3A1E" : "#2B3F7A"} />
         <Mouth kind={spec.mouth} ctx={ctx} />
       </g>
       <Arms ctx={ctx} pose={pose} prop={spec.prop} />

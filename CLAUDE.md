@@ -6,7 +6,7 @@ This workspace contains a Mattermost-compatible chat server named moyro.
 
 - The workspace root is a Git repository. Inspect the working tree before
   editing because local changes may belong to another contributor.
-- `.claude/settings.local.json` currently contains command permissions only. No Claude hooks or local skills are defined in this workspace.
+- `.claude/settings.local.json` contains command permissions only. One local skill exists: `.claude/skills/emoticon-art` documents how emoticon characters are drawn and verified.
 - Web source lives in `webapp/src` and Vite enters through `webapp/src/main.tsx`. Prefer editing TypeScript/TSX files; the neighboring `.js` files are generated or legacy artifacts unless a task explicitly targets them.
 - Server source lives in `server/internal` with the runnable entry point at `server/cmd/moyro`.
 - Plugin/server hook flow is `server/internal/pluginhost` -> `server/internal/rpcbridge`. Web plugin runtime flow is `webapp/src/plugins/runtime.ts` -> `registry.ts`.
