@@ -9,10 +9,13 @@ import type { Post } from "@/api/client";
  *
  * The bound is well above the initial page so ordinary reading never trims,
  * and above a screenful so scrolling back a little still works. Scrolling
- * further back is a history-paging concern, not something the live list is
- * meant to serve.
+ * further back is served by history paging, which is exempt from this limit.
+ *
+ * Rendering cost no longer scales with the list: off-screen rows are skipped
+ * by `content-visibility` (see timeline.css). What remains is memory — each
+ * post object and its DOM node — so the cap is generous rather than absent.
  */
-export const MAX_RETAINED_POSTS = 400;
+export const MAX_RETAINED_POSTS = 1200;
 
 /**
  * Appends a live post, keeping the list ordered, free of duplicates, and

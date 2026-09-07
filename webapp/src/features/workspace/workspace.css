@@ -881,3 +881,18 @@ html[data-theme="dark"] .context-panel-tab.is-active {
     forced-color-adjust: auto;
   }
 }
+
+/* The global rail already carries the product mark. Repeating it in the
+ * sidebar header put two identical logos side by side; the sidebar keeps the
+ * wordmark alone wherever the rail is on screen. Below the rail's breakpoint
+ * the rail is replaced by bottom navigation with no mark, so the sidebar's
+ * logo is the only one and stays. */
+@media (min-width: 801px) {
+  .workspace-shell .side-brand-logo {
+    display: none;
+  }
+
+  .workspace-shell .side-brand-name {
+    padding-left: 2px;
+  }
+}

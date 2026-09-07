@@ -62,8 +62,9 @@ Next polish:
   source-size ratchet; session management, archived channels, message actions,
   the timeline model, and scroll ownership already live in their own hooks,
   and the legacy global stylesheet is split by area.
-- Add virtualization to the message list; history now pages in but every
-  loaded row stays in the DOM.
+- Revisit message-list windowing if conversations outgrow the current
+  approach. Off-screen rows are skipped by the browser today, which bounds
+  rendering cost without breaking id-based jumps; only memory still scales.
 - Merge the create-post authorization and membership checks into one query;
   the posting path still spends two round-trips answering one question.
 - Expand focus management and roving keyboard navigation across older dialogs

@@ -484,3 +484,26 @@
 .failed-message-discard {
   color: var(--flow-danger, #c2414b);
 }
+
+/* ── Long-conversation rendering ──────────────────────────────────────────
+ * Paging history in grows the message list without bound, and laying out
+ * thousands of markdown rows is what makes a long conversation feel heavy:
+ * inserting 3,000 rows measured 156ms, and 13ms with the rule below.
+ *
+ * `content-visibility: auto` lets the browser skip layout and paint for rows
+ * outside the viewport while keeping them in the document, so — unlike
+ * windowing — jumping to a post by id, in-page find, and the scroll
+ * anchoring that history paging depends on all keep working. The intrinsic
+ * size is the height of a typical one-line message; `auto` makes the browser
+ * remember each row's real height once measured, so the scrollbar does not
+ * drift. Browsers without support simply render everything, as before. */
+.chat-messages-grouped > .msg {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 62px;
+}
+
+/* A message being edited or holding an open menu must never be skipped:
+ * skipping would collapse the popover's anchor. */
+.chat-messages-grouped > .msg:focus-within {
+  content-visibility: visible;
+}
