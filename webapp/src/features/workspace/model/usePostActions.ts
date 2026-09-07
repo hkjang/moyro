@@ -11,13 +11,32 @@ type Confirmer = {
   }) => Promise<boolean>;
 };
 
+/** A message the server refused, kept so the reader can retry or drop it. */
+export type FailedSend = {
+  id: string;
+  channelId: string;
+  message: string;
+  fileIds: string[];
+  reason: string;
+  /** True while a retry is in flight. */
+  retrying: boolean;
+};
+
 export type PostActions = {
   /** Transient slash-command output rendered above the composer. */
   commandNotice: string | null;
   /** Dismisses that banner before its timeout elapses. */
   dismissCommandNotice: () => void;
-  /** Returns false when the message was rejected and the composer should keep it. */
+  /**
+   * Returns true when the composer may clear — either the message was sent,
+   * or it was captured as a retryable failure shown in the timeline. False
+   * means nothing was recorded anywhere and the composer must keep the text.
+   */
   send: (message: string, fileIds: string[]) => Promise<boolean>;
+  /** Messages the server refused, awaiting a retry in the open channel. */
+  failedSends: FailedSend[];
+  retryFailed: (id: string) => Promise<void>;
+  discardFailed: (id: string) => void;
   /** Sends an emoticon: the caption is the message text, the id rides in props. */
   sendSticker: (stickerId: string, caption: string) => Promise<boolean>;
   edit: (postId: string, message: string) => Promise<boolean>;
@@ -68,6 +87,10 @@ export function usePostActions({
   onNotice,
 }: PostActionsOptions): PostActions {
   const [commandNotice, setCommandNotice] = useState<string | null>(null);
+  const [failedSends, setFailedSends] = useState<FailedSend[]>([]);
+  // A failure is scoped to the channel it happened in, so switching away and
+  // back does not surface someone else's conversation's failed message.
+  const visibleFailedSends = failedSends.filter((entry) => entry.channelId === channelId);
 
   const send = useCallback(
     async (message: string, fileIds: string[]): Promise<boolean> => {
@@ -103,12 +126,42 @@ export function usePostActions({
         }
         return true;
       } catch (e) {
-        onError(e instanceof Error ? e.message : "전송 실패");
-        return false;
+        // Keep the message where the reader can see and retry it rather than
+        // leaving it as text in a composer they might navigate away from.
+        setFailedSends((prev) => [...prev, {
+          id: `failed-${Date.now()}-${prev.length}`,
+          channelId: targetChannelId,
+          message: trimmed,
+          fileIds,
+          reason: e instanceof Error ? e.message : "전송 실패",
+          retrying: false,
+        }]);
+        return true;
       }
     },
-    [token, teamId, channelId, currentChannelIdRef, setPosts, onError],
+    [token, teamId, channelId, currentChannelIdRef, setPosts],
   );
+
+  const retryFailed = useCallback(async (id: string) => {
+    const entry = failedSends.find((candidate) => candidate.id === id);
+    if (!token || !entry || entry.retrying) return;
+    setFailedSends((prev) => prev.map((c) => (c.id === id ? { ...c, retrying: true } : c)));
+    try {
+      const post = await api.createPost(token, entry.channelId, entry.message, "", entry.fileIds);
+      setFailedSends((prev) => prev.filter((c) => c.id !== id));
+      if (currentChannelIdRef.current === entry.channelId) {
+        setPosts((prev) => appendLivePost(prev, post));
+      }
+    } catch (e) {
+      setFailedSends((prev) => prev.map((c) => (c.id === id
+        ? { ...c, retrying: false, reason: e instanceof Error ? e.message : "전송 실패" }
+        : c)));
+    }
+  }, [token, failedSends, currentChannelIdRef, setPosts]);
+
+  const discardFailed = useCallback((id: string) => {
+    setFailedSends((prev) => prev.filter((entry) => entry.id !== id));
+  }, []);
 
   const sendSticker = useCallback(
     async (stickerId: string, caption: string): Promise<boolean> => {
@@ -190,5 +243,8 @@ export function usePostActions({
 
   const dismissCommandNotice = useCallback(() => setCommandNotice(null), []);
 
-  return { commandNotice, dismissCommandNotice, send, sendSticker, edit, remove, toggleSaved };
+  return {
+    commandNotice, dismissCommandNotice, send, sendSticker, edit, remove, toggleSaved,
+    failedSends: visibleFailedSends, retryFailed, discardFailed,
+  };
 }

@@ -26,17 +26,8 @@ import { useUnreadTitle } from "@/hooks/useUnreadTitle";
 import { displayVersion, useSystemInfo } from "@/features/system/SystemInfoContext";
 import { useAdminAccess } from "@/features/admin/AdminAccessContext";
 import { useThemePreference } from "@/features/theme/ThemePreferenceProvider";
-import {
-  ContextPanel,
-  type WorkspaceContextTab,
-} from "@/features/workspace/context/ContextPanel";
-import {
-  ChannelFilesView,
-  ChannelInfoView,
-  ChannelSummaryView,
-  EmptyThreadView,
-} from "@/features/workspace/context/ChannelContextViews";
-import { ChannelMembersView, ChannelPinnedView } from "@/features/workspace/context/ChannelPeopleViews";
+import type { WorkspaceContextTab } from "@/features/workspace/context/ContextPanel";
+import { WorkspaceContextPanel } from "@/features/workspace/context/WorkspaceContextPanel";
 import { useChannelContextData } from "@/features/workspace/model/useChannelContextData";
 import { useWorkspaceShortcuts } from "@/features/workspace/model/useWorkspaceShortcuts";
 import { useEmoticonPreference } from "@/features/workspace/model/useEmoticonPreference";
@@ -52,6 +43,7 @@ import { useOlderPosts } from "@/features/workspace/model/useOlderPosts";
 import { useThreadPanel } from "@/features/workspace/model/useThreadPanel";
 import { TimelineSkeleton } from "@/features/workspace/messages/TimelineSkeleton";
 import { ChannelIntro } from "@/features/workspace/messages/ChannelIntro";
+import { FailedMessage } from "@/features/workspace/messages/FailedMessage";
 import { ShortcutHelpModal } from "@/features/workspace/dialogs/ShortcutHelpModal";
 import type {
   FilesMap,
@@ -87,7 +79,7 @@ import {
 import { WorkspaceShell } from "@/features/workspace/shell/WorkspaceShell";
 import { ReminderPopover, ScheduleModal } from "@/features/workspace/scheduling/SchedulingDialogs";
 import { WorkspaceSidebar } from "@/features/workspace/sidebar/WorkspaceSidebar";
-import { ThreadPanel, TypingIndicator } from "@/features/workspace/thread/ThreadPanel";
+import { TypingIndicator } from "@/features/workspace/thread/ThreadPanel";
 import { PluginRHSPanel } from "@/plugins/PluginRHSPanel";
 import {
   dispatchPluginWebSocketEvent,
@@ -1257,7 +1249,6 @@ export function ChatView() {
   function closeThread() {
     closeContext();
   }
-  const onReplyInThread = thread.reply;
 
   // ---- Render ----
   return (
@@ -1454,6 +1445,14 @@ export function ChatView() {
                     })}
                     </>
                   )}
+                  {postActions.failedSends.map((entry) => (
+                    <FailedMessage
+                      key={entry.id}
+                      entry={entry}
+                      onRetry={() => void postActions.retryFailed(entry.id)}
+                      onDiscard={() => postActions.discardFailed(entry.id)}
+                    />
+                  ))}
                 </div>
                 {(timelineScroll.scrolledUp || timelineScroll.pendingCount > 0) && posts.length > 0 && (
                   <JumpToLatestButton count={timelineScroll.pendingCount} onClick={timelineScroll.jumpToLatest} />
@@ -1505,91 +1504,51 @@ export function ChatView() {
       context={activePluginRHS ? (
         <PluginRHSPanel registration={activePluginRHS} onClose={hideActivePluginRHS} />
       ) : activeContext && currentChannel ? (
-        <ContextPanel
+        <WorkspaceContextPanel
           activeTab={activeContext}
           onTabChange={setActiveContext}
           onClose={closeThread}
-          panels={{
-            thread: thread.rootId ? (
-              <ThreadPanel
-                rootId={thread.rootId}
-                posts={thread.posts}
-                loading={thread.loading}
-                users={users}
-                statuses={statuses}
-                reactionsByPost={reactionsByPost}
-                filesByID={filesByID}
-                currentUserId={user?.id ?? ""}
-                token={token ?? ""}
-                onToggleReaction={onToggleReaction}
-                onEdit={postActions.edit}
-                onDelete={postActions.remove}
-                onReply={onReplyInThread}
-                onUpload={onUploadFiles}
-                onSchedule={scheduling.openForThread(thread.rootId)}
-                onSendSticker={emoticons.enabled ? thread.replySticker : undefined}
-                emoticonsEnabled={emoticons.enabled}
-                composerResetSeq={threadComposerResetSeq}
-                destinationLabel={`${currentChannelLabel} · 스레드에 답글`}
-                canUseAI={canUseAI}
-                aiPermissionLoaded={aiAvailabilityLoaded}
-                aiStatusLabel={aiStatusLabel}
-                aiPreferences={aiPreferences}
-              />
-            ) : <EmptyThreadView />,
-            summary: (
-              <ChannelSummaryView
-                permissionLoaded={aiAvailabilityLoaded}
-                canUseAI={canUseAI}
-                unavailableReason={aiStatusLabel}
-                availableMessageCount={summaryCandidatePosts.length}
-                output={channelSummary}
-                sources={channelSummarySources}
-                generatedAt={channelSummaryGeneratedAt}
-                streaming={channelSummaryStreaming}
-                error={channelSummaryError}
-                onRun={() => void runChannelSummary()}
-                onStop={stopChannelSummary}
-                onJumpToPost={jumpToChannelPost}
-              />
-            ),
-            files: (
-              <ChannelFilesView
-                token={token ?? ""}
-                entries={channelFileEntries}
-                onJumpToPost={jumpToChannelPost}
-              />
-            ),
-            pinned: (
-              <ChannelPinnedView
-                token={token ?? ""}
-                posts={channelPinned.posts}
-                users={users}
-                loading={channelPinned.loading}
-                error={channelPinned.error}
-                onJumpToPost={jumpToChannelPost}
-              />
-            ),
-            members: (
-              <ChannelMembersView
-                token={token ?? ""}
-                members={channelMembers.members}
-                users={users}
-                statuses={statuses}
-                currentUserId={user?.id ?? ""}
-                loading={channelMembers.loading}
-                error={channelMembers.error}
-                onOpenDirect={(userId) => void onStartDirect(userId)}
-              />
-            ),
-            info: (
-              <ChannelInfoView
-                channel={currentChannel}
-                team={currentTeam}
-                stats={channelStatsByID[currentChannel.id]}
-              />
-            ),
+          channel={currentChannel}
+          team={currentTeam}
+          stats={channelStatsByID[currentChannel.id]}
+          channelLabel={currentChannelLabel}
+          token={token ?? ""}
+          currentUserId={user?.id ?? ""}
+          users={users}
+          statuses={statuses}
+          reactionsByPost={reactionsByPost}
+          filesByID={filesByID}
+          thread={thread}
+          threadComposerResetSeq={threadComposerResetSeq}
+          onToggleReaction={onToggleReaction}
+          onEditPost={postActions.edit}
+          onDeletePost={postActions.remove}
+          onUpload={onUploadFiles}
+          onScheduleThreadReply={scheduling.openForThread(thread.rootId ?? "")}
+          onSendThreadSticker={emoticons.enabled ? thread.replySticker : undefined}
+          emoticonsEnabled={emoticons.enabled}
+          canUseAI={canUseAI}
+          aiPermissionLoaded={aiAvailabilityLoaded}
+          aiStatusLabel={aiStatusLabel}
+          aiPreferences={aiPreferences}
+          summary={{
+            permissionLoaded: aiAvailabilityLoaded,
+            canUseAI,
+            unavailableReason: aiStatusLabel,
+            availableMessageCount: summaryCandidatePosts.length,
+            output: channelSummary,
+            sources: channelSummarySources,
+            generatedAt: channelSummaryGeneratedAt,
+            streaming: channelSummaryStreaming,
+            error: channelSummaryError,
+            onRun: () => void runChannelSummary(),
+            onStop: stopChannelSummary,
           }}
+          fileEntries={channelFileEntries}
+          pinned={channelPinned}
+          members={channelMembers}
+          onJumpToPost={jumpToChannelPost}
+          onOpenDirect={(userId) => void onStartDirect(userId)}
         />
       ) : undefined}
     >

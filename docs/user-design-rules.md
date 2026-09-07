@@ -91,6 +91,8 @@ not write `html[data-theme]` directly.
 - Opening a conversation on a keyboard device places focus in the composer;
   the route-change focus handoff must not take it back. Touch devices keep
   focus where the tap left it so the keyboard does not cover the messages.
+- A send that fails is never silently dropped and never held hostage in the
+  composer: it appears where it was meant to land, with retry and discard.
 - No surface ever shows a raw user id in place of a name. The typing
   indicator counts unnamed people ("2명이 입력 중") rather than printing ids.
 - A direct message is always labelled with the other person's name (`@name`),

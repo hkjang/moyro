@@ -984,12 +984,30 @@ test("workspace drafts stay destination-scoped and survive a failed send", async
     });
   });
   await page.getByRole("button", { name: "전송", exact: true }).click();
-  await expect(page.locator(".composer-send-error")).toContainText("유지됩니다");
-  await expect(composer).toHaveValue(firstDraft);
+  // A refused message moves into the timeline where it can be retried; the
+  // composer is freed and its durable draft is cleared with it.
+  const failed = page.getByRole("group", { name: "전송하지 못한 메시지" });
+  await expect(failed).toContainText(firstDraft);
+  await expect(failed).toContainText("expected send failure");
+  await expect(composer).toHaveValue("");
+
+  // Retrying once the server recovers posts the message and removes the card.
+  await page.unroute("**/api/v4/posts");
+  const retriedResponsePromise = page.waitForResponse((response) =>
+    response.request().method() === "POST"
+    && new URL(response.url()).pathname === "/api/v4/posts",
+  );
+  await failed.getByRole("button", { name: "재시도" }).click();
+  const retriedResponse = await retriedResponsePromise;
+  expect(retriedResponse.status()).toBe(201);
+  const retriedPost = await retriedResponse.json() as { id: string };
+  await expect(failed).toBeHidden();
+  const retriedCleanup = await api.delete(`/api/v4/posts/${retriedPost.id}`, { headers });
+  expect(retriedCleanup.status()).toBe(200);
 
   // A successful send clears both the controlled value and its durable copy;
   // changing destinations afterwards must not resurrect the submitted text.
-  await page.unroute("**/api/v4/posts");
+  await composer.fill(firstDraft);
   const sentResponsePromise = page.waitForResponse((response) =>
     response.request().method() === "POST"
     && new URL(response.url()).pathname === "/api/v4/posts",
@@ -1510,7 +1528,7 @@ async function seedProductData(context: APIRequestContext, session: AuthSession)
     },
     {
       kind: "decision",
-      title: "v0.2.19은 검증된 단일 오프라인 자산으로 배포",
+      title: "v0.2.20은 검증된 단일 오프라인 자산으로 배포",
       description: "PostgreSQL, 브라우저, 플러그인 호환과 재시작 검증을 모두 통과한 자산만 배포합니다.",
       assignee_id: "",
       due_at: 0,

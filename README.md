@@ -36,7 +36,7 @@ Product site: <https://hkjang.github.io/moyro/>
 - A workspace context panel for threads, user-triggered AI summary of currently
   loaded messages, files from those messages, and channel information
 - Search, saved posts, public channel discovery, and a link-preview foundation
-  (outbound previews are disabled by the offline-safe v0.2.19 runtime)
+  (outbound previews are disabled by the offline-safe v0.2.20 runtime)
 - Incoming/outgoing webhooks, slash commands, bots, personal access tokens
 - OAuth compatibility hooks, limited-use member and restricted guest invites,
   guest expiry/file policy, audit logs, and metrics
@@ -106,6 +106,9 @@ Product site: <https://hkjang.github.io/moyro/>
   is the caption and whose `props.sticker` names the image, so other
   Mattermost clients show the caption. Each user can switch emoticons off in
   개인 설정 › 화면; then the picker hides and received emoticons show as text
+- A message the server refuses stays in the timeline with 재시도 / 삭제 rather
+  than sitting in the composer, so the next message is never blocked by a
+  failed one
 - "여기부터 안 읽음" on any message rewinds the reader's marker so the channel
   keeps its unread badge and the timeline shows the divider — the server has
   supported this since v0.1; it had no way in
@@ -177,7 +180,7 @@ variables. See the [Offline Deployment Guide](docs/offline-deployment.md) for
 the complete load, run, backup, and upgrade procedure. A redacted four-key
 template is available at [`deploy/docker/moyro.env.example`](deploy/docker/moyro.env.example).
 
-The supported v0.2.19 topology is one moyro application container connected to
+The supported v0.2.20 topology is one moyro application container connected to
 external PostgreSQL, with uploads on the local `/var/lib/moyro` volume. The
 four-variable production contract does not expose SMTP configuration, so email
 is reported unavailable and no digest worker records false delivery success.
@@ -194,7 +197,7 @@ Administrators may explicitly allow those back-channel endpoints only for an
 isolated, trusted private network; the browser-facing authorization endpoint
 remains HTTPS-only and the setting warns that secrets and codes cross HTTP in
 plaintext and that the traffic, including JWKS, can be intercepted or modified.
-After a successful provider callback, v0.2.19 sends the browser a five-minute,
+After a successful provider callback, v0.2.20 sends the browser a five-minute,
 browser-bound handoff code instead of a session JWT. The atomic exchange sets
 the reusable login credential only in an HttpOnly, SameSite cookie and returns
 the local user without exposing that credential to JavaScript. If the exchange

@@ -450,3 +450,37 @@
 .channel-stats-chip.is-button:hover {
   background: var(--flow-surface-subtle, #f6f7f9);
 }
+
+/* ── Message the server refused ───────────────────────────────────────── */
+.failed-message {
+  border-left: 3px solid var(--flow-danger, #c2414b);
+  background: color-mix(in srgb, var(--flow-danger, #c2414b) 5%, transparent);
+}
+
+.failed-message-body {
+  color: var(--flow-text-muted, #667085);
+  font-size: 14px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.failed-message-footer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+.failed-message-reason {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--flow-danger, #c2414b);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.failed-message-discard {
+  color: var(--flow-danger, #c2414b);
+}

@@ -130,6 +130,9 @@ Important modules:
   is a post whose message is the caption and whose `props.sticker` is the
   id; `model/useEmoticonPreference.ts` stores the per-user switch as a
   `display_settings/emoticons` preference.
+- `features/workspace/context/WorkspaceContextPanel.tsx` owns the right-hand
+  panel and its six tabs; ChatView passes state and keeps none of the panel's
+  markup.
 - `features/workspace/context/ChannelPeopleViews.tsx` renders the member and
   pinned tabs; `model/useChannelPanels.ts` loads them only while open.
   `components/EmojiAutocomplete.tsx` mirrors the mention picker for `:name`.
