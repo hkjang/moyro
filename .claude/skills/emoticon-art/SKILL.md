@@ -94,10 +94,32 @@ White comic bubble with ink outline at y 111–128, width from caption length
 pointing at the character. Captions must stay legible at 52px, so ≤ 7
 characters is ideal, 10 is the hard limit.
 
+## Motion
+
+Emoticons animate in CSS, driven by `data-pose`, `data-mood`, and
+`data-float` on the root `<svg>`; no GIF or APNG, and no JavaScript.
+
+- Everything gets an idle bob (`sticker-figure`), faster for a lively mouth
+  and replaced by a slow sigh for a sad face. The head follows a beat later.
+- The pose supplies the action: wave rotates the arm from the shoulder, cheer
+  hops, run dashes with pulsing speed lines, hide trembles, point jolts.
+- Emotion supplies the rest: tears fall on a loop, hearts and sparkles drift
+  out of phase, 💤 rises and fades, anger marks throb.
+- Animate groups, never individual paths, and set `transform-box: fill-box`
+  so percentages resolve against the shape.
+- Every animation must be switched off under `prefers-reduced-motion`.
+- Verify motion by screenshotting the preview twice a few hundred
+  milliseconds apart and comparing; a single frame proves nothing.
+
 ## What not to do
 
-- Do not paste emoji glyphs as the character or its face; glyphs are only
-  acceptable as small hand-held props until vector props exist.
+- Do not use emoji glyphs anywhere in a sticker. Props and floating marks are
+  vectors in `props.tsx`, keyed by name (`cup`, `bowl`, `clipboard`, …); a
+  glyph would render differently on every platform, which is exactly what a
+  drawn pack must not do. Add a new icon there rather than reaching for a
+  character from the font.
+- Do not give a character a prop that duplicates its pose. A `wave` pose does
+  not also hold a waving hand; `thumbs` does not hold a thumbs-up.
 - Do not rely on `useId` for SVG `<defs>` ids — multiple React roots reset
   it and definitions collide. Derive ids from the spec id.
 - Do not add a character without at least six emoticons in its own voice.

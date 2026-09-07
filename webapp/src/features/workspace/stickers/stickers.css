@@ -20,15 +20,6 @@
   font-size: 12px;
 }
 
-.sticker-float {
-  animation: sticker-float 2.4s ease-in-out infinite;
-}
-
-@keyframes sticker-float {
-  0%, 100% { transform: translateY(0); }
-  50% { transform: translateY(-2px); }
-}
-
 .sticker-picker {
   position: absolute;
   right: 0;
@@ -204,5 +195,194 @@
 @media (max-width: 640px) {
   .sticker-suggestions-label {
     display: none;
+  }
+}
+
+/* ── Motion ───────────────────────────────────────────────────────────────
+ * Emoticons animate the way messenger stickers do: a small idle bob so the
+ * character reads as alive, and a movement that acts out the caption. The
+ * whole thing is SVG, so this stays crisp at any size and needs no GIF or
+ * APNG — and it costs nothing to ship offline.
+ *
+ * Every transform sets `transform-box: fill-box` so percentages resolve
+ * against the element rather than the SVG viewport. */
+
+.sticker-figure,
+.sticker-head,
+.sticker-wave-arm,
+.sticker-tear,
+.sticker-float-a,
+.sticker-float-b,
+.sticker-speed-lines {
+  transform-box: fill-box;
+  transform-origin: center;
+}
+
+/* Idle: everything breathes a little. */
+.sticker-figure {
+  animation: sticker-bob 2.6s ease-in-out infinite;
+}
+
+.sticker[data-mood="lively"] .sticker-figure {
+  animation-duration: 1.5s;
+}
+
+.sticker[data-mood="sad"] .sticker-figure {
+  animation: sticker-sigh 4s ease-in-out infinite;
+}
+
+/* The head follows the body a beat later, which reads as weight. */
+.sticker-head {
+  animation: sticker-head-follow 2.6s ease-in-out infinite;
+}
+
+.sticker[data-mood="lively"] .sticker-head {
+  animation: sticker-head-shake 1.5s ease-in-out infinite;
+}
+
+/* Pose-specific action. */
+.sticker[data-pose="wave"] .sticker-wave-arm {
+  transform-origin: 20% 90%;
+  animation: sticker-wave 0.9s ease-in-out infinite;
+}
+
+.sticker[data-pose="cheer"] .sticker-figure {
+  animation: sticker-hop 0.9s ease-in-out infinite;
+}
+
+.sticker[data-pose="run"] .sticker-figure {
+  animation: sticker-dash 0.5s ease-in-out infinite;
+}
+
+.sticker[data-pose="hide"] .sticker-figure {
+  animation: sticker-tremble 0.35s ease-in-out infinite;
+}
+
+.sticker[data-pose="point"] .sticker-figure {
+  animation: sticker-jolt 1.4s ease-out infinite;
+}
+
+.sticker-speed-lines {
+  animation: sticker-speed 0.5s linear infinite;
+}
+
+/* Tears fall one after the other. */
+.sticker-tear {
+  animation: sticker-tear-fall 1.6s ease-in infinite;
+}
+
+.sticker-tear-right {
+  animation-delay: 0.55s;
+}
+
+/* Floating marks drift out of phase so they never look like one object. */
+.sticker-float-a {
+  animation: sticker-drift 2.2s ease-in-out infinite;
+}
+
+.sticker-float-b {
+  animation: sticker-drift 2.2s ease-in-out infinite 0.7s;
+}
+
+.sticker[data-float="anger"] .sticker-float-a,
+.sticker[data-float="anger"] .sticker-float-b {
+  animation: sticker-throb 0.7s ease-in-out infinite;
+}
+
+.sticker[data-float="zzz"] .sticker-float-a,
+.sticker[data-float="zzz"] .sticker-float-b {
+  animation: sticker-rise 3s ease-in-out infinite;
+}
+
+.sticker[data-float="zzz"] .sticker-float-b {
+  animation-delay: 1.2s;
+}
+
+@keyframes sticker-bob {
+  0%, 100% { transform: translateY(0) scale(1, 1); }
+  50% { transform: translateY(-2px) scale(1.01, 0.99); }
+}
+
+@keyframes sticker-sigh {
+  0%, 100% { transform: translateY(0) rotate(0deg); }
+  50% { transform: translateY(1.5px) rotate(-1deg); }
+}
+
+@keyframes sticker-head-follow {
+  0%, 100% { transform: translateY(0); }
+  55% { transform: translateY(-1px); }
+}
+
+@keyframes sticker-head-shake {
+  0%, 100% { transform: rotate(-2deg); }
+  50% { transform: rotate(2deg); }
+}
+
+@keyframes sticker-wave {
+  0%, 100% { transform: rotate(-14deg); }
+  50% { transform: rotate(16deg); }
+}
+
+@keyframes sticker-hop {
+  0%, 100% { transform: translateY(0); }
+  40% { transform: translateY(-5px); }
+  60% { transform: translateY(-3px); }
+}
+
+@keyframes sticker-dash {
+  0%, 100% { transform: translateX(0) rotate(0deg); }
+  50% { transform: translateX(2px) rotate(-1.5deg); }
+}
+
+@keyframes sticker-tremble {
+  0%, 100% { transform: translateX(-1px); }
+  50% { transform: translateX(1px); }
+}
+
+@keyframes sticker-jolt {
+  0%, 70%, 100% { transform: translateY(0) scale(1); }
+  8% { transform: translateY(-3px) scale(1.04); }
+  16% { transform: translateY(0) scale(1); }
+}
+
+@keyframes sticker-speed {
+  0% { opacity: 0.25; transform: translateX(2px); }
+  50% { opacity: 0.85; transform: translateX(-2px); }
+  100% { opacity: 0.25; transform: translateX(2px); }
+}
+
+@keyframes sticker-tear-fall {
+  0% { opacity: 0; transform: translateY(-4px) scaleY(0.6); }
+  25% { opacity: 1; transform: translateY(0) scaleY(1); }
+  85% { opacity: 1; transform: translateY(10px) scaleY(1.1); }
+  100% { opacity: 0; transform: translateY(14px) scaleY(1.1); }
+}
+
+@keyframes sticker-drift {
+  0%, 100% { opacity: 0.75; transform: translateY(0) rotate(-6deg); }
+  50% { opacity: 1; transform: translateY(-4px) rotate(6deg); }
+}
+
+@keyframes sticker-rise {
+  0% { opacity: 0; transform: translateY(4px) scale(0.85); }
+  30% { opacity: 1; }
+  100% { opacity: 0; transform: translateY(-10px) scale(1.1); }
+}
+
+@keyframes sticker-throb {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.25); }
+}
+
+/* A reader who asked for less motion gets a still drawing. */
+@media (prefers-reduced-motion: reduce) {
+  .sticker-figure,
+  .sticker-head,
+  .sticker-wave-arm,
+  .sticker-tear,
+  .sticker-float-a,
+  .sticker-float-b,
+  .sticker-speed-lines {
+    animation: none !important;
   }
 }

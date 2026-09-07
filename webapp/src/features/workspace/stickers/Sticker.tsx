@@ -2,6 +2,7 @@ import { api } from "@/api/client";
 import { AuthenticatedImage } from "@/components/AuthenticatedMedia";
 import { customEmojiByName } from "@/components/EmojiPicker";
 import { BUILTIN_PREFIX, CUSTOM_PREFIX, stickerById, type StickerPose, type StickerSpec } from "./stickers";
+import { FloatMark, StickerProp, type StickerPropName } from "./props";
 import "./stickers.css";
 
 // Cartoon renderer.
@@ -123,15 +124,17 @@ function Body({ ctx, pose, fill }: { ctx: Ctx; pose: StickerPose; fill: string }
   );
 }
 
-function Arms({ ctx, pose, prop }: { ctx: Ctx; pose: StickerPose; prop?: string }) {
+function Arms({ ctx, pose, prop }: { ctx: Ctx; pose: StickerPose; prop?: StickerPropName }) {
   const c = ctx.color;
   switch (pose) {
     case "wave":
       return (
         <g>
           <Arm x1={48} y1={82} x2={40} y2={98} color={c} />
-          <Arm x1={80} y1={80} x2={98} y2={62} color={c} hand="open" />
-          <g stroke={INK} strokeWidth={2} strokeLinecap="round" opacity="0.7">
+          <g className="sticker-wave-arm">
+            <Arm x1={80} y1={80} x2={98} y2={62} color={c} hand="open" />
+          </g>
+          <g className="sticker-speed-lines" stroke={INK} strokeWidth={2} strokeLinecap="round" opacity="0.7">
             <path d="M106 54 l6 -4" /><path d="M108 62 l7 0" /><path d="M106 70 l6 4" />
           </g>
         </g>
@@ -153,11 +156,12 @@ function Arms({ ctx, pose, prop }: { ctx: Ctx; pose: StickerPose; prop?: string 
     case "hold":
       return (
         <g>
-          <Arm x1={48} y1={84} x2={56} y2={98} color={c} hand="none" />
-          <Arm x1={80} y1={84} x2={72} y2={98} color={c} hand="none" />
-          {prop && <text x="64" y="104" fontSize="22" textAnchor="middle">{prop}</text>}
-          <circle cx="56" cy="98" r="4.5" fill={c} {...outlined} strokeWidth={2.2} />
-          <circle cx="72" cy="98" r="4.5" fill={c} {...outlined} strokeWidth={2.2} />
+          <Arm x1={48} y1={84} x2={54} y2={99} color={c} hand="none" />
+          <Arm x1={80} y1={84} x2={74} y2={99} color={c} hand="none" />
+          {/* Hands first, then the object on top, so it is never half-hidden. */}
+          <circle cx="54" cy="99" r="4.5" fill={c} {...outlined} strokeWidth={2.2} />
+          <circle cx="74" cy="99" r="4.5" fill={c} {...outlined} strokeWidth={2.2} />
+          {prop && <StickerProp name={prop} cx={64} cy={98} size={34} />}
         </g>
       );
     case "run":
@@ -165,7 +169,7 @@ function Arms({ ctx, pose, prop }: { ctx: Ctx; pose: StickerPose; prop?: string 
         <g>
           <Arm x1={48} y1={82} x2={34} y2={90} color={c} hand="fist" />
           <Arm x1={80} y1={82} x2={92} y2={70} color={c} hand="fist" />
-          <g stroke={INK} strokeWidth={2.2} strokeLinecap="round" opacity="0.6">
+          <g className="sticker-speed-lines" stroke={INK} strokeWidth={2.2} strokeLinecap="round" opacity="0.6">
             <path d="M20 96 h10" /><path d="M16 104 h12" /><path d="M22 112 h8" />
           </g>
         </g>
@@ -350,8 +354,12 @@ function Eyes({ kind, hide, iris }: { kind: StickerSpec["eyes"]; hide: boolean; 
           <circle cx="51" cy="52" r="4.6" fill={iris} /><circle cx="77" cy="52" r="4.6" fill={iris} />
           <circle cx="51" cy="52.5" r="2.4" fill={INK} /><circle cx="77" cy="52.5" r="2.4" fill={INK} />
           {highlight(51, 50)}{highlight(77, 50)}
-          <path d="M46 60 q-5 12 2 14 q7 -2 2 -14 z" fill="#63B3F5" {...outlined} strokeWidth={1.6} />
-          <path d="M82 60 q5 12 -2 14 q-7 -2 -2 -14 z" fill="#63B3F5" {...outlined} strokeWidth={1.6} />
+          <g className="sticker-tear sticker-tear-left">
+            <path d="M46 60 q-5 12 2 14 q7 -2 2 -14 z" fill="#63B3F5" {...outlined} strokeWidth={1.6} />
+          </g>
+          <g className="sticker-tear sticker-tear-right">
+            <path d="M82 60 q5 12 -2 14 q-7 -2 -2 -14 z" fill="#63B3F5" {...outlined} strokeWidth={1.6} />
+          </g>
         </g>
       );
     case "wink":
@@ -451,10 +459,9 @@ function Brow({ kind }: { kind: StickerSpec["brow"] }) {
 
 function Effects({ spec }: { spec: StickerSpec }) {
   const items: React.ReactNode[] = [];
-  const glyph = spec.float && { hearts: "💗", sparkles: "✨", zzz: "💤", notes: "🎵", confetti: "🎊", question: "❓", anger: "💢" }[spec.float];
-  if (glyph) {
-    items.push(<text key="f1" x="100" y="26" fontSize="18">{glyph}</text>);
-    items.push(<text key="f2" x="10" y="40" fontSize="13">{glyph}</text>);
+  if (spec.float) {
+    items.push(<g key="f1" className="sticker-float-a"><FloatMark kind={spec.float} x={103} y={23} size={21} /></g>);
+    items.push(<g key="f2" className="sticker-float-b"><FloatMark kind={spec.float} x={17} y={38} size={15} /></g>);
   }
   if (spec.sweat) items.push(<path key="sweat" d="M100 40 q-6 10 0 14 q6 -4 0 -14 z" fill="#63B3F5" {...outlined} strokeWidth={1.6} />);
   if (spec.brow === "angry" || spec.float === "anger") {
@@ -464,9 +471,9 @@ function Effects({ spec }: { spec: StickerSpec }) {
     items.push(<g key="shock" stroke={INK} strokeWidth="2.4" strokeLinecap="round"><path d="M26 24 l6 6" /><path d="M20 34 l8 2" /><path d="M102 24 l-6 6" /><path d="M108 34 l-8 2" /></g>);
   }
   if (spec.prop && spec.pose !== "hold") {
-    items.push(<text key="prop" x="104" y="104" fontSize="24" textAnchor="middle">{spec.prop}</text>);
+    items.push(<StickerProp key="prop" name={spec.prop} cx={101} cy={94} size={34} />);
   }
-  return <g className="sticker-float">{items}</g>;
+  return <g>{items}</g>;
 }
 
 function Bubble({ caption }: { caption: string }) {
@@ -500,15 +507,18 @@ export function BuiltinSticker({ spec, size = 140, showCaption = true }: { spec:
       height={size}
       role="img"
       aria-label={`이모티콘: ${spec.caption}`}
+      data-pose={pose}
+      data-mood={sad ? "sad" : spec.mouth === "grin" || spec.mouth === "open" ? "lively" : "calm"}
+      data-float={spec.float ?? "none"}
     >
       {/* The figure sits a little above the caption bubble so feet and bubble never overlap. */}
-      <g transform="translate(0 -7)">
+      <g className="sticker-figure" transform="translate(0 -7)">
       <ellipse cx="64" cy="117" rx="30" ry="4" fill="rgba(36,48,74,0.12)" />
       <Tail ctx={ctx} mood={sad ? "down" : "up"} />
       <TailFill ctx={ctx} mood={sad ? "down" : "up"} />
       <Body ctx={ctx} pose={pose} fill={fill} />
       <Legs color={color} pose={pose} />
-      <g transform={`rotate(${tilt} 64 50)`}>
+      <g className="sticker-head" transform={`rotate(${tilt} 64 50)`}>
         <HeadShape ctx={ctx} fill={fill} droop={sad} />
         {spec.blush && (
           <g fill="#F7A1B5" opacity="0.85">

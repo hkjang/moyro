@@ -66,6 +66,8 @@ not write `html[data-theme]` directly.
 - Emoticon suggestions follow the caret: they match keywords in the tail of
   the text, never steal focus from the textarea, and a dismissed strip stays
   hidden until the text changes.
+- Emoticon motion is decoration, never information: a still emoticon must say
+  the same thing as a moving one, and reduced-motion readers see it still.
 - Emoticons are large stand-alone images sent with one tap; they never
   replace text a reader has disabled them for, which is why every emoticon
   post also carries its caption as the message body.

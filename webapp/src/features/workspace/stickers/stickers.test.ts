@@ -82,3 +82,23 @@ describe("textIsOnlyKeyword", () => {
     expect(textIsOnlyKeyword("오늘 회의 자료 고마워", thanks)).toBe(false);
   });
 });
+
+describe("prop vocabulary", () => {
+  it("names a drawn vector, never an emoji glyph", () => {
+    // A glyph would render differently on every platform; the pack must not.
+    for (const spec of STICKERS) {
+      if (!spec.prop) continue;
+      expect(spec.prop).toMatch(/^[a-z]+$/);
+    }
+  });
+
+  it("has no hand-shaped prop, because the pose performs the gesture", () => {
+    // A waving character holding a waving hand is one hand too many; the
+    // vocabulary carries objects only.
+    const hands = ["hand", "thumb", "fist", "clap", "wave", "pray", "muscle"];
+    for (const spec of STICKERS) {
+      if (!spec.prop) continue;
+      expect(hands).not.toContain(spec.prop);
+    }
+  });
+});

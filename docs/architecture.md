@@ -126,7 +126,9 @@ Important modules:
   The drawing rules — chibi proportions, ink line weights, cel shading, the
   expression and pose systems, and the render-and-look verification loop —
   live in the project skill `.claude/skills/emoticon-art/SKILL.md`, so a
-  restyle or a new character follows the same method. A sent emoticon
+  restyle or a new character follows the same method. `stickers/props.tsx`
+  holds the drawn objects and floating marks; nothing in a sticker is an OS
+  emoji glyph, which would render differently per platform. A sent emoticon
   is a post whose message is the caption and whose `props.sticker` is the
   id; `model/useEmoticonPreference.ts` stores the per-user switch as a
   `display_settings/emoticons` preference.
