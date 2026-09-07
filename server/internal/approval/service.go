@@ -17,6 +17,13 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
+// ExecutionGracePeriodMillis holds the outbox back so the recovery worker only
+// picks up an approved request the deciding request never finished executing.
+// The decision handler runs the protected action inline; sweeping the same row
+// while that call is still in flight buys nothing and makes the two executors
+// contend for the single approved -> executed transition.
+const ExecutionGracePeriodMillis int64 = 15_000
+
 var (
 	ErrNotFound       = errors.New("approval request not found")
 	ErrForbidden      = errors.New("approval review is not permitted")
@@ -301,9 +308,9 @@ func (s *Service) Decide(ctx context.Context, requestID, reviewerID, decision, r
 	if status == "approved" {
 		_, err = tx.Exec(ctx, `
 			INSERT INTO workflow_outbox (id, request_id, action_type, payload, status, attempts, available_at, create_at, update_at)
-			VALUES ($1,$2,$3,$4,'pending',0,$5,$5,$5)
+			VALUES ($1,$2,$3,$4,'pending',0,$5,$6,$6)
 			ON CONFLICT (request_id) DO NOTHING
-		`, uuid.NewString(), request.ID, request.ActionType, request.Payload, now)
+		`, uuid.NewString(), request.ID, request.ActionType, request.Payload, now+ExecutionGracePeriodMillis, now)
 		if err != nil {
 			return nil, err
 		}
@@ -783,6 +790,15 @@ func scanRequest(row interface{ Scan(...any) error }) (*Request, error) {
 
 // MarkExecuted closes an approved request after the protected side effect has
 // completed successfully. The conditional update makes retries idempotent.
+//
+// Two executors legitimately race here: the decision handler runs the action
+// synchronously, and the recovery worker sweeps requests that were approved
+// just before a crash. The post itself is deduplicated by a unique index on
+// props->>'approval_request_id', so the loser of that race has still had its
+// side effect performed by the winner — reporting ErrAlreadyDecided would turn
+// a completed action into a 400 for the reviewer. So an already-executed
+// request is a success here, and only a status the action never reached
+// (rejected, expired, still pending) is an error.
 func (s *Service) MarkExecuted(ctx context.Context, requestID string) (*Request, error) {
 	now := time.Now().UnixMilli()
 	tx, err := s.db.Pool.Begin(ctx)
@@ -800,7 +816,10 @@ func (s *Service) MarkExecuted(ctx context.Context, requestID string) (*Request,
 	`, requestID, now)
 	request, err := scanRequest(row)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, ErrAlreadyDecided
+		request, err = executedRequest(ctx, tx, requestID)
+		if err != nil {
+			return nil, err
+		}
 	}
 	if err != nil {
 		return nil, err
@@ -810,6 +829,29 @@ func (s *Service) MarkExecuted(ctx context.Context, requestID string) (*Request,
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return nil, err
+	}
+	return request, nil
+}
+
+// executedRequest re-reads a request whose conditional execute update matched
+// no row, and reports it only if the action it guards has already run.
+func executedRequest(ctx context.Context, tx pgx.Tx, requestID string) (*Request, error) {
+	request, err := scanRequest(tx.QueryRow(ctx, `
+		SELECT id, policy_id, action_type, requester_id, COALESCE(team_id,''),
+		       resource_type, resource_id, payload, status, COALESCE(idempotency_key,''),
+		       create_at, update_at, decided_at, executed_at, expires_at
+		FROM approval_requests
+		WHERE id=$1
+		FOR UPDATE
+	`, requestID))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	if request.Status != "executed" {
+		return nil, ErrAlreadyDecided
 	}
 	return request, nil
 }

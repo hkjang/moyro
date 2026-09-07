@@ -62,15 +62,6 @@ Next polish:
   source-size ratchet; session management, archived channels, message actions,
   the timeline model, and scroll ownership already live in their own hooks,
   and the legacy global stylesheet is split by area.
-- Diagnose an intermittent browser-gate failure: "approval decisions are
-  idempotent and execute protected writes exactly once" has once seen its
-  freshly created request already decided between the self-approval rejection
-  and the reviewer's approval (release run 34094342021, v0.2.22). It did not
-  reproduce on the same commit in CI, on a re-run, or locally, and the only
-  writers of that column are the decide path and its expiry branch, so the
-  cause is still unknown. The dark inbox snapshot fails with it, because that
-  page renders the approval events. The next occurrence should capture the
-  request's status immediately before the approval call.
 - Revisit message-list windowing if conversations outgrow the current
   approach. Off-screen rows are skipped by the browser today, which bounds
   rendering cost without breaking id-based jumps; only memory still scales.
@@ -91,6 +82,12 @@ Status: partial.
 - Optional Redis fanout
 - Optional S3-compatible file storage
 - Email digest worker
+- Idempotent approval execution. The decision handler runs the protected
+  action inline and a recovery worker sweeps actions a crash left unexecuted;
+  the loser of that race now reports the completed action instead of an
+  already-decided error, and a freshly approved request is held back from the
+  sweep. This was the intermittent browser-gate failure in release run
+  34094342021 (v0.2.22).
 
 Next polish:
 
