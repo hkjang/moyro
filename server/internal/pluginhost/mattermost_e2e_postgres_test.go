@@ -364,8 +364,8 @@ func bindPluginTestApplication(t *testing.T, db *store.DB, host *Host, events *p
 		Plugins:  host,
 		Events:   events,
 		Audit:    auditService,
-		AuthorizeCreate: func(context.Context, string, string) (bool, error) {
-			return true, nil
+		AuthorizeCreate: func(context.Context, string, string) (postcommand.CreateAuthorization, error) {
+			return postcommand.CreateAuthorization{Allowed: true, IsMember: true}, nil
 		},
 		Logger: logger,
 	})

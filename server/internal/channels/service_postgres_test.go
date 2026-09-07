@@ -6,6 +6,7 @@ import (
 	"os"
 	"sort"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -335,7 +336,23 @@ func seedChannelsFixture(t *testing.T, ctx context.Context, db *store.DB) {
 	}
 }
 
+// countingTracer records how many statements a pool actually sends, so a test
+// can assert the round-trip cost of a path rather than only its result.
+type countingTracer struct{ statements atomic.Int64 }
+
+func (c *countingTracer) TraceQueryStart(ctx context.Context, _ *pgx.Conn, _ pgx.TraceQueryStartData) context.Context {
+	c.statements.Add(1)
+	return ctx
+}
+
+func (c *countingTracer) TraceQueryEnd(context.Context, *pgx.Conn, pgx.TraceQueryEndData) {}
+
 func newChannelsTestDB(t *testing.T) *store.DB {
+	t.Helper()
+	return newChannelsTestDBWithTracer(t, nil)
+}
+
+func newChannelsTestDBWithTracer(t *testing.T, tracer pgx.QueryTracer) *store.DB {
 	t.Helper()
 	dsn := strings.TrimSpace(os.Getenv(channelsTestPostgresDSN))
 	if dsn == "" {
@@ -376,6 +393,7 @@ func newChannelsTestDB(t *testing.T) *store.DB {
 		t.Fatalf("parse channels test DSN: %v", err)
 	}
 	config.ConnConfig.RuntimeParams["search_path"] = quotedSchema
+	config.ConnConfig.Tracer = tracer
 	config.MaxConns = 4
 	testPool, err = pgxpool.NewWithConfig(ctx, config)
 	if err != nil {
@@ -396,4 +414,102 @@ func channelsTestContext(t *testing.T) context.Context {
 	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
 	t.Cleanup(cancel)
 	return ctx
+}
+
+// TestReadPostPreconditionsAnswersEveryCreateCheckInOneRead pins the cost of
+// the posting path's authorization step. The checks it merges were three
+// sequential reads, and the membership one duplicated a row that permission
+// resolution already visits, so a regression here is a silent latency cost on
+// the hottest write in the product.
+func TestReadPostPreconditionsAnswersEveryCreateCheckInOneRead(t *testing.T) {
+	db := newChannelsTestDB(t)
+	ctx := channelsTestContext(t)
+	seedChannelsFixture(t, ctx, db)
+	service := New(db)
+
+	member, err := service.ReadPostPreconditions(ctx, "channel-general", "user-author")
+	if err != nil {
+		t.Fatalf("preconditions for a member: %v", err)
+	}
+	if member.Channel == nil || member.Channel.ID != "channel-general" || member.Channel.TeamID != "team-main" {
+		t.Fatalf("channel = %#v", member.Channel)
+	}
+	if !member.UserLive || !member.IsMember {
+		t.Fatalf("member preconditions = %#v, want a live member", member)
+	}
+
+	outsider, err := service.ReadPostPreconditions(ctx, "channel-general", "user-outsider")
+	if err != nil {
+		t.Fatalf("preconditions for an outsider: %v", err)
+	}
+	if outsider.Channel == nil || !outsider.UserLive || outsider.IsMember {
+		t.Fatalf("outsider preconditions = %#v, want a live non-member", outsider)
+	}
+
+	// A channel with no team must still report its membership, because a DM
+	// carries no team scope and the posting path relies on that distinction.
+	dm, err := service.ReadPostPreconditions(ctx, "channel-dm", "user-author")
+	if err != nil {
+		t.Fatalf("preconditions for a DM: %v", err)
+	}
+	if dm.Channel == nil || dm.Channel.TeamID != "" || !dm.IsMember {
+		t.Fatalf("dm preconditions = %#v", dm)
+	}
+
+	if _, err := db.Pool.Exec(ctx, `UPDATE users SET delete_at=5 WHERE id=$1`, "user-author"); err != nil {
+		t.Fatalf("deactivate author: %v", err)
+	}
+	deactivated, err := service.ReadPostPreconditions(ctx, "channel-general", "user-author")
+	if err != nil {
+		t.Fatalf("preconditions for a deactivated user: %v", err)
+	}
+	if deactivated.UserLive {
+		t.Fatal("a deactivated user still reads as live")
+	}
+
+	missing, err := service.ReadPostPreconditions(ctx, "channel-missing", "user-plain")
+	if err != nil {
+		t.Fatalf("preconditions for a missing channel: %v", err)
+	}
+	if missing.Channel != nil || missing.IsMember {
+		t.Fatalf("missing channel preconditions = %#v, want a zero value", missing)
+	}
+}
+
+// TestReadPostPreconditionsCostsOneRoundTrip is the measurement behind merging
+// those checks: asking them separately is three statements, and the posting
+// path runs this before every message.
+func TestReadPostPreconditionsCostsOneRoundTrip(t *testing.T) {
+	tracer := &countingTracer{}
+	db := newChannelsTestDBWithTracer(t, tracer)
+	ctx := channelsTestContext(t)
+	seedChannelsFixture(t, ctx, db)
+	service := New(db)
+
+	separate := tracer.statements.Load()
+	if _, err := service.Get(ctx, "channel-general"); err != nil {
+		t.Fatalf("channel read: %v", err)
+	}
+	if _, err := service.IsMember(ctx, "channel-general", "user-author"); err != nil {
+		t.Fatalf("membership read: %v", err)
+	}
+	var live bool
+	if err := db.Pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM users WHERE id=$1 AND delete_at=0)`, "user-author").Scan(&live); err != nil {
+		t.Fatalf("user read: %v", err)
+	}
+	separate = tracer.statements.Load() - separate
+
+	combined := tracer.statements.Load()
+	if _, err := service.ReadPostPreconditions(ctx, "channel-general", "user-author"); err != nil {
+		t.Fatalf("combined read: %v", err)
+	}
+	combined = tracer.statements.Load() - combined
+
+	if combined != 1 {
+		t.Fatalf("ReadPostPreconditions sent %d statements, want 1", combined)
+	}
+	if separate <= combined {
+		t.Fatalf("separate reads sent %d statements, combined %d; the merge saves nothing", separate, combined)
+	}
+	t.Logf("create-post preconditions: %d statements separately, %d combined", separate, combined)
 }

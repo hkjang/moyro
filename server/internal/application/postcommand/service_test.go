@@ -577,12 +577,12 @@ func TestExecuteEnforcesCreatePermissionBeforeMembership(t *testing.T) {
 			called := false
 			service := New(Dependencies{
 				Channels: &fakeChannels{member: true}, Posts: &fakePosts{},
-				AuthorizeCreate: func(_ context.Context, actorID, channelID string) (bool, error) {
+				AuthorizeCreate: func(_ context.Context, actorID, channelID string) (CreateAuthorization, error) {
 					called = true
 					if actorID != "user-1" || channelID != "channel-1" {
 						t.Fatalf("authorization scope = (%q, %q)", actorID, channelID)
 					}
-					return test.allowed, test.err
+					return CreateAuthorization{Allowed: test.allowed, IsMember: true}, test.err
 				},
 				Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
 			})
@@ -600,8 +600,10 @@ func TestExecuteContinuesAfterCreatePermissionAllowed(t *testing.T) {
 	postStore := &fakePosts{}
 	service := New(Dependencies{
 		Channels: &fakeChannels{member: true}, Posts: postStore,
-		AuthorizeCreate: func(context.Context, string, string) (bool, error) { return true, nil },
-		Logger:          slog.New(slog.NewTextHandler(io.Discard, nil)),
+		AuthorizeCreate: func(context.Context, string, string) (CreateAuthorization, error) {
+			return CreateAuthorization{Allowed: true, IsMember: true}, nil
+		},
+		Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
 	})
 	post, err := service.Execute(context.Background(), Command{
 		ActorID: "user-1", ChannelID: "channel-1", Message: "allowed",

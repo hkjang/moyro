@@ -187,7 +187,7 @@ type Dependencies struct {
 	LinkPreviews       LinkPreviewer
 	Audit              AuditSink
 	Activity           ActivitySink
-	AuthorizeCreate    func(ctx context.Context, actorID, channelID string) (bool, error)
+	AuthorizeCreate    func(ctx context.Context, actorID, channelID string) (CreateAuthorization, error)
 	Logger             *slog.Logger
 	IncrementPostCount func()
 }
@@ -204,7 +204,7 @@ type Service struct {
 	linkPreviews       LinkPreviewer
 	audit              AuditSink
 	activity           ActivitySink
-	authorizeCreate    func(ctx context.Context, actorID, channelID string) (bool, error)
+	authorizeCreate    func(ctx context.Context, actorID, channelID string) (CreateAuthorization, error)
 	logger             *slog.Logger
 	incrementPostCount func()
 }
@@ -228,25 +228,48 @@ func New(deps Dependencies) *Service {
 	}
 }
 
+// CreateAuthorization is what an adapter's authorizer reports back: whether
+// the actor may create a post here, and whether it belongs to the channel.
+// Both travel together because a single query can answer both, and the
+// posting path used to spend a round-trip on each.
+type CreateAuthorization struct {
+	Allowed  bool
+	IsMember bool
+}
+
+// authorize resolves permission and membership before any hook or write runs.
+// Adapters that supply an authorizer answer both from one read; the fallback
+// preserves the membership check for adapters that do not.
+func (s *Service) authorize(ctx context.Context, command Command) error {
+	if s.authorizeCreate != nil {
+		authorization, err := s.authorizeCreate(ctx, command.ActorID, command.ChannelID)
+		if err != nil {
+			return fail(FailurePermissionCheck, err)
+		}
+		if !authorization.Allowed {
+			return fail(FailurePermissionDenied, errors.New("create_post permission is required"))
+		}
+		if !authorization.IsMember {
+			return fail(FailureNotMember, errors.New("not a channel member"))
+		}
+		return nil
+	}
+	isMember, err := s.channels.IsMember(ctx, command.ChannelID, command.ActorID)
+	if err != nil {
+		return fail(FailureMembershipCheck, err)
+	}
+	if !isMember {
+		return fail(FailureNotMember, errors.New("not a channel member"))
+	}
+	return nil
+}
+
 // Execute applies the common create-post lifecycle for every trusted adapter.
 // Best-effort post-commit work logs failures but does not turn an already
 // persisted post into a failed transport request.
 func (s *Service) Execute(ctx context.Context, command Command) (*posts.Post, error) {
-	if s.authorizeCreate != nil {
-		allowed, err := s.authorizeCreate(ctx, command.ActorID, command.ChannelID)
-		if err != nil {
-			return nil, fail(FailurePermissionCheck, err)
-		}
-		if !allowed {
-			return nil, fail(FailurePermissionDenied, errors.New("create_post permission is required"))
-		}
-	}
-	isMember, err := s.channels.IsMember(ctx, command.ChannelID, command.ActorID)
-	if err != nil {
-		return nil, fail(FailureMembershipCheck, err)
-	}
-	if !isMember {
-		return nil, fail(FailureNotMember, errors.New("not a channel member"))
+	if err := s.authorize(ctx, command); err != nil {
+		return nil, err
 	}
 	if command.RootID != "" {
 		root, err := s.posts.Get(ctx, command.RootID)

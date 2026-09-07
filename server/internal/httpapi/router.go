@@ -3,7 +3,6 @@ package httpapi
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -52,7 +51,6 @@ import (
 	"github.com/hkjang/moyro/server/internal/webui"
 	"github.com/hkjang/moyro/server/internal/workitems"
 	"github.com/hkjang/moyro/server/internal/ws"
-	"github.com/jackc/pgx/v5"
 )
 
 // Backend bundles the HTTP handler with the background workers the router
@@ -192,31 +190,29 @@ func New(cfg *config.Config, db *store.DB, hub *ws.Hub, host *pluginhost.Host, l
 		LinkPreviews: linkSvc,
 		Audit:        auditSvc,
 		Activity:     postActivitySink,
-		AuthorizeCreate: func(ctx context.Context, actorID, channelID string) (bool, error) {
+		// Live user, live channel, and membership all come from one read;
+		// permission resolution is the only other question, and it is a
+		// different one — it depends on role configuration rather than on
+		// the channel row.
+		AuthorizeCreate: func(ctx context.Context, actorID, channelID string) (postcommand.CreateAuthorization, error) {
 			if rbacServiceErr != nil {
-				return false, rbacServiceErr
+				return postcommand.CreateAuthorization{}, rbacServiceErr
 			}
-			if _, err := authSvc.UserByID(ctx, actorID); errors.Is(err, pgx.ErrNoRows) {
-				return false, nil
-			} else if err != nil {
-				return false, err
-			}
-			channel, err := channelSvc.Get(ctx, channelID)
-			if errors.Is(err, pgx.ErrNoRows) {
-				return false, nil
-			}
+			preconditions, err := channelSvc.ReadPostPreconditions(ctx, channelID, actorID)
 			if err != nil {
-				return false, err
+				return postcommand.CreateAuthorization{}, err
 			}
-			if channel == nil {
-				return false, nil
+			channel := preconditions.Channel
+			if channel == nil || channel.DeleteAt != 0 || !preconditions.UserLive {
+				return postcommand.CreateAuthorization{}, nil
 			}
-			if channel.DeleteAt != 0 {
-				return false, nil
-			}
-			return rbacService.Allowed(ctx, rbac.UserPrincipal(actorID), rbac.PermissionCreatePost, rbac.Scope{
+			allowed, err := rbacService.Allowed(ctx, rbac.UserPrincipal(actorID), rbac.PermissionCreatePost, rbac.Scope{
 				TeamID: channel.TeamID, ChannelID: channel.ID,
 			})
+			if err != nil {
+				return postcommand.CreateAuthorization{}, err
+			}
+			return postcommand.CreateAuthorization{Allowed: allowed, IsMember: preconditions.IsMember}, nil
 		},
 		Logger:             logger,
 		IncrementPostCount: metrics.IncPostsCreated,

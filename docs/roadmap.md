@@ -65,8 +65,6 @@ Next polish:
 - Revisit message-list windowing if conversations outgrow the current
   approach. Off-screen rows are skipped by the browser today, which bounds
   rendering cost without breaking id-based jumps; only memory still scales.
-- Merge the create-post authorization and membership checks into one query;
-  the posting path still spends two round-trips answering one question.
 - Expand focus management and roving keyboard navigation across older dialogs
   and menus.
 
@@ -82,6 +80,9 @@ Status: partial.
 - Optional Redis fanout
 - Optional S3-compatible file storage
 - Email digest worker
+- Single-read create-post preconditions. The live user, the channel, and
+  channel membership come from one statement instead of three, and membership
+  is no longer asked twice — permission resolution already reads that row.
 - Idempotent approval execution. The decision handler runs the protected
   action inline and a recovery worker sweeps actions a crash left unexecuted;
   the loser of that race now reports the completed action instead of an

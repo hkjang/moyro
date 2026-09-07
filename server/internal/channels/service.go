@@ -1082,6 +1082,52 @@ func (s *Service) IsMember(ctx context.Context, channelID, userID string) (bool,
 	return exists, err
 }
 
+// PostPreconditions is the single answer to everything the create-post path
+// has to establish before it authorizes a write: which channel is being
+// posted into, whether the actor is still a live user, and whether the actor
+// belongs to the channel.
+type PostPreconditions struct {
+	Channel  *Channel
+	UserLive bool
+	IsMember bool
+}
+
+// ReadPostPreconditions answers those three questions in one round-trip.
+// The posting path used to ask them separately, and the membership question
+// was asked twice — once here and once inside permission resolution, which
+// already reads the same channel_members row. A missing channel yields a
+// zero value and no error: every caller treats "no such channel" and "not
+// permitted" identically, and reporting it as an error would only make them
+// re-classify it.
+func (s *Service) ReadPostPreconditions(ctx context.Context, channelID, userID string) (PostPreconditions, error) {
+	var result PostPreconditions
+	var channel Channel
+	var teamID *string
+	err := s.db.Pool.QueryRow(ctx, `
+		SELECT c.id, c.team_id, c.type, c.display_name, c.name, c.header, c.purpose,
+		       c.create_at, c.update_at, c.delete_at,
+		       EXISTS(SELECT 1 FROM users u WHERE u.id=$2 AND u.delete_at=0),
+		       EXISTS(SELECT 1 FROM channel_members cm WHERE cm.channel_id=$1 AND cm.user_id=$2)
+		FROM channels c
+		WHERE c.id=$1
+	`, channelID, userID).Scan(
+		&channel.ID, &teamID, &channel.Type, &channel.DisplayName, &channel.Name,
+		&channel.Header, &channel.Purpose, &channel.CreateAt, &channel.UpdateAt, &channel.DeleteAt,
+		&result.UserLive, &result.IsMember,
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return PostPreconditions{}, nil
+	}
+	if err != nil {
+		return PostPreconditions{}, err
+	}
+	if teamID != nil {
+		channel.TeamID = *teamID
+	}
+	result.Channel = &channel
+	return result, nil
+}
+
 // GetByName resolves a channel by its team-scoped name. Mirrors
 // `GET /api/v4/teams/{team_id}/channels/name/{channel_name}` for clients
 // that route by URL slug rather than UUID.
