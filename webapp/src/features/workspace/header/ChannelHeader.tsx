@@ -184,12 +184,15 @@ export function ChannelHeader(props: ChannelHeaderProps) {
             <><span className="channel-hash">#</span>{channel.display_name}</>
           )}
           {channel.type !== "D" && stats && (
-            <span
-              className="channel-stats-chip"
+            <button
+              type="button"
+              className="channel-stats-chip is-button"
               title={`멤버 ${stats.member_count}명 · 고정 ${stats.pinnedpost_count}개 · 파일 ${stats.files_count}개`}
+              aria-label={`멤버 ${stats.member_count}명 보기`}
+              onClick={() => onOpenContext("members")}
             >
               <PeopleAltOutlined fontSize="inherit" aria-hidden /> {stats.member_count}
-            </span>
+            </button>
           )}
           <ChannelSettingsMenu props={notifyProps} onChange={onChangeNotify} />
           {isAdmin && channel.type !== "D" && channel.type !== "G" && (

@@ -51,6 +51,7 @@ import { useTimelineScroll } from "@/features/workspace/model/useTimelineScroll"
 import { useOlderPosts } from "@/features/workspace/model/useOlderPosts";
 import { useThreadPanel } from "@/features/workspace/model/useThreadPanel";
 import { TimelineSkeleton } from "@/features/workspace/messages/TimelineSkeleton";
+import { ChannelIntro } from "@/features/workspace/messages/ChannelIntro";
 import { ShortcutHelpModal } from "@/features/workspace/dialogs/ShortcutHelpModal";
 import type {
   FilesMap,
@@ -730,6 +731,13 @@ export function ChatView() {
       .then((s) => setMyStatus(s.status))
       .catch(() => undefined);
   }, [token, user]);
+  // The socket connecting flips the server-side presence to online and
+  // broadcasts it; the account menu must follow that broadcast rather than
+  // keep the "offline" it read a moment before the socket opened.
+  const ownPresence = user ? statuses[user.id] : undefined;
+  useEffect(() => {
+    if (ownPresence) setMyStatus(ownPresence);
+  }, [ownPresence]);
 
   // ---- WebSocket (with reconnect + reconciler) ----
   //
@@ -1367,7 +1375,15 @@ export function ChatView() {
                   {loadingPosts ? (
                     <TimelineSkeleton />
                   ) : posts.length === 0 ? (
-                    <div className="chat-empty">첫 메시지를 남겨보세요.</div>
+                    <ChannelIntro
+                      channel={currentChannel}
+                      stats={channelStatsByID[currentChannel.id]}
+                      peer={currentChannel.type === "D" ? users[directMessagePeer(currentChannel.name, user?.id ?? "")] : undefined}
+                      peerStatus={currentChannel.type === "D" ? statuses[directMessagePeer(currentChannel.name, user?.id ?? "")] : undefined}
+                      token={token ?? ""}
+                      onOpenInfo={() => openChannelContext("info")}
+                      onOpenMembers={() => openChannelContext("members")}
+                    />
                   ) : (
                     <>
                     {olderPosts.loading && (

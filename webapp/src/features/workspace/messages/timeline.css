@@ -388,3 +388,65 @@
   color: var(--flow-text-muted, #667085);
   font-size: 12px;
 }
+
+/* ── Empty conversation ───────────────────────────────────────────────── */
+.channel-intro {
+  display: flex;
+  max-width: 520px;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  margin: 32px 20px 8px;
+}
+
+.channel-intro-mark {
+  display: grid;
+  width: 56px;
+  height: 56px;
+  place-items: center;
+  border-radius: 16px;
+  background: color-mix(in srgb, var(--flow-brand, #3157d5) 12%, var(--flow-surface, #fff));
+  color: var(--flow-brand, #3157d5);
+  font-size: 30px;
+  font-weight: 800;
+}
+
+.channel-intro-title {
+  display: block;
+  margin: 8px 0 0;
+  font-size: 22px;
+  font-weight: 800;
+}
+
+.channel-intro p {
+  margin: 0;
+  color: var(--flow-text-muted, #667085);
+  font-size: 13px;
+}
+
+.channel-intro .channel-intro-hint {
+  margin-top: 4px;
+  color: var(--flow-text, #182033);
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.channel-intro-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.channel-intro-actions button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.channel-stats-chip.is-button {
+  cursor: pointer;
+}
+
+.channel-stats-chip.is-button:hover {
+  background: var(--flow-surface-subtle, #f6f7f9);
+}
