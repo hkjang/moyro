@@ -391,3 +391,61 @@ describe("MessageItem emoticons", () => {
     expect(container.querySelector(".msg-body")?.textContent).toContain("파이팅!");
   });
 });
+
+describe("MessageItem mark-unread action", () => {
+  let container: HTMLDivElement;
+  let root: Root;
+
+  beforeEach(() => {
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+  });
+
+  afterEach(async () => {
+    await act(async () => root.unmount());
+    container.remove();
+  });
+
+  it("offers 여기부터 안 읽음 only when the host wired it, and calls it once", async () => {
+    const onMarkUnread = vi.fn();
+    await act(async () => root.render(
+      <MessageItem
+        post={{ ...post, root_id: "" } as never}
+        isMe={false}
+        reactions={[]}
+        currentUserId="user-2"
+        files={[]}
+        token="t"
+        onToggleReaction={vi.fn()}
+        onEdit={vi.fn(async () => true)}
+        onDelete={vi.fn()}
+        onMarkUnread={onMarkUnread}
+      />,
+    ));
+    const trigger = container.querySelector<HTMLButtonElement>('button[aria-label="메시지 작업 더보기"]');
+    await act(async () => trigger?.click());
+    await act(async () => menuItem("여기부터 안 읽음").click());
+    expect(onMarkUnread).toHaveBeenCalledOnce();
+  });
+
+  it("hides the action when no handler is provided", async () => {
+    await act(async () => root.render(
+      <MessageItem
+        post={{ ...post, root_id: "" } as never}
+        isMe={false}
+        reactions={[]}
+        currentUserId="user-2"
+        files={[]}
+        token="t"
+        onToggleReaction={vi.fn()}
+        onEdit={vi.fn(async () => true)}
+        onDelete={vi.fn()}
+      />,
+    ));
+    const trigger = container.querySelector<HTMLButtonElement>('button[aria-label="메시지 작업 더보기"]');
+    await act(async () => trigger?.click());
+    const labels = [...document.querySelectorAll('[role="menuitem"]')].map((i) => i.textContent?.trim());
+    expect(labels).not.toContain("여기부터 안 읽음");
+  });
+});

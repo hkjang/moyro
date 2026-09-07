@@ -840,6 +840,17 @@ export function ChatView() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dmChannels, user?.id]);
   const currentChannelLabel = channelDisplayLabel(currentChannel, users, user?.id ?? "");
+  // Someone can start typing before they have ever posted here, so their
+  // profile may not be loaded when the indicator needs their name.
+  const typingUserIds = useMemo(
+    () => Object.keys(typingUsers).filter((uid) => uid !== user?.id),
+    [typingUsers, user?.id],
+  );
+  useEffect(() => {
+    const missing = typingUserIds.filter((uid) => !users[uid]);
+    if (missing.length) hydrateUsers(missing);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [typingUserIds]);
   // Phase 22 — favorites cross both public and DM lists. Channels in the
   // favorites category get hoisted into a top section so they're a single
   // click away even when the user has dozens of channels.
@@ -910,6 +921,24 @@ export function ChatView() {
     hydrateUsers: (ids) => { void hydrateUsers(ids); },
   });
   const { members: channelMembers, pinned: channelPinned, permalinkFor } = contextData;
+
+  const onMarkUnread = useCallback(async (post: Post) => {
+    if (!token || !user) return;
+    try {
+      const result = await api.setPostUnread(token, user.id, post.id);
+      // Place the divider immediately rather than waiting for the socket, and
+      // record the boundary so returning to this channel keeps it.
+      lastViewedRef.current[post.channel_id] = result.last_viewed_at;
+      setUnreadMarkerAt(result.last_viewed_at);
+      setUnread((current) => ({
+        ...current,
+        [post.channel_id]: { msg: result.msg_count, mention: result.mention_count },
+      }));
+      toast.success("여기부터 안 읽음으로 표시했습니다.");
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "안 읽음 표시에 실패했습니다.");
+    }
+  }, [token, user, toast]);
   const emoticons = useEmoticonPreference(token, user?.id);
 
   function openChannelContext(tab: Exclude<WorkspaceContextTab, "thread">) {
@@ -1418,6 +1447,7 @@ export function ChatView() {
                           onRemindMe={() => setReminderForPostId(p.id)}
                           editRequestSeq={editRequest.postId === p.id ? editRequest.seq : 0}
                           permalinkFor={permalinkFor}
+                          onMarkUnread={() => void onMarkUnread(p)}
                           emoticonsEnabled={emoticons.enabled}
                         />
                       );
@@ -1440,7 +1470,7 @@ export function ChatView() {
                   </div>
                 )}
                 <TypingIndicator
-                  typingUsers={Object.keys(typingUsers).filter((uid) => uid !== user?.id)}
+                  typingUsers={typingUserIds}
                   users={users}
                 />
                 <MessageComposer

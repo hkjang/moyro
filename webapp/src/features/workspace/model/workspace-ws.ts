@@ -225,6 +225,19 @@ export function handleWorkspaceWebSocketEvent(
       if (ch) setUnread((u) => ({ ...u, [ch]: { msg: 0, mention: 0 } }));
       return;
     }
+    // Emitted when this reader rewinds their own marker (possibly from
+    // another device). Unlike `unread_updated` it applies to the open channel
+    // too: the whole point is to leave the current channel unread.
+    case "channel_unread_updated": {
+      const ch = String(data.channel_id ?? "");
+      if (!ch) return;
+      setUnread((u) => ({
+        ...u,
+        [ch]: { msg: Number(data.msg_count ?? 0), mention: Number(data.mention_count ?? 0) },
+      }));
+      return;
+    }
+
     case "unread_updated": {
       const ch = String(data.channel_id ?? "");
       if (!ch) return;

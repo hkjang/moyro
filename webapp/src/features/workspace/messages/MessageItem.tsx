@@ -11,6 +11,7 @@ import MoreHorizRounded from "@mui/icons-material/MoreHorizRounded";
 import LinkRounded from "@mui/icons-material/LinkRounded";
 import ContentCopyRounded from "@mui/icons-material/ContentCopyRounded";
 import NotificationsNoneRounded from "@mui/icons-material/NotificationsNoneRounded";
+import MarkChatUnreadOutlined from "@mui/icons-material/MarkChatUnreadOutlined";
 import PushPinRounded from "@mui/icons-material/PushPinRounded";
 import StarBorderRounded from "@mui/icons-material/StarBorderRounded";
 import StarRounded from "@mui/icons-material/StarRounded";
@@ -86,6 +87,8 @@ export type MessageItemProps = {
   channelLabel?: string;
   onJumpToChannel?: () => void;
   onRemindMe?: () => void;
+  /** Rewinds the reader's marker so this post is the first unread one. */
+  onMarkUnread?: () => void;
   /**
    * True when this post directly follows another by the same author within
    * the grouping window. The row then drops its avatar/name/time header and
@@ -130,6 +133,7 @@ export function MessageItem(props: MessageItemProps) {
     channelLabel,
     onJumpToChannel,
     onRemindMe,
+    onMarkUnread,
     continuation = false,
     editRequestSeq = 0,
     permalinkFor,
@@ -487,6 +491,15 @@ export function MessageItem(props: MessageItemProps) {
             >
               <GavelRounded fontSize="small" aria-hidden />
               <span>결정으로 기록</span>
+            </MenuItem>
+          )}
+          {onMarkUnread && (
+            <MenuItem
+              className="message-action-menu-item"
+              onClick={() => runMoreAction(onMarkUnread)}
+            >
+              <MarkChatUnreadOutlined fontSize="small" aria-hidden />
+              <span>여기부터 안 읽음</span>
             </MenuItem>
           )}
           {permalinkFor && (

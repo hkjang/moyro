@@ -674,6 +674,14 @@ export const api = {
     }),
   deletePost: (token: string, postId: string) =>
     request<{ status: string }>(token, `/posts/${postId}`, { method: "DELETE" }),
+  // Rewinds the caller's read marker so this post becomes the first unread
+  // one in its channel. Mirrors Mattermost's post set_unread.
+  setPostUnread: (token: string, userId: string, postId: string) =>
+    request<{ channel_id: string; last_viewed_at: number; msg_count: number; mention_count: number }>(
+      token,
+      `/users/${encodeURIComponent(userId)}/posts/${encodeURIComponent(postId)}/set_unread`,
+      { method: "POST" },
+    ),
   pinPost: (token: string, postId: string) =>
     request<Post>(token, `/posts/${postId}/pin`, { method: "POST" }),
   unpinPost: (token: string, postId: string) =>

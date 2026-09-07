@@ -91,6 +91,8 @@ not write `html[data-theme]` directly.
 - Opening a conversation on a keyboard device places focus in the composer;
   the route-change focus handoff must not take it back. Touch devices keep
   focus where the tap left it so the keyboard does not cover the messages.
+- No surface ever shows a raw user id in place of a name. The typing
+  indicator counts unnamed people ("2명이 입력 중") rather than printing ids.
 - A direct message is always labelled with the other person's name (`@name`),
   never a user id; until that profile loads it says "다이렉트 메시지".
 - Channel selection, search, message composition, context tabs, and approval

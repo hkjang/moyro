@@ -10,12 +10,16 @@ import type {
 
 export function TypingIndicator({ typingUsers, users }: { typingUsers: string[]; users: UsersMap }) {
   if (typingUsers.length === 0) return null;
-  const names = typingUsers.map((uid) => users[uid]?.username ?? uid.slice(0, 6)).slice(0, 3);
-  const label = names.length === 1
-    ? `${names[0]}님이 입력 중…`
-    : names.length <= 3
+  // A user id is not a name. Until the profile loads, say how many people are
+  // typing rather than showing an identifier the reader cannot place.
+  const names = typingUsers.map((uid) => users[uid]?.username).filter((name): name is string => Boolean(name));
+  const label = names.length === 0
+    ? typingUsers.length === 1 ? "누군가 입력 중…" : `${typingUsers.length}명이 입력 중…`
+    : names.length === typingUsers.length && names.length <= 3
       ? `${names.join(", ")}님이 입력 중…`
-      : "여러 명이 입력 중…";
+      : names.length <= 3
+        ? `${names.join(", ")}님 외 ${typingUsers.length - names.length}명이 입력 중…`
+        : "여러 명이 입력 중…";
   return <div className="typing-indicator">{label}</div>;
 }
 
