@@ -99,8 +99,15 @@ export function ProductShell() {
 
   useEffect(() => {
     // Route changes should move the screen-reader/keyboard cursor into the
-    // new work area without altering its scroll position.
-    contentRef.current?.focus({ preventScroll: true });
+    // new work area without altering its scroll position — unless the new
+    // surface already placed focus somewhere useful inside it (the workspace
+    // composer takes focus when a conversation opens). Stealing it back to
+    // the container would make every channel switch cost a click.
+    const content = contentRef.current;
+    if (!content) return;
+    const active = document.activeElement;
+    if (active && active !== document.body && content.contains(active)) return;
+    content.focus({ preventScroll: true });
   }, [location.pathname]);
 
   useEffect(() => {

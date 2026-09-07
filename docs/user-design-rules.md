@@ -49,8 +49,10 @@ not write `html[data-theme]` directly.
 
 ## Layout rules
 
-- Desktop uses a 60–68 px global rail, a 264–288 px workspace sidebar, a
-  flexible message region, and an optional 380–440 px context panel.
+- Desktop uses a 60–68 px global rail, a 264–288 px workspace sidebar
+  (232–252 px at or below 1280 px), a flexible message region that keeps at
+  least half the width, and an optional context panel of 320–420 px
+  (`clamp(320px, 26vw, 420px)`).
 - The global rail changes product scope; the context sidebar changes team,
   channel, or direct conversation inside the workspace.
 - Messages remain flat rows rather than speech bubbles. Hover and focus expose
@@ -86,6 +88,11 @@ not write `html[data-theme]` directly.
   tasks with Escape handling, focus containment, and focus return.
 - Desktop targets are at least 36 px; mobile touch targets are at least 44 px.
 - Every state combines text or icon shape with color and meets WCAG AA contrast.
+- Opening a conversation on a keyboard device places focus in the composer;
+  the route-change focus handoff must not take it back. Touch devices keep
+  focus where the tap left it so the keyboard does not cover the messages.
+- A direct message is always labelled with the other person's name (`@name`),
+  never a user id; until that profile loads it says "다이렉트 메시지".
 - Channel selection, search, message composition, context tabs, and approval
   actions must be operable by keyboard. Ordinary message rows are not all Tab
   stops; exact-source navigation may focus a row programmatically.

@@ -40,6 +40,7 @@ import { ChannelMembersView, ChannelPinnedView } from "@/features/workspace/cont
 import { useChannelContextData } from "@/features/workspace/model/useChannelContextData";
 import { useWorkspaceShortcuts } from "@/features/workspace/model/useWorkspaceShortcuts";
 import { useEmoticonPreference } from "@/features/workspace/model/useEmoticonPreference";
+import { useScheduling } from "@/features/workspace/model/useScheduling";
 import { ChannelHeader } from "@/features/workspace/header/ChannelHeader";
 import { MessageComposer } from "@/features/workspace/composer/MessageComposer";
 import { clearMoyroDraftsForUser } from "@/features/workspace/composer/useDraft";
@@ -59,7 +60,7 @@ import type {
   UnreadEntry,
   UsersMap,
 } from "@/features/workspace/model/types";
-import { workspaceSlug } from "@/features/workspace/model/workspace-helpers";
+import { channelDisplayLabel, directMessagePeer, workspaceSlug } from "@/features/workspace/model/workspace-helpers";
 import { parseWorkspaceSearchFilters } from "@/features/workspace/model/search";
 import { selectChannelFileEntries } from "@/features/workspace/model/selectors";
 import { boundPostWindow } from "@/features/workspace/model/post-window";
@@ -259,27 +260,6 @@ export function ChatView() {
   const [showDiscover, setShowDiscover] = useState(false);
 
   // Scheduled messages stay global while the modal remembers its composer.
-  // The pending-schedule list is kept only so websocket/schedule handlers can
-  // update it; the count itself is surfaced by My Work rather than the sidebar.
-  const [, setScheduledList] = useState<import("@/api/client").ScheduledPost[]>([]);
-  const [scheduleModalFor, setScheduleModalFor] = useState<
-    | null
-    | {
-        channelId: string;
-        message: string;
-        fileIds: string[];
-        // Phase 20 (F7) — when the 🕐 is clicked inside a thread, we persist
-        // the rootId so the scheduled post is routed back to the same
-        // thread at send time. Undefined for root-pane composes.
-        rootId?: string;
-        // Phase 20 (F3) — which composer to reset after successful schedule.
-        // "root" clears the main-pane composer; "thread" clears the
-        // ThreadPanel's reply composer. Avoids wiping the wrong textarea
-        // when the user schedules from one surface while the other has
-        // unrelated in-flight text.
-        source: "root" | "thread";
-      }
-  >(null);
   // Phase 20 (F3) — bump-to-reset counters per composer surface. Passed
   // into <MessageComposer resetSeq=… />; the composer only reacts to *changes*,
   // so initial-mount rehydrate is preserved.
@@ -290,7 +270,6 @@ export function ChatView() {
   // only one open at a time so we render a single overlay. `reminderToasts`
   // is a short stack of incoming reminder_fired WS events; each entry is
   // auto-dismissed by a per-id timer but can also be clicked to jump.
-  const [reminderForPostId, setReminderForPostId] = useState<string | null>(null);
   const [reminderToasts, setReminderToasts] = useState<ReminderToast[]>([]);
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
 
@@ -843,6 +822,16 @@ export function ChatView() {
 
   const publicChannels = useMemo(() => channels.filter((c) => c.type !== "D"), [channels]);
   const dmChannels = useMemo(() => channels.filter((c) => c.type === "D"), [channels]);
+  // Direct-message rows are named after the other person, so their profiles
+  // must be loaded with the channel list — otherwise the sidebar and header
+  // fall back to raw user ids until that person happens to post.
+  useEffect(() => {
+    if (!user) return;
+    const peers = dmChannels.map((c) => directMessagePeer(c.name, user.id)).filter((id) => id && !users[id]);
+    if (peers.length) hydrateUsers(Array.from(new Set(peers)));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dmChannels, user?.id]);
+  const currentChannelLabel = channelDisplayLabel(currentChannel, users, user?.id ?? "");
   // Phase 22 — favorites cross both public and DM lists. Channels in the
   // favorites category get hoisted into a top section so they're a single
   // click away even when the user has dozens of channels.
@@ -1075,85 +1064,21 @@ export function ChatView() {
   });
 
 
-  // Open the schedule modal from the MessageComposer. Captures the current
-  // compose state + active channel so the submission path has what it
-  // needs without re-reading DOM. Phase 20 (F7): the thread composer
-  // calls this with source="thread" + a rootId so the scheduled post
-  // lands back in the same thread at send time.
-  function onOpenScheduleModal(message: string, fileIds: string[]) {
-    onOpenScheduleModalFor("root", message, fileIds, undefined);
-  }
-  function onOpenScheduleModalFromThread(rootId: string) {
-    return (message: string, fileIds: string[]) =>
-      onOpenScheduleModalFor("thread", message, fileIds, rootId);
-  }
-  function onOpenScheduleModalFor(
-    source: "root" | "thread",
-    message: string,
-    fileIds: string[],
-    rootId: string | undefined,
-  ) {
-    // For thread scheduling the channelId comes from the root post —
-    // we look it up in the already-loaded thread post list so we don't
-    // block the UI on a fetch.
-    let channelId: string | null = currentChannelId;
-    if (source === "thread" && rootId) {
-      const root = thread.posts.find((p) => p.id === rootId) ?? posts.find((p) => p.id === rootId);
-      channelId = root?.channel_id ?? currentChannelId;
-    }
-    if (!channelId) return;
-    const trimmed = message.trim();
-    if (!trimmed && fileIds.length === 0) {
-      setError("메시지를 먼저 입력하세요.");
-      return;
-    }
-    setScheduleModalFor({ channelId, message: trimmed, fileIds, rootId, source });
-  }
-
-  async function onConfirmSchedule(sendAt: number): Promise<boolean> {
-    if (!token || !scheduleModalFor) return false;
-    try {
-      const sp = await api.createScheduledPost(token, {
-        channel_id: scheduleModalFor.channelId,
-        root_id: scheduleModalFor.rootId,
-        message: scheduleModalFor.message,
-        file_ids: scheduleModalFor.fileIds,
-        send_at: sendAt,
-      });
-      setScheduledList((prev) => [...prev, sp].sort((a, b) => a.send_at - b.send_at));
-      // Phase 20 (F3) — bump the right reset counter so the originating
-      // MessageComposer clears its value/pending/draft after a successful
-      // schedule. Without this the user's typed text stays in the
-      // textarea and can be accidentally Enter-sent a second time.
-      if (scheduleModalFor.source === "thread") {
-        setThreadComposerResetSeq((n) => n + 1);
-      } else {
-        setRootComposerResetSeq((n) => n + 1);
-      }
-      setScheduleModalFor(null);
-      toast.success("메시지를 예약했습니다.");
-      return true;
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "예약 실패");
-      return false;
-    }
-  }
-
-  // Phase 19 — create a reminder for the given post. `when` is the epoch-ms
-  // target. Closes the popover on success; on error shows an inline error
-  // and keeps the popover open so the user can retry a different time.
-  async function onCreateReminder(postId: string, when: number): Promise<boolean> {
-    if (!token) return false;
-    try {
-      await api.createPostReminder(token, postId, when);
-      setReminderForPostId(null);
-      toast.success("리마인더를 설정했습니다.");
-      return true;
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "리마인더 생성 실패");
-      return false;
-    }
-  }
+  const scheduling = useScheduling({
+    token,
+    currentChannelId,
+    posts,
+    threadPosts: thread.posts,
+    onError: setError,
+    onNotice: toast.success,
+    onScheduled: (source) => {
+      // Reset the originating composer so the typed text cannot be
+      // Enter-sent a second time after it was scheduled.
+      if (source === "thread") setThreadComposerResetSeq((n) => n + 1);
+      else setRootComposerResetSeq((n) => n + 1);
+    },
+  });
+  const { setScheduledList, setReminderForPostId } = scheduling;
 
   function onJumpFromReminder(channelId: string) {
     if (!channelId) return;
@@ -1419,9 +1344,7 @@ export function ChatView() {
                     isSaved={savedIds.has(p.id)}
                     onToggleSaved={() => postActions.toggleSaved(p)}
                     compact
-                    channelLabel={
-                      channels.find((c) => c.id === p.channel_id)?.display_name
-                    }
+                    channelLabel={channelDisplayLabel(channels.find((c) => c.id === p.channel_id), users, user?.id ?? "").replace(/^#/, "")}
                     onJumpToChannel={() => selectChannel(p.channel_id)}
                   />
                 ))}
@@ -1507,7 +1430,7 @@ export function ChatView() {
                 <MessageComposer
                   token={token ?? ""}
                   channelID={currentChannelId}
-                  destinationLabel={currentChannel ? `#${currentChannel.display_name}에 전송` : "채널에 전송"}
+                  destinationLabel={currentChannel ? `${currentChannelLabel}에 전송` : "채널에 전송"}
                   canUseAI={canUseAI}
                   aiPermissionLoaded={aiAvailabilityLoaded}
                   aiStatusLabel={aiStatusLabel}
@@ -1517,7 +1440,7 @@ export function ChatView() {
                   onEditLast={onEditLastMessage}
                   onTyping={sendTyping}
                   onUpload={onUploadFiles}
-                  onSchedule={onOpenScheduleModal}
+                  onSchedule={scheduling.openForRoot}
                   userId={user?.id}
                   rootId={null}
                   resetSeq={rootComposerResetSeq}
@@ -1557,11 +1480,11 @@ export function ChatView() {
                 onDelete={postActions.remove}
                 onReply={onReplyInThread}
                 onUpload={onUploadFiles}
-                onSchedule={onOpenScheduleModalFromThread(thread.rootId)}
+                onSchedule={scheduling.openForThread(thread.rootId)}
                 onSendSticker={emoticons.enabled ? thread.replySticker : undefined}
                 emoticonsEnabled={emoticons.enabled}
                 composerResetSeq={threadComposerResetSeq}
-                destinationLabel={`#${currentChannel.display_name} · 스레드에 답글`}
+                destinationLabel={`${currentChannelLabel} · 스레드에 답글`}
                 canUseAI={canUseAI}
                 aiPermissionLoaded={aiAvailabilityLoaded}
                 aiStatusLabel={aiStatusLabel}
@@ -1666,23 +1589,23 @@ export function ChatView() {
       {/* Phase 19 — schedule modal. Opens from the MessageComposer schedule button;
           onConfirm returns a bool so the modal can block itself while the
           server round-trip is in flight and surface errors inline. */}
-      {scheduleModalFor && (
+      {scheduling.target && (
         <ScheduleModal
-          channelName={channels.find((c) => c.id === scheduleModalFor.channelId)?.display_name ?? ""}
-          messagePreview={scheduleModalFor.message}
-          onCancel={() => setScheduleModalFor(null)}
-          onConfirm={onConfirmSchedule}
+          channelName={channelDisplayLabel(channels.find((c) => c.id === scheduling.target?.channelId), users, user?.id ?? "")}
+          messagePreview={scheduling.target.message}
+          onCancel={scheduling.closeSchedule}
+          onConfirm={scheduling.confirm}
         />
       )}
 
       {/* Phase 19 — reminder popover. Anchored to the center for now — a
           fixed centered card is cheap to build and keyboard-reachable
           without accessibility gymnastics around viewport clipping. */}
-      {reminderForPostId && (
+      {scheduling.reminderForPostId && (
         <ReminderPopover
-          postId={reminderForPostId}
+          postId={scheduling.reminderForPostId}
           onCancel={() => setReminderForPostId(null)}
-          onConfirm={onCreateReminder}
+          onConfirm={scheduling.createReminder}
         />
       )}
 

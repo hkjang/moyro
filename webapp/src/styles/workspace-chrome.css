@@ -664,7 +664,10 @@ html[data-theme="dark"] .modal-card {
 }
 
 .chat-shell .thread-panel {
-  width: clamp(380px, 28vw, 420px);
+  /* The panel yields before the conversation does: on a 1280px display the
+   * sidebar, panel, and rail together must leave the message column at
+   * least half the screen. */
+  width: clamp(320px, 26vw, 420px);
   border-left: 1px solid var(--chat-line);
   background: #ffffff;
   box-shadow: none;

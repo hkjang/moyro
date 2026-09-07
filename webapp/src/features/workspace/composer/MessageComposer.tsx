@@ -183,6 +183,30 @@ export function MessageComposer({
   }, [draft, resetSeq]);
 
   const composerScope = `${channelID ?? ""}:${rootId ?? "root"}`;
+  // Focus belongs in the composer whenever a conversation opens on a
+  // keyboard device; on touch devices that would pop the keyboard over the
+  // messages the reader came to read, so there the tap still decides.
+  const focusComposer = () => {
+    if (typeof window !== "undefined" && typeof window.matchMedia === "function"
+      && window.matchMedia("(hover: none) and (pointer: coarse)").matches) return;
+    textareaRef.current?.focus({ preventScroll: true });
+  };
+  useEffect(() => {
+    if (channelID) focusComposer();
+    // Mount only: later destination changes are handled by the scope reset.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // The textarea grows with its content up to a few lines, then scrolls, so
+  // a short message stays one line and a long one is not edited through a
+  // slit.
+  useLayoutEffect(() => {
+    const node = textareaRef.current;
+    if (!node) return;
+    node.style.height = "auto";
+    node.style.height = `${Math.min(node.scrollHeight, 180)}px`;
+  }, [value]);
+
   const previousScopeRef = useRef(composerScope);
   useLayoutEffect(() => {
     if (previousScopeRef.current === composerScope) return;
@@ -195,7 +219,7 @@ export function MessageComposer({
     setSending(false);
     setSendError("");
     if (fileInputRef.current) fileInputRef.current.value = "";
-    if (channelID) textareaRef.current?.focus();
+    if (channelID) focusComposer();
     // reset is intentionally keyed only by the destination; callbacks and
     // transient AI state must not restart it on ordinary composer renders.
     // eslint-disable-next-line react-hooks/exhaustive-deps

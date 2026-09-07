@@ -267,6 +267,10 @@
 }
 
 @media (max-width: 1280px) {
+  /* Narrower sidebar so the conversation keeps the width on laptop screens. */
+  .workspace-shell.chat-shell {
+    grid-template-columns: minmax(232px, 252px) minmax(0, 1fr) auto;
+  }
   .workspace-shell .channel-context-actions .channel-context-action > span {
     position: absolute;
     width: 1px;

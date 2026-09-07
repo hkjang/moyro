@@ -9,7 +9,7 @@ import {
   type User,
   type UserStatusValue,
 } from "@/api/client";
-import { parseMentionIDs } from "@/features/workspace/model/workspace-helpers";
+import { channelDisplayLabel, parseMentionIDs } from "@/features/workspace/model/workspace-helpers";
 import { appendLivePost } from "@/features/workspace/model/post-window";
 import {
   DEFAULT_INBOX_PREFERENCES,
@@ -146,12 +146,11 @@ export function handleWorkspaceWebSocketEvent(
         inboxNotificationsAllowed(inboxPreferences, new Date(), priority)
       ) {
         const author = users[p.user_id]?.username ?? "새 메시지";
-        const channelLabel = isDM
-          ? author
-          : (channel ? `#${channel.display_name}` : "채널");
+        const channelLabel = channelDisplayLabel(channel, users, user?.id ?? "");
         try {
           const n = new Notification(channelLabel, {
-            body: p.message?.slice(0, 140) || "",
+            // The title names the room; the body names who spoke.
+            body: `${author}: ${p.message?.slice(0, 120) || ""}`,
             tag: inboxPreferences.bundle_by === "none"
               ? p.id
               : inboxPreferences.bundle_by === "type"
