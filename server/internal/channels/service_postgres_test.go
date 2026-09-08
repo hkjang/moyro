@@ -121,7 +121,7 @@ func TestMarkViewedAndMarkUnreadFromPostRebuildCounters(t *testing.T) {
 	}
 
 	// A soft-deleted post must drop out of the rebuilt counters.
-	if _, err := db.Pool.Exec(ctx, `UPDATE posts SET delete_at=9_000 WHERE id='post-3'`); err != nil {
+	if _, err := db.Pool.Exec(ctx, `UPDATE posts SET delete_at=9000 WHERE id='post-3'`); err != nil {
 		t.Fatalf("soft delete post-3: %v", err)
 	}
 	_, msgCount, mentionCount, err = service.MarkUnreadFromPost(ctx, "channel-general", "user-plain", 2_000)
