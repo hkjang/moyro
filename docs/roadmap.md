@@ -80,6 +80,13 @@ Status: partial.
 - Optional Redis fanout
 - Optional S3-compatible file storage
 - Email digest worker
+- Every database-backed test runs on every push. CI used to name the packages
+  it exercised, so a Postgres-backed test in a package nobody added to that
+  list ran only at release time; twelve packages were in that state.
+- Invite and audit coverage. Invitation consumption is the security invariant
+  the package documents but never proved — concurrent signups racing the last
+  use now demonstrably admit exactly one — and audit writes are pinned as
+  fire-and-forget without being silently lost.
 - Single-read create-post preconditions. The live user, the channel, and
   channel membership come from one statement instead of three, and membership
   is no longer asked twice — permission resolution already reads that row.

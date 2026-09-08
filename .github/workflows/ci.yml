@@ -14,9 +14,9 @@ concurrency:
 
 jobs:
   migration-tests:
-    name: Database migrations (PostgreSQL ${{ matrix.postgres }})
+    name: Database-backed tests (PostgreSQL ${{ matrix.postgres }})
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
@@ -57,7 +57,7 @@ jobs:
           echo "chatdump=${fixture_dir}/com.hkjang.mattermost-chatdump-plugin-0.5.1.tar.gz" >> "${GITHUB_OUTPUT}"
           echo "echosummary=${fixture_dir}/com.mattermost.echosummary-0.6.4.tar.gz" >> "${GITHUB_OUTPUT}"
           echo "langflow=${fixture_dir}/com.mattermost.langflow-0.1.20.tar.gz" >> "${GITHUB_OUTPUT}"
-      - name: Verify migration lifecycle
+      - name: Run every database-backed test
         working-directory: server
         env:
           MOYRO_TEST_POSTGRES_DSN: postgres://moyro_migration_test:moyro_migration_test_password@127.0.0.1:5432/moyro_migration_test?sslmode=disable
@@ -66,8 +66,11 @@ jobs:
           MOYRO_TEST_ECHOSUMMARY_PLUGIN_ARCHIVE: ${{ steps.plugin-fixtures.outputs.echosummary }}
           MOYRO_TEST_LANGFLOW_PLUGIN_ARCHIVE: ${{ steps.plugin-fixtures.outputs.langflow }}
         run: |
-          go test -race -p 1 ./internal/store ./internal/auth ./internal/emojis ./internal/sidebar ./internal/files ./internal/scheduled ./internal/webhooks ./internal/pluginhost ./internal/ws ./internal/workitems ./internal/activityevents ./internal/approval ./internal/httpapi
-          go vet ./internal/store ./internal/auth ./internal/emojis ./internal/sidebar ./internal/files ./internal/scheduled ./internal/webhooks ./internal/pluginhost ./internal/ws ./internal/workitems ./internal/activityevents ./internal/approval ./internal/httpapi
+          # Every package, not a hand-kept list: a database-backed test in a
+          # package nobody remembered to add here would skip on every push and
+          # only run at release, which is the worst place to learn about it.
+          go test -race -p 1 ./...
+          go vet ./...
 
   verify:
     runs-on: ubuntu-latest
