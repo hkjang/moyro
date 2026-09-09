@@ -226,11 +226,11 @@ func (s *Service) List(ctx context.Context, limit int, actionPrefix, actorID str
 	rows, err := s.db.Pool.Query(ctx, `
 		SELECT id, COALESCE(actor_id,''), action, COALESCE(target,''), COALESCE(payload,'null'::jsonb), create_at
 		FROM audit_logs
-		WHERE ($2 = '' OR action LIKE $2 || '%')
+		WHERE ($2 = '' OR action LIKE $4)
 		  AND ($3 = '' OR actor_id = $3)
 		ORDER BY id DESC
 		LIMIT $1
-	`, limit, actionPrefix, actorID)
+	`, limit, actionPrefix, actorID, store.LikePrefix(actionPrefix))
 	if err != nil {
 		return nil, err
 	}
