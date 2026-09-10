@@ -33,7 +33,7 @@ func (h *handlers) searchAccessControlPolicies(w http.ResponseWriter, r *http.Re
 }
 
 func (h *handlers) upsertAccessControlPolicy(w http.ResponseWriter, r *http.Request) {
-	body := decodeCompatMap(r)
+	body := decodeCompatMap(w, r)
 	if _, ok := body["id"]; !ok {
 		body["id"] = uuid.NewString()
 	}

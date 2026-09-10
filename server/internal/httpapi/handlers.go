@@ -1031,9 +1031,11 @@ func (h *handlers) getUserStatus(w http.ResponseWriter, r *http.Request) {
 
 func (h *handlers) getUserStatusesByIDs(w http.ResponseWriter, r *http.Request) {
 	var ids []string
-	if err := json.NewDecoder(r.Body).Decode(&ids); err != nil {
-		writeError(w, 400, "api.user.status.ids.invalid_body", err.Error())
+	if !decodeCollectionBody(w, r, "api.user.status.ids.invalid_body", &ids) {
 		return
+	}
+	if len(ids) > maxBulkItems {
+		ids = ids[:maxBulkItems]
 	}
 	actor, err := h.auth.UserByID(r.Context(), userID(r))
 	if err != nil {
@@ -1522,8 +1524,7 @@ func (h *handlers) createDirectChannel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req directChannelReq
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, 400, "api.channel.direct.invalid_body", err.Error())
+	if !decodeCollectionBody(w, r, "api.channel.direct.invalid_body", &req) {
 		return
 	}
 	if len(req) < 1 || len(req) > 2 {
@@ -1599,8 +1600,7 @@ type createPostReq struct {
 
 func (h *handlers) createPost(w http.ResponseWriter, r *http.Request) {
 	var req createPostReq
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, 400, "api.post.create.invalid_body", err.Error())
+	if !decodeCollectionBody(w, r, "api.post.create.invalid_body", &req) {
 		return
 	}
 
@@ -1851,8 +1851,7 @@ type savedPostsBulkReq struct {
 func (h *handlers) savedPostsBulkCheck(w http.ResponseWriter, r *http.Request) {
 	uid := userID(r)
 	var req savedPostsBulkReq
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, 400, "api.saved.bulk.invalid_body", err.Error())
+	if !decodeCollectionBody(w, r, "api.saved.bulk.invalid_body", &req) {
 		return
 	}
 	if len(req.PostIDs) == 0 {
@@ -2263,8 +2262,7 @@ func (h *handlers) putMyNotifyProps(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body map[string]any
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeError(w, 400, "api.channel.notify_props.invalid_body", err.Error())
+	if !decodeCollectionBody(w, r, "api.channel.notify_props.invalid_body", &body) {
 		return
 	}
 	if err := h.channels.SetNotifyProps(r.Context(), channelID, uid, body); err != nil {
@@ -3337,12 +3335,11 @@ func (h *handlers) searchEmojis(w http.ResponseWriter, r *http.Request) {
 
 func (h *handlers) emojisByNames(w http.ResponseWriter, r *http.Request) {
 	var names []string
-	if err := json.NewDecoder(r.Body).Decode(&names); err != nil {
-		writeError(w, 400, "api.emoji.names.invalid_body", err.Error())
+	if !decodeCollectionBody(w, r, "api.emoji.names.invalid_body", &names) {
 		return
 	}
-	if len(names) > 200 {
-		names = names[:200]
+	if len(names) > maxBulkItems {
+		names = names[:maxBulkItems]
 	}
 	wanted := make([]string, 0, len(names))
 	for _, name := range names {

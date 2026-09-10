@@ -672,8 +672,7 @@ func (h *handlers) setChannelMemberNotifyProps(w http.ResponseWriter, r *http.Re
 		return
 	}
 	var body map[string]any
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeError(w, 400, "api.channel.member.notify_props.invalid_body", err.Error())
+	if !decodeCollectionBody(w, r, "api.channel.member.notify_props.invalid_body", &body) {
 		return
 	}
 	// Membership precheck so a 404 surfaces cleanly when the target isn't

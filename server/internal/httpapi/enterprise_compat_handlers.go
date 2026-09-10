@@ -1,7 +1,6 @@
 package httpapi
 
 import (
-	"encoding/json"
 	"net/http"
 	"strings"
 	"time"
@@ -12,9 +11,13 @@ import (
 
 func compatNowMillis() int64 { return time.Now().UnixMilli() }
 
-func decodeCompatMap(r *http.Request) map[string]any {
+// decodeCompatMap reads a stub endpoint's body as a loose map. These stubs
+// deliberately tolerate anything (an undecodable body just becomes an empty
+// map), but the read is still capped so a stub route isn't a cheaper way to
+// make the server buffer an arbitrary payload than a real one.
+func decodeCompatMap(w http.ResponseWriter, r *http.Request) map[string]any {
 	var body map[string]any
-	_ = json.NewDecoder(r.Body).Decode(&body)
+	_ = decodeCappedBody(w, r, &body)
 	if body == nil {
 		body = map[string]any{}
 	}
@@ -154,7 +157,7 @@ func (h *handlers) listComplianceReports(w http.ResponseWriter, r *http.Request)
 }
 
 func (h *handlers) createComplianceReport(w http.ResponseWriter, r *http.Request) {
-	body := decodeCompatMap(r)
+	body := decodeCompatMap(w, r)
 	id := uuid.NewString()
 	body["id"] = id
 	body["status"] = "finished"
@@ -217,7 +220,7 @@ func (h *handlers) getDataRetentionPolicyByID(w http.ResponseWriter, r *http.Req
 }
 
 func (h *handlers) createDataRetentionPolicy(w http.ResponseWriter, r *http.Request) {
-	body := decodeCompatMap(r)
+	body := decodeCompatMap(w, r)
 	if _, ok := body["id"]; !ok {
 		body["id"] = uuid.NewString()
 	}
@@ -226,7 +229,7 @@ func (h *handlers) createDataRetentionPolicy(w http.ResponseWriter, r *http.Requ
 }
 
 func (h *handlers) patchDataRetentionPolicy(w http.ResponseWriter, r *http.Request) {
-	body := decodeCompatMap(r)
+	body := decodeCompatMap(w, r)
 	body["id"] = chi.URLParam(r, "policyID")
 	body["update_at"] = compatNowMillis()
 	writeJSON(w, http.StatusOK, body)
@@ -262,7 +265,7 @@ func (h *handlers) createGroup(w http.ResponseWriter, r *http.Request) {
 	if h.denyGuestMutation(w, r, "api.group.create.guest_forbidden") {
 		return
 	}
-	body := decodeCompatMap(r)
+	body := decodeCompatMap(w, r)
 	if _, ok := body["id"]; !ok {
 		body["id"] = uuid.NewString()
 	}
@@ -286,7 +289,7 @@ func (h *handlers) getGroupStats(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *handlers) patchGroup(w http.ResponseWriter, r *http.Request) {
-	body := decodeCompatMap(r)
+	body := decodeCompatMap(w, r)
 	body["id"] = chi.URLParam(r, "groupID")
 	body["update_at"] = compatNowMillis()
 	writeJSON(w, http.StatusOK, body)
@@ -321,7 +324,7 @@ func (h *handlers) listSchemes(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *handlers) createScheme(w http.ResponseWriter, r *http.Request) {
-	body := decodeCompatMap(r)
+	body := decodeCompatMap(w, r)
 	if _, ok := body["id"]; !ok {
 		body["id"] = uuid.NewString()
 	}
@@ -334,7 +337,7 @@ func (h *handlers) getScheme(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *handlers) patchScheme(w http.ResponseWriter, r *http.Request) {
-	body := decodeCompatMap(r)
+	body := decodeCompatMap(w, r)
 	body["id"] = chi.URLParam(r, "schemeID")
 	body["update_at"] = compatNowMillis()
 	writeJSON(w, http.StatusOK, body)
@@ -366,7 +369,7 @@ func (h *handlers) listRemoteClusters(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *handlers) createRemoteCluster(w http.ResponseWriter, r *http.Request) {
-	body := decodeCompatMap(r)
+	body := decodeCompatMap(w, r)
 	if _, ok := body["id"]; !ok {
 		body["id"] = uuid.NewString()
 	}
@@ -379,7 +382,7 @@ func (h *handlers) getRemoteCluster(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *handlers) patchRemoteCluster(w http.ResponseWriter, r *http.Request) {
-	body := decodeCompatMap(r)
+	body := decodeCompatMap(w, r)
 	body["id"] = chi.URLParam(r, "remoteID")
 	body["update_at"] = compatNowMillis()
 	writeJSON(w, http.StatusOK, body)
@@ -427,7 +430,7 @@ func (h *handlers) canDMSharedChannelUser(w http.ResponseWriter, r *http.Request
 // ---- Property field compatibility ----
 
 func (h *handlers) createPropertyField(w http.ResponseWriter, r *http.Request) {
-	body := decodeCompatMap(r)
+	body := decodeCompatMap(w, r)
 	body["id"] = uuid.NewString()
 	body["group_id"] = chi.URLParam(r, "groupID")
 	body["create_at"] = compatNowMillis()
@@ -435,7 +438,7 @@ func (h *handlers) createPropertyField(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *handlers) patchPropertyField(w http.ResponseWriter, r *http.Request) {
-	body := decodeCompatMap(r)
+	body := decodeCompatMap(w, r)
 	body["id"] = chi.URLParam(r, "fieldID")
 	body["group_id"] = chi.URLParam(r, "groupID")
 	body["update_at"] = compatNowMillis()
@@ -452,7 +455,7 @@ func (h *handlers) getPropertyValue(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *handlers) patchPropertyValue(w http.ResponseWriter, r *http.Request) {
-	body := decodeCompatMap(r)
+	body := decodeCompatMap(w, r)
 	body["group_id"] = chi.URLParam(r, "groupID")
 	body["target_id"] = chi.URLParam(r, "targetID")
 	body["field_id"] = chi.URLParam(r, "fieldID")

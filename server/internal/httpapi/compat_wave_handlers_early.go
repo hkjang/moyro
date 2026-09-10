@@ -179,12 +179,11 @@ func (h *handlers) autocompleteUsers(w http.ResponseWriter, r *http.Request) {
 // Bounded to 200 ids per request to mirror Mattermost's behavior.
 func (h *handlers) usersByIDs(w http.ResponseWriter, r *http.Request) {
 	var ids []string
-	if err := json.NewDecoder(r.Body).Decode(&ids); err != nil {
-		writeError(w, 400, "api.user.ids.invalid_body", err.Error())
+	if !decodeCollectionBody(w, r, "api.user.ids.invalid_body", &ids) {
 		return
 	}
-	if len(ids) > 200 {
-		ids = ids[:200]
+	if len(ids) > maxBulkItems {
+		ids = ids[:maxBulkItems]
 	}
 	list, err := h.auth.UsersByIDs(r.Context(), ids)
 	if err != nil {
@@ -209,12 +208,11 @@ func (h *handlers) usersByIDs(w http.ResponseWriter, r *http.Request) {
 // usersByUsernames mirrors POST /api/v4/users/usernames.
 func (h *handlers) usersByUsernames(w http.ResponseWriter, r *http.Request) {
 	var names []string
-	if err := json.NewDecoder(r.Body).Decode(&names); err != nil {
-		writeError(w, 400, "api.user.usernames.invalid_body", err.Error())
+	if !decodeCollectionBody(w, r, "api.user.usernames.invalid_body", &names) {
 		return
 	}
-	if len(names) > 200 {
-		names = names[:200]
+	if len(names) > maxBulkItems {
+		names = names[:maxBulkItems]
 	}
 	list, err := h.auth.UsersByUsernames(r.Context(), names)
 	if err != nil {
@@ -435,12 +433,11 @@ func (h *handlers) autocompleteChannelsInTeam(w http.ResponseWriter, r *http.Req
 // out posts the caller can't see (non-member channels) before returning.
 func (h *handlers) postsByIDs(w http.ResponseWriter, r *http.Request) {
 	var ids []string
-	if err := json.NewDecoder(r.Body).Decode(&ids); err != nil {
-		writeError(w, 400, "api.post.ids.invalid_body", err.Error())
+	if !decodeCollectionBody(w, r, "api.post.ids.invalid_body", &ids) {
 		return
 	}
-	if len(ids) > 200 {
-		ids = ids[:200]
+	if len(ids) > maxBulkItems {
+		ids = ids[:maxBulkItems]
 	}
 	uid := userID(r)
 	posts, err := h.posts.ListByIDs(r.Context(), ids)
@@ -478,8 +475,7 @@ func (h *handlers) patchPost(w http.ResponseWriter, r *http.Request) {
 	postID := chi.URLParam(r, "postID")
 	uid := userID(r)
 	var req postPatchReq
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, 400, "api.post.patch.invalid_body", err.Error())
+	if !decodeCollectionBody(w, r, "api.post.patch.invalid_body", &req) {
 		return
 	}
 	existing, err := h.posts.Get(r.Context(), postID)
@@ -583,8 +579,11 @@ func (h *handlers) updateSidebarCategoryOrder(w http.ResponseWriter, r *http.Req
 	}
 	teamID := chi.URLParam(r, "teamID")
 	var order []string
-	if err := json.NewDecoder(r.Body).Decode(&order); err != nil {
-		writeError(w, 400, "api.sidebar.order.invalid_body", err.Error())
+	if !decodeCollectionBody(w, r, "api.sidebar.order.invalid_body", &order) {
+		return
+	}
+	// UpdateOrder issues one UPDATE per id.
+	if tooManyBatchItems(w, "api.sidebar.order.too_many", len(order)) {
 		return
 	}
 	if err := h.sidebar.UpdateOrder(r.Context(), uid, teamID, order); err != nil {
@@ -630,8 +629,11 @@ func (h *handlers) createSidebarCategory(w http.ResponseWriter, r *http.Request)
 		DisplayName string   `json:"display_name"`
 		ChannelIDs  []string `json:"channel_ids"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, 400, "api.sidebar.create.invalid_body", err.Error())
+	if !decodeCollectionBody(w, r, "api.sidebar.create.invalid_body", &req) {
+		return
+	}
+	// Category membership is written one INSERT per channel.
+	if tooManyBatchItems(w, "api.sidebar.create.too_many", len(req.ChannelIDs)) {
 		return
 	}
 	cat, err := h.sidebar.Create(r.Context(), uid, teamID, req.DisplayName, req.ChannelIDs)
@@ -658,8 +660,10 @@ func (h *handlers) updateSidebarCategory(w http.ResponseWriter, r *http.Request)
 	teamID := chi.URLParam(r, "teamID")
 	categoryID := chi.URLParam(r, "categoryID")
 	var cat sidebar.Category
-	if err := json.NewDecoder(r.Body).Decode(&cat); err != nil {
-		writeError(w, 400, "api.sidebar.update.invalid_body", err.Error())
+	if !decodeCollectionBody(w, r, "api.sidebar.update.invalid_body", &cat) {
+		return
+	}
+	if tooManyBatchItems(w, "api.sidebar.update.too_many", len(cat.ChannelIDs)) {
 		return
 	}
 	cat.ID = categoryID
@@ -688,9 +692,18 @@ func (h *handlers) updateSidebarCategoriesBulk(w http.ResponseWriter, r *http.Re
 	}
 	teamID := chi.URLParam(r, "teamID")
 	var cats []sidebar.Category
-	if err := json.NewDecoder(r.Body).Decode(&cats); err != nil {
-		writeError(w, 400, "api.sidebar.bulk.invalid_body", err.Error())
+	if !decodeCollectionBody(w, r, "api.sidebar.bulk.invalid_body", &cats) {
 		return
+	}
+	// Each category costs a transaction, and each of its channels an INSERT
+	// inside that transaction, so both dimensions are capped.
+	if tooManyBatchItems(w, "api.sidebar.bulk.too_many", len(cats)) {
+		return
+	}
+	for _, c := range cats {
+		if tooManyBatchItems(w, "api.sidebar.bulk.too_many", len(c.ChannelIDs)) {
+			return
+		}
 	}
 	out := make([]sidebar.Category, 0, len(cats))
 	for _, c := range cats {
@@ -759,8 +772,7 @@ func (h *handlers) putUserNotifyProps(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var props map[string]string
-	if err := json.NewDecoder(r.Body).Decode(&props); err != nil {
-		writeError(w, 400, "api.user.notify_props.invalid_body", err.Error())
+	if !decodeCollectionBody(w, r, "api.user.notify_props.invalid_body", &props) {
 		return
 	}
 	if err := h.auth.SetNotifyProps(r.Context(), uid, props); err != nil {
@@ -843,12 +855,11 @@ func (h *handlers) channelMembersByIDs(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		ChannelIDs []string `json:"channel_ids"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, 400, "api.channel_members.bulk.invalid_body", err.Error())
+	if !decodeCollectionBody(w, r, "api.channel_members.bulk.invalid_body", &req) {
 		return
 	}
-	if len(req.ChannelIDs) > 200 {
-		req.ChannelIDs = req.ChannelIDs[:200]
+	if len(req.ChannelIDs) > maxBulkItems {
+		req.ChannelIDs = req.ChannelIDs[:maxBulkItems]
 	}
 	out, err := h.channels.MembersByIDs(r.Context(), uid, req.ChannelIDs)
 	if err != nil {
@@ -1175,12 +1186,11 @@ func (h *handlers) channelMembersByUserIDs(w http.ResponseWriter, r *http.Reques
 	var req struct {
 		UserIDs []string `json:"user_ids"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, 400, "api.channel.members.bulk.invalid_body", err.Error())
+	if !decodeCollectionBody(w, r, "api.channel.members.bulk.invalid_body", &req) {
 		return
 	}
-	if len(req.UserIDs) > 200 {
-		req.UserIDs = req.UserIDs[:200]
+	if len(req.UserIDs) > maxBulkItems {
+		req.UserIDs = req.UserIDs[:maxBulkItems]
 	}
 	out, err := h.channels.MembersByChannel(r.Context(), channelID, req.UserIDs)
 	if err != nil {

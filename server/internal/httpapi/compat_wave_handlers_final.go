@@ -368,7 +368,7 @@ func (h *handlers) moveChannel(w http.ResponseWriter, r *http.Request) {
 		TeamID string `json:"team_id"`
 		Force  bool   `json:"force"`
 	}
-	_ = json.NewDecoder(r.Body).Decode(&body)
+	_ = decodeCappedBody(w, r, &body)
 	if h.audit != nil {
 		h.audit.LogAsync(userID(r), audit.ActionChannelMove, cid, map[string]any{"to_team": body.TeamID})
 	}
@@ -748,7 +748,7 @@ func (h *handlers) searchFiles(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Terms string `json:"terms"`
 	}
-	_ = json.NewDecoder(r.Body).Decode(&body)
+	_ = decodeCappedBody(w, r, &body)
 	terms := strings.TrimSpace(body.Terms)
 	if terms == "" {
 		writeJSON(w, 200, map[string]any{"order": []string{}, "file_infos": map[string]any{}})
@@ -804,7 +804,7 @@ func (h *handlers) searchTeamFiles(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Terms string `json:"terms"`
 	}
-	_ = json.NewDecoder(r.Body).Decode(&body)
+	_ = decodeCappedBody(w, r, &body)
 	terms := strings.TrimSpace(body.Terms)
 	if terms == "" {
 		writeJSON(w, 200, map[string]any{"order": []string{}, "file_infos": map[string]any{}})
@@ -986,7 +986,7 @@ func (h *handlers) searchGroupChannels(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Term string `json:"term"`
 	}
-	_ = json.NewDecoder(r.Body).Decode(&body)
+	_ = decodeCappedBody(w, r, &body)
 	all, err := h.channels.ListGroupChannelsForUser(r.Context(), caller)
 	if err != nil {
 		writeError(w, 500, "api.channel.group.search.app_error", err.Error())
@@ -1091,8 +1091,11 @@ func (h *handlers) bulkDeleteUsers(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		UserIDs []string `json:"user_ids"`
 	}
-	_ = json.NewDecoder(r.Body).Decode(&body)
+	_ = decodeCappedBody(w, r, &body)
 	caller := userID(r)
+	if tooManyBatchItems(w, "api.user.bulk_delete.too_many", len(body.UserIDs)) {
+		return
+	}
 	for _, uid := range body.UserIDs {
 		if h.audit != nil {
 			h.audit.LogAsync(caller, audit.ActionUserBulkDelete, uid, nil)
@@ -1187,7 +1190,7 @@ func (h *handlers) createCustomProfileField(w http.ResponseWriter, r *http.Reque
 		Type  string          `json:"type"`
 		Attrs json.RawMessage `json:"attrs,omitempty"`
 	}
-	_ = json.NewDecoder(r.Body).Decode(&body)
+	_ = decodeCappedBody(w, r, &body)
 	field, err := h.customProf.CreateField(r.Context(), body.Name, body.Type, body.Attrs)
 	if err != nil {
 		writeError(w, 400, "api.custom_profile.create.app_error", err.Error())
@@ -1213,7 +1216,7 @@ func (h *handlers) patchCustomProfileField(w http.ResponseWriter, r *http.Reques
 		Attrs     json.RawMessage `json:"attrs,omitempty"`
 		SortOrder *int            `json:"sort_order,omitempty"`
 	}
-	_ = json.NewDecoder(r.Body).Decode(&body)
+	_ = decodeCappedBody(w, r, &body)
 	field, err := h.customProf.PatchField(r.Context(), id, body.Name, body.Type, body.Attrs, body.SortOrder)
 	if err != nil {
 		if errors.Is(err, customprofile.ErrFieldNotFound) {
@@ -1264,7 +1267,7 @@ func (h *handlers) patchCustomProfileValuesGlobal(w http.ResponseWriter, r *http
 		return
 	}
 	var values map[string]json.RawMessage
-	_ = json.NewDecoder(r.Body).Decode(&values)
+	_ = decodeCappedBody(w, r, &values)
 	if err := h.customProf.PatchUserValues(r.Context(), uid, values); err != nil {
 		writeError(w, 500, "api.custom_profile.values.patch.app_error", err.Error())
 		return
@@ -1308,7 +1311,7 @@ func (h *handlers) patchUserCustomProfileValues(w http.ResponseWriter, r *http.R
 		return
 	}
 	var values map[string]json.RawMessage
-	_ = json.NewDecoder(r.Body).Decode(&values)
+	_ = decodeCappedBody(w, r, &values)
 	if err := h.customProf.PatchUserValues(r.Context(), uid, values); err != nil {
 		writeError(w, 500, "api.custom_profile.values.patch.app_error", err.Error())
 		return
@@ -1377,7 +1380,7 @@ func (h *handlers) createRecap(w http.ResponseWriter, r *http.Request) {
 		ChannelID string `json:"channel_id"`
 		Range     string `json:"range,omitempty"`
 	}
-	_ = json.NewDecoder(r.Body).Decode(&body)
+	_ = decodeCappedBody(w, r, &body)
 	if body.ChannelID == "" {
 		writeError(w, 400, "api.recap.channel_required", "channel_id required")
 		return
@@ -1533,7 +1536,7 @@ func (h *handlers) listOAuthApps(w http.ResponseWriter, r *http.Request) {
 // createOAuthApp — POST /oauth/apps
 func (h *handlers) createOAuthApp(w http.ResponseWriter, r *http.Request) {
 	var body map[string]any
-	_ = json.NewDecoder(r.Body).Decode(&body)
+	_ = decodeCappedBody(w, r, &body)
 	id := "oauth-" + base36Now()
 	now := time.Now().UnixMilli()
 	row := map[string]any{
@@ -1599,7 +1602,7 @@ func (h *handlers) getOAuthAppInfo(w http.ResponseWriter, r *http.Request) {
 func (h *handlers) updateOAuthApp(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "appID")
 	var body map[string]any
-	_ = json.NewDecoder(r.Body).Decode(&body)
+	_ = decodeCappedBody(w, r, &body)
 	oauthAppsMu.Lock()
 	row, ok := oauthAppsByID[id]
 	if ok {
@@ -1695,7 +1698,7 @@ func (h *handlers) listOAuthOutgoing(w http.ResponseWriter, r *http.Request) {
 // createOAuthOutgoing — POST /oauth/outgoing_connections
 func (h *handlers) createOAuthOutgoing(w http.ResponseWriter, r *http.Request) {
 	var body map[string]any
-	_ = json.NewDecoder(r.Body).Decode(&body)
+	_ = decodeCappedBody(w, r, &body)
 	id := "oauth-out-" + base36Now()
 	now := time.Now().UnixMilli()
 	row := map[string]any{"id": id, "create_at": now, "update_at": now}
@@ -1729,7 +1732,7 @@ func (h *handlers) getOAuthOutgoing(w http.ResponseWriter, r *http.Request) {
 func (h *handlers) updateOAuthOutgoing(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "connectionID")
 	var body map[string]any
-	_ = json.NewDecoder(r.Body).Decode(&body)
+	_ = decodeCappedBody(w, r, &body)
 	oauthOutMu.Lock()
 	row, ok := oauthOutByID[id]
 	if ok {

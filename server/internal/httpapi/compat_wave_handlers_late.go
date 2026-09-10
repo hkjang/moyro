@@ -897,16 +897,17 @@ func (h *handlers) bulkAddChannelMembers(w http.ResponseWriter, r *http.Request)
 	var req struct {
 		UserIDs []string `json:"user_ids"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, 400, "api.channel.members.body.app_error", err.Error())
+	if !decodeCollectionBody(w, r, "api.channel.members.body.app_error", &req) {
 		return
 	}
 	if len(req.UserIDs) == 0 {
 		writeError(w, 400, "api.channel.members.empty.app_error", "user_ids empty")
 		return
 	}
-	if len(req.UserIDs) > 200 {
-		req.UserIDs = req.UserIDs[:200]
+	// One Join round-trip per id, so an over-long batch is refused rather
+	// than half-applied.
+	if tooManyBatchItems(w, "api.channel.members.too_many.app_error", len(req.UserIDs)) {
+		return
 	}
 	added := []map[string]any{}
 	failed := []map[string]any{}
