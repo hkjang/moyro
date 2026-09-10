@@ -208,7 +208,7 @@ func (h *handlers) getLogs(w http.ResponseWriter, r *http.Request) {
 
 func (h *handlers) postLog(w http.ResponseWriter, r *http.Request) {
 	var body map[string]any
-	_ = json.NewDecoder(r.Body).Decode(&body)
+	_ = decodeCappedBody(w, r, &body)
 	if h.logger != nil {
 		h.logger.Info("client log", "actor", userID(r), "payload", body)
 	}

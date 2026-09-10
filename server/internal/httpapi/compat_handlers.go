@@ -86,12 +86,11 @@ func (h *handlers) teamMembersByIDs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var ids []string
-	if err := json.NewDecoder(r.Body).Decode(&ids); err != nil {
-		writeError(w, http.StatusBadRequest, "api.team.members.ids.invalid_body", err.Error())
+	if !decodeCollectionBody(w, r, "api.team.members.ids.invalid_body", &ids) {
 		return
 	}
-	if len(ids) > 200 {
-		ids = ids[:200]
+	if len(ids) > maxBulkItems {
+		ids = ids[:maxBulkItems]
 	}
 	list, err := h.teams.MembersByIDs(r.Context(), teamID, ids)
 	if err != nil {
@@ -149,8 +148,12 @@ func (h *handlers) addTeamMembersBatch(w http.ResponseWriter, r *http.Request) {
 		UserID string `json:"user_id"`
 		TeamID string `json:"team_id"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "api.team.members.batch.invalid_body", err.Error())
+	if !decodeCollectionBody(w, r, "api.team.members.batch.invalid_body", &req) {
+		return
+	}
+	// One AddMember round-trip per element, so the count is capped as well as
+	// the byte size.
+	if tooManyBatchItems(w, "api.team.members.batch.too_many", len(req)) {
 		return
 	}
 	out := []any{}
