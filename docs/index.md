@@ -11,9 +11,12 @@ set.
 - [Product Screens](screens.html) presents the 46-view v0.2.1 release gallery,
   including 16 Moyro Flow/context views and four tested plugin compatibility
   states captured by the browser release scenario.
-- [User Guide](guides/user-guide.html) covers everyday collaboration flows.
-- [Administrator Guide](guides/admin-guide.html) covers service-wide policy,
-  authentication, AI, keys, and operations.
+- [User Guide](USER_GUIDE.md) ([PDF](USER_GUIDE.pdf)) covers everyday
+  collaboration flows. It is the canonical guide; the
+  [web edition](guides/user-guide.html) mirrors it on the published site.
+- [Administrator Guide](ADMIN_GUIDE.md) ([PDF](ADMIN_GUIDE.pdf)) covers
+  service-wide policy, authentication, AI, keys, and operations. It is the
+  canonical guide; the [web edition](guides/admin-guide.html) mirrors it.
 - [Offline Deployment](offline-deployment.md) documents the release archive,
   four-variable boot contract, backup, and upgrade procedure.
 - [Architecture](architecture.md) explains the runtime shape, core modules, and

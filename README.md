@@ -264,8 +264,10 @@ powershell -ExecutionPolicy Bypass -File scripts\audit-mattermost-api.ps1 -Outpu
 - [Moyro Native OpenAPI](docs/openapi-moyro.yaml) — `/api/moyro/v1`
 - [Roadmap](docs/roadmap.md)
 - [Offline Deployment](docs/offline-deployment.md)
-- [User Guide](docs/guides/user-guide.html)
-- [Administrator Guide](docs/guides/admin-guide.html)
+- [User Guide](docs/USER_GUIDE.md) ([PDF](docs/USER_GUIDE.pdf)) — canonical;
+  [web edition](docs/guides/user-guide.html)
+- [Administrator Guide](docs/ADMIN_GUIDE.md) ([PDF](docs/ADMIN_GUIDE.pdf)) — canonical;
+  [web edition](docs/guides/admin-guide.html)
 - [Product Screens](docs/screens.html) — 46 browser-captured v0.2.1 views,
   including the 16 Moyro Flow/context views and four tested plugin
   compatibility states
