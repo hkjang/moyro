@@ -7,7 +7,7 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "preview": "vite preview",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.node.json",
     "test": "vitest run src --maxWorkers=4",
     "e2e": "playwright test",
     "capture:screenshots": "playwright test e2e/product-pages.spec.ts --project=chromium"
@@ -33,6 +33,7 @@
   "devDependencies": {
     "@axe-core/playwright": "4.13.0",
     "@playwright/test": "1.62.1",
+    "@types/node": "22.20.2",
     "@types/prop-types": "15.7.15",
     "@types/react": "^18.3.3",
     "@types/react-dom": "^18.3.0",
