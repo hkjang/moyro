@@ -497,7 +497,7 @@ func (s *Service) SearchAll(ctx context.Context, term string, limit int) ([]Chan
 	if limit <= 0 || limit > 100 {
 		limit = 25
 	}
-	like := "%" + strings.TrimSpace(term) + "%"
+	like := store.LikeContains(strings.TrimSpace(term))
 	rows, err := s.db.Pool.Query(ctx, `
 		SELECT c.id, COALESCE(c.team_id,''), c.type, c.display_name, c.name, c.header, c.purpose, c.create_at, c.update_at, c.delete_at
 		FROM channels c
@@ -978,8 +978,8 @@ func (s *Service) MembersAutocomplete(ctx context.Context, channelID, prefix str
 	// exists, while staying case-insensitive. `prefix` is already the raw
 	// token the user typed (no surrounding %), so we build both patterns
 	// here for ORDER BY differentiation.
-	prefixPat := prefix + "%"
-	anyPat := "%" + prefix + "%"
+	prefixPat := store.LikePrefix(prefix)
+	anyPat := store.LikeContains(prefix)
 	rows, err := s.db.Pool.Query(ctx, `
 		SELECT u.id, u.username, u.email, u.roles, COALESCE(u.picture,'')
 		FROM channel_members m
@@ -1201,7 +1201,7 @@ func (s *Service) SearchInTeam(ctx context.Context, teamID, userID, term string,
 	if limit <= 0 || limit > 100 {
 		limit = 25
 	}
-	like := "%" + strings.TrimSpace(term) + "%"
+	like := store.LikeContains(strings.TrimSpace(term))
 	rows, err := s.db.Pool.Query(ctx, `
 		SELECT c.id, COALESCE(c.team_id,''), c.type, c.display_name, c.name, c.header, c.purpose, c.create_at, c.update_at, c.delete_at
 		FROM channels c
@@ -1214,7 +1214,7 @@ func (s *Service) SearchInTeam(ctx context.Context, teamID, userID, term string,
 		  )
 		ORDER BY (c.display_name ILIKE $4) DESC, c.display_name ASC
 		LIMIT $5
-	`, teamID, like, userID, strings.TrimSpace(term)+"%", limit)
+	`, teamID, like, userID, store.LikePrefix(strings.TrimSpace(term)), limit)
 	if err != nil {
 		return nil, err
 	}
@@ -1237,8 +1237,8 @@ func (s *Service) AutocompleteInTeam(ctx context.Context, teamID, userID, term s
 	if limit <= 0 || limit > 50 {
 		limit = 20
 	}
-	prefix := strings.TrimSpace(term) + "%"
-	contains := "%" + strings.TrimSpace(term) + "%"
+	prefix := store.LikePrefix(strings.TrimSpace(term))
+	contains := store.LikeContains(strings.TrimSpace(term))
 	rows, err := s.db.Pool.Query(ctx, `
 		SELECT c.id, COALESCE(c.team_id,''), c.type, c.display_name, c.name, c.header, c.purpose, c.create_at, c.update_at, c.delete_at
 		FROM channels c
@@ -1293,7 +1293,7 @@ func (s *Service) ListPublicDiscoverable(ctx context.Context, teamID, userID, qu
 		    WHERE m.channel_id = c.id AND m.user_id = $2
 		  )`
 	if q := strings.TrimSpace(query); q != "" {
-		args = append(args, "%"+q+"%")
+		args = append(args, store.LikeContains(q))
 		sql += ` AND (c.name ILIKE $5 OR c.display_name ILIKE $5)`
 	}
 	sql += ` ORDER BY c.display_name ASC LIMIT $3 OFFSET $4`

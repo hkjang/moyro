@@ -24,6 +24,7 @@ import (
 	"github.com/hkjang/moyro/server/internal/customprofile"
 	"github.com/hkjang/moyro/server/internal/files"
 	"github.com/hkjang/moyro/server/internal/posts"
+	"github.com/hkjang/moyro/server/internal/store"
 	"github.com/hkjang/moyro/server/internal/ws"
 )
 
@@ -761,13 +762,13 @@ func (h *handlers) searchFiles(w http.ResponseWriter, r *http.Request) {
 		       COALESCE(fi.delete_at, 0)
 		FROM file_infos fi
 		WHERE COALESCE(fi.delete_at, 0) = 0
-		  AND fi.name ILIKE '%' || $1 || '%'
+		  AND fi.name ILIKE $1
 		  AND (fi.user_id=$2 OR fi.channel_id IN (
 		      SELECT channel_id FROM channel_members WHERE user_id = $2
 		  ))
 		ORDER BY fi.create_at DESC
 		LIMIT 50
-	`, terms, caller)
+	`, store.LikeContains(terms), caller)
 	if err != nil {
 		writeError(w, 500, "api.file.search.app_error", err.Error())
 		return
@@ -819,13 +820,13 @@ func (h *handlers) searchTeamFiles(w http.ResponseWriter, r *http.Request) {
 		JOIN channels c ON c.id = fi.channel_id
 		WHERE COALESCE(fi.delete_at, 0) = 0
 		  AND c.team_id = $1
-		  AND fi.name ILIKE '%' || $2 || '%'
+		  AND fi.name ILIKE $2
 		  AND fi.channel_id IN (
 		      SELECT channel_id FROM channel_members WHERE user_id = $3
 		  )
 		ORDER BY fi.create_at DESC
 		LIMIT 50
-	`, tid, terms, caller)
+	`, tid, store.LikeContains(terms), caller)
 	if err != nil {
 		writeError(w, 500, "api.file.search.team.app_error", err.Error())
 		return

@@ -330,7 +330,7 @@ func (s *Service) SearchTokens(ctx context.Context, term string, limit int) ([]T
 	if limit <= 0 || limit > 500 {
 		limit = 100
 	}
-	pat := "%" + term + "%"
+	pat := store.LikeContains(term)
 	rows, err := s.db.Pool.Query(ctx, `
 		SELECT id, user_id, description, create_at, last_used_at, revoked_at
 		FROM personal_access_tokens

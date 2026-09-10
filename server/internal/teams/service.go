@@ -443,7 +443,7 @@ func (s *Service) Search(ctx context.Context, term string, page, perPage int) ([
 	if page < 0 {
 		page = 0
 	}
-	like := "%" + term + "%"
+	like := store.LikeContains(term)
 	rows, err := s.db.Pool.Query(ctx, `
 		SELECT id, name, display_name, type, create_at, update_at, delete_at
 		FROM teams

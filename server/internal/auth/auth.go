@@ -518,8 +518,8 @@ func (s *Service) AutocompleteUsers(ctx context.Context, term string, limit int)
 	if limit <= 0 || limit > 50 {
 		limit = 25
 	}
-	prefix := term + "%"
-	contains := "%" + term + "%"
+	prefix := store.LikePrefix(term)
+	contains := store.LikeContains(term)
 	rows, err := s.db.Pool.Query(ctx, `
 		SELECT `+userColumns+` FROM users
 		WHERE delete_at = 0 AND (username ILIKE $1 OR username ILIKE $2)
@@ -546,7 +546,7 @@ func (s *Service) SearchUsers(ctx context.Context, term string, limit int) ([]Us
 	if limit <= 0 || limit > 100 {
 		limit = 25
 	}
-	like := "%" + term + "%"
+	like := store.LikeContains(term)
 	rows, err := s.db.Pool.Query(ctx, `
 		SELECT `+userColumns+` FROM users
 		WHERE delete_at = 0 AND (username ILIKE $1 OR email ILIKE $1)
@@ -591,7 +591,7 @@ func (s *Service) SearchUsersVisibleToGuest(ctx context.Context, guestID, term s
 }
 
 func (s *Service) queryUsersVisibleToGuest(ctx context.Context, guestID, term string, limit, offset int) ([]User, error) {
-	like := "%" + term + "%"
+	like := store.LikeContains(term)
 	rows, err := s.db.Pool.Query(ctx, `
 		SELECT `+userColumns+` FROM users u
 		WHERE u.delete_at=0
