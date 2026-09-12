@@ -316,15 +316,54 @@ func NewNonce() (string, error) {
 	return base64.StdEncoding.EncodeToString(raw), nil
 }
 
+// indexFold finds sub in s ignoring ASCII case, and returns an index into s.
+//
+// strings.ToLower is the obvious way to do this and the wrong one: it changes
+// byte lengths for some runes — U+212A KELVIN SIGN is three bytes and folds to
+// a one-byte 'k', U+0130 'İ' is two and folds to three — so an index taken from
+// the folded copy lands somewhere else in the original. A snippet holding one
+// of those characters made SnippetOrigins read past the end and withNonce write
+// the nonce into the middle of a tag, which breaks the tag silently.
+//
+// Every needle here is ASCII, and folding only ASCII keeps every byte where it
+// was.
+func indexFold(s, sub string) int {
+	if len(sub) == 0 {
+		return 0
+	}
+	for i := 0; i+len(sub) <= len(s); i++ {
+		match := true
+		for j := 0; j < len(sub); j++ {
+			if foldASCII(s[i+j]) != foldASCII(sub[j]) {
+				match = false
+				break
+			}
+		}
+		if match {
+			return i
+		}
+	}
+	return -1
+}
+
+// containsFold reports whether sub appears in s, ignoring ASCII case.
+func containsFold(s, sub string) bool { return indexFold(s, sub) >= 0 }
+
+func foldASCII(b byte) byte {
+	if b >= 'A' && b <= 'Z' {
+		return b + ('a' - 'A')
+	}
+	return b
+}
+
 // SnippetOrigins lists every http(s) origin written into a snippet: the
 // script it loads, the endpoint it posts to, the pixel it requests. A tracker
 // almost always writes its own address somewhere in its loader.
 func SnippetOrigins(snippet string) []string {
 	origins := make([]string, 0, 2)
 	seen := make(map[string]struct{}, 2)
-	lower := strings.ToLower(snippet)
 	for index := 0; index < len(snippet); {
-		start := strings.Index(lower[index:], "http")
+		start := indexFold(snippet[index:], "http")
 		if start < 0 {
 			break
 		}
@@ -356,7 +395,7 @@ func withNonce(snippet, nonce string) string {
 	var builder strings.Builder
 	remaining := snippet
 	for {
-		index := strings.Index(strings.ToLower(remaining), "<script")
+		index := indexFold(remaining, "<script")
 		if index < 0 {
 			builder.WriteString(remaining)
 			return builder.String()
@@ -367,7 +406,7 @@ func withNonce(snippet, nonce string) string {
 		if closing := strings.Index(tag, ">"); closing >= 0 {
 			tag = tag[:closing]
 		}
-		if !strings.Contains(strings.ToLower(tag), "nonce=") {
+		if !containsFold(tag, "nonce=") {
 			builder.WriteString(` nonce="` + html.EscapeString(nonce) + `"`)
 		}
 		remaining = remaining[end:]
