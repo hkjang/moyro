@@ -76,6 +76,33 @@ export type SiteSettings = {
 	draft_clear_on_logout: boolean;
 };
 
+export type TrackingProvider = "none" | "momento" | "ga4" | "gtm" | "matomo" | "custom";
+
+export type TrackingSettings = {
+  enabled: boolean;
+  provider: TrackingProvider;
+  momento_url: string;
+  momento_site_id: string;
+  momento_proxy: boolean;
+  measurement_id: string;
+  matomo_url: string;
+  matomo_site_id: string;
+  custom_snippet: string;
+  allowed_hosts: string[];
+  include_admin: boolean;
+  placement: "head" | "body";
+};
+
+export type TrackingViolation = {
+  origin: string;
+  directive: string;
+  page: string;
+  count: number;
+  first_seen: number;
+  last_seen: number;
+  allowed: boolean;
+};
+
 export type RBACPermission = {
   name: string;
   description: string;
@@ -202,13 +229,18 @@ export const publicMoyroApi = {
 };
 
 export const moyroAdminApi = {
-  getSettings: <T>(token: string, section: "site" | "key-policy" | "mcp") =>
+  getSettings: <T>(token: string, section: "site" | "key-policy" | "mcp" | "tracking") =>
     moyroRequest<T>(token, `/admin/settings/${encodeURIComponent(section)}`),
-  patchSettings: <T>(token: string, section: "site" | "key-policy" | "mcp", value: T) =>
+  patchSettings: <T>(token: string, section: "site" | "key-policy" | "mcp" | "tracking", value: T) =>
     moyroRequest<T>(token, `/admin/settings/${encodeURIComponent(section)}`, {
       method: "PATCH",
       body: value,
     }),
+
+  listTrackingViolations: (token: string) =>
+    moyroRequest<{ items: TrackingViolation[] }>(token, "/admin/tracking/violations"),
+  clearTrackingViolations: (token: string) =>
+    moyroRequest<void>(token, "/admin/tracking/violations", { method: "DELETE" }),
 
   listPermissions: (token: string) =>
     moyroRequest<RBACPermission[]>(token, "/admin/permissions"),

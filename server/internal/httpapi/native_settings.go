@@ -17,6 +17,7 @@ import (
 	"github.com/hkjang/moyro/server/internal/oidcauth"
 	"github.com/hkjang/moyro/server/internal/rbac"
 	"github.com/hkjang/moyro/server/internal/settings"
+	"github.com/hkjang/moyro/server/internal/tracking"
 	"github.com/hkjang/moyro/server/internal/webhooks"
 )
 
@@ -212,6 +213,9 @@ func (h *handlers) getNativeSettings(w http.ResponseWriter, r *http.Request) {
 	case "mcp":
 		value := defaultMCPSettings()
 		target = &value
+	case trackingSettingsSection:
+		value := h.native.currentTracking()
+		target = &value
 	default:
 		writeError(w, http.StatusNotFound, "api.moyro.settings.section", "unknown settings section")
 		return
@@ -334,6 +338,24 @@ func (h *handlers) patchNativeSettings(w http.ResponseWriter, r *http.Request) {
 		if h.native.mcp != nil {
 			h.native.mcp.ConfigurePolicy(value.AllowedTools, value.AllowedResources)
 		}
+		writeJSON(w, http.StatusOK, value)
+	case trackingSettingsSection:
+		value := tracking.Default()
+		if err := decoder.Decode(&value); err != nil {
+			writeError(w, http.StatusBadRequest, "api.moyro.settings.body", err.Error())
+			return
+		}
+		if err := value.Validate(); err != nil {
+			writeError(w, http.StatusBadRequest, "api.moyro.settings.tracking", err.Error())
+			return
+		}
+		unlock := h.native.beginSettingsUpdate()
+		defer unlock()
+		if _, err := h.native.settings.PutJSON(r.Context(), section, nativeSettingsKey, value, actor, nil); err != nil {
+			writeError(w, http.StatusInternalServerError, "api.moyro.settings.save", err.Error())
+			return
+		}
+		h.native.applyTracking(value)
 		writeJSON(w, http.StatusOK, value)
 	default:
 		writeError(w, http.StatusNotFound, "api.moyro.settings.section", "unknown settings section")

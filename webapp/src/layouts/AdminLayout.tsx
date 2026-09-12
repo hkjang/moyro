@@ -8,6 +8,7 @@ import LanguageRounded from "@mui/icons-material/LanguageRounded";
 import ManageAccountsRounded from "@mui/icons-material/ManageAccountsRounded";
 import MenuRounded from "@mui/icons-material/MenuRounded";
 import PsychologyRounded from "@mui/icons-material/PsychologyRounded";
+import QueryStatsRounded from "@mui/icons-material/QueryStatsRounded";
 import RuleRounded from "@mui/icons-material/RuleRounded";
 import SecurityRounded from "@mui/icons-material/SecurityRounded";
 import SettingsApplicationsRounded from "@mui/icons-material/SettingsApplicationsRounded";
@@ -109,6 +110,7 @@ const adminNavigationGroups: readonly AdminNavigationGroup[] = [
     description: "사이트와 호환 API",
     items: [
       { to: "/admin/site", label: "사이트 설정", icon: <LanguageRounded />, anyOf: ["manage_settings"] },
+      { to: "/admin/tracking", label: "방문 추적", icon: <QueryStatsRounded />, anyOf: ["manage_settings"] },
       { to: "/admin/operations", label: "호환 API", icon: <SettingsApplicationsRounded />, anyOf: ["manage_system"] },
     ],
   },

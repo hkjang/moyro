@@ -5,9 +5,12 @@ import (
 	"io/fs"
 	"net/http"
 	"net/http/httptest"
+	"regexp"
 	"strings"
 	"testing"
 	"testing/fstest"
+
+	"github.com/hkjang/moyro/server/internal/tracking"
 )
 
 func testHandler(t *testing.T) *Handler {
@@ -120,6 +123,156 @@ func TestHandlerSetsContentSecurityPolicy(t *testing.T) {
 		}
 		if strings.Contains(csp, "unsafe-eval") || strings.Contains(csp, "http:") && !strings.Contains(csp, "ws://") {
 			t.Fatalf("%s: policy %q is broader than intended", path, csp)
+		}
+	}
+}
+
+func trackedHandler(t *testing.T, config tracking.Config) *Handler {
+	t.Helper()
+	h, err := NewFS(fstest.MapFS{
+		"index.html": {Data: []byte("<!doctype html><html><head><title>moyro</title></head><body><div id=\"root\"></div></body></html>")},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := config.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	h.SetTracking(func() tracking.Config { return config })
+	return h
+}
+
+func momentoConfig(proxy bool) tracking.Config {
+	config := tracking.Default()
+	config.Enabled = true
+	config.Provider = tracking.ProviderMomento
+	config.MomentoURL = "https://momento.corp.example"
+	config.MomentoSiteID = "moyro-prd"
+	config.MomentoProxy = proxy
+	return config
+}
+
+var nonceInPolicy = regexp.MustCompile(`'nonce-([^']+)'`)
+
+// TestTrackingSnippetAndPolicyShareOneNonce is the whole contract: the page,
+// the injected snippet and the policy header have to agree on a nonce that
+// is fresh per response, and nothing else in the policy may loosen.
+func TestTrackingSnippetAndPolicyShareOneNonce(t *testing.T) {
+	handler := trackedHandler(t, momentoConfig(true))
+	seen := map[string]bool{}
+	for _, path := range []string{"/", "/today", "/workspace/team-1/channel/c"} {
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "http://moyro.example"+path, nil))
+		body, csp := rec.Body.String(), rec.Header().Get("Content-Security-Policy")
+		match := nonceInPolicy.FindStringSubmatch(csp)
+		if match == nil {
+			t.Fatalf("%s: policy %q names no nonce", path, csp)
+		}
+		nonce := match[1]
+		if seen[nonce] {
+			t.Fatalf("%s: nonce %q was reused across responses", path, nonce)
+		}
+		seen[nonce] = true
+		if !strings.Contains(body, `<script nonce="`+nonce+`" async src="/momento/tracker.js"`) {
+			t.Fatalf("%s: snippet missing or carries another nonce: %s", path, body)
+		}
+		if !strings.Contains(body, `data-endpoint="/momento"`) || strings.Contains(body, "momento.corp.example") {
+			t.Fatalf("%s: proxied snippet must not name the collector: %s", path, body)
+		}
+		if strings.Index(body, "/momento/tracker.js") > strings.Index(body, "</head>") {
+			t.Fatalf("%s: snippet is not in head: %s", path, body)
+		}
+		for _, directive := range []string{
+			"script-src 'self' blob: 'nonce-" + nonce + "'",
+			"connect-src 'self' ws://moyro.example wss://moyro.example",
+			"report-uri " + CSPReportPath,
+			"object-src 'none'",
+		} {
+			if !strings.Contains(csp, directive) {
+				t.Fatalf("%s: policy %q lacks %q", path, csp, directive)
+			}
+		}
+		scriptSrc := csp[strings.Index(csp, "script-src"):]
+		scriptSrc = scriptSrc[:strings.Index(scriptSrc, ";")]
+		if strings.Contains(scriptSrc, "unsafe-inline") || strings.Contains(csp, "momento.corp.example") {
+			t.Fatalf("%s: policy %q is broader than the snippet needs", path, csp)
+		}
+		if rec.Header().Get("Last-Modified") != "" {
+			t.Fatalf("%s: a nonced page must not be served conditionally", path)
+		}
+	}
+}
+
+func TestTrackingLeavesAdminAndReservedRoutesAlone(t *testing.T) {
+	handler := trackedHandler(t, momentoConfig(true))
+	for _, tc := range []struct {
+		path   string
+		status int
+	}{
+		{"/admin/site", http.StatusOK},
+		{"/settings/profile", http.StatusOK},
+		{"/api/v4/users/me", http.StatusNotFound},
+		{"/healthz", http.StatusNotFound},
+	} {
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "http://moyro.example"+tc.path, nil))
+		if rec.Code != tc.status {
+			t.Fatalf("%s: status=%d want %d", tc.path, rec.Code, tc.status)
+		}
+		csp := rec.Header().Get("Content-Security-Policy")
+		if strings.Contains(rec.Body.String(), "tracker.js") || strings.Contains(csp, "nonce-") || strings.Contains(csp, "report-uri") {
+			t.Fatalf("%s: tracked although it must not be: csp=%q body=%q", tc.path, csp, rec.Body.String())
+		}
+		if !strings.Contains(csp, "script-src 'self' blob:;") {
+			t.Fatalf("%s: policy %q is not the strict default", tc.path, csp)
+		}
+	}
+
+	included := momentoConfig(true)
+	included.IncludeAdmin = true
+	rec := httptest.NewRecorder()
+	trackedHandler(t, included).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "http://moyro.example/admin/site", nil))
+	if !strings.Contains(rec.Body.String(), "tracker.js") {
+		t.Fatal("include_admin should attach the snippet to the console")
+	}
+}
+
+func TestTrackingOffRestoresTheStrictPolicy(t *testing.T) {
+	config := momentoConfig(false)
+	config.Enabled = false
+	handler := trackedHandler(t, config)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "http://moyro.example/today", nil))
+	csp := rec.Header().Get("Content-Security-Policy")
+	if strings.Contains(csp, "nonce-") || strings.Contains(csp, "report-uri") || strings.Contains(csp, "momento") {
+		t.Fatalf("policy %q still carries tracking", csp)
+	}
+	if got := rec.Body.String(); got != "<!doctype html><html><head><title>moyro</title></head><body><div id=\"root\"></div></body></html>" {
+		t.Fatalf("page was altered while tracking is off: %s", got)
+	}
+}
+
+func TestTrackingWithoutProxyAllowsTheCollectorOriginAndBodyPlacement(t *testing.T) {
+	config := momentoConfig(false)
+	config.Placement = tracking.PlacementBody
+	config.AllowedHosts = []string{"pixel.corp.example"}
+	handler := trackedHandler(t, config)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "http://moyro.example/today", nil))
+	body, csp := rec.Body.String(), rec.Header().Get("Content-Security-Policy")
+	if !strings.Contains(body, `src="https://momento.corp.example/tracker.js"`) {
+		t.Fatalf("direct snippet missing: %s", body)
+	}
+	if strings.Index(body, "tracker.js") < strings.Index(body, "</head>") || strings.Index(body, "tracker.js") > strings.Index(body, "</body>") {
+		t.Fatalf("snippet is not at the end of body: %s", body)
+	}
+	for _, directive := range []string{
+		"https://momento.corp.example https://pixel.corp.example; style-src",
+		"connect-src 'self' ws://moyro.example wss://moyro.example https://momento.corp.example https://pixel.corp.example",
+		"img-src 'self' data: blob: https://momento.corp.example https://pixel.corp.example",
+	} {
+		if !strings.Contains(csp, directive) {
+			t.Fatalf("policy %q lacks %q", csp, directive)
 		}
 	}
 }

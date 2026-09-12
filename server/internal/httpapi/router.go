@@ -46,6 +46,7 @@ import (
 	"github.com/hkjang/moyro/server/internal/teams"
 	"github.com/hkjang/moyro/server/internal/threads"
 	"github.com/hkjang/moyro/server/internal/tos"
+	"github.com/hkjang/moyro/server/internal/tracking"
 	"github.com/hkjang/moyro/server/internal/userstatus"
 	"github.com/hkjang/moyro/server/internal/webhooks"
 	"github.com/hkjang/moyro/server/internal/webui"
@@ -281,6 +282,7 @@ func New(cfg *config.Config, db *store.DB, hub *ws.Hub, host *pluginhost.Host, l
 		tos:        tosSvc,
 		hub:        hub,
 		host:       host,
+		violations: tracking.NewRecorder(),
 		logger:     logger,
 	}
 	nativeCtx, nativeCancel := context.WithTimeout(context.Background(), 15*time.Second)
@@ -1412,6 +1414,9 @@ func New(cfg *config.Config, db *store.DB, hub *ws.Hub, host *pluginhost.Host, l
 	// do not inherit the generic 30-second REST timeout.
 	r.Route("/api/moyro/v1", func(r chi.Router) {
 		r.Get("/system/info", h.nativeSystemInfo)
+		// Browsers post policy violation reports here without credentials;
+		// the handler keeps a bounded in-memory list and never errors.
+		r.With(middleware.Timeout(5*time.Second)).Post(strings.TrimPrefix(webui.CSPReportPath, "/api/moyro/v1"), h.receiveCSPReport)
 		r.With(loginLimiter.Middleware(h.clientIP), middleware.Timeout(30*time.Second)).
 			Post("/auth/session/login", h.nativeBrowserLogin)
 		r.With(h.requireAuth, middleware.Timeout(30*time.Second)).
@@ -1477,6 +1482,8 @@ func New(cfg *config.Config, db *store.DB, hub *ws.Hub, host *pluginhost.Host, l
 
 				r.With(h.nativeRequireSettingsSection).Get("/admin/settings/{section}", h.getNativeSettings)
 				r.With(h.nativeRequireSettingsSection).Patch("/admin/settings/{section}", h.patchNativeSettings)
+				r.With(h.nativeRequire(rbac.PermissionManageSettings)).Get("/admin/tracking/violations", h.listTrackingViolations)
+				r.With(h.nativeRequire(rbac.PermissionManageSettings)).Delete("/admin/tracking/violations", h.clearTrackingViolations)
 				r.With(h.nativeRequire("manage_oidc")).Get("/admin/oidc/providers", h.listNativeOIDCProviders)
 				r.With(h.nativeRequire("manage_oidc")).Post("/admin/oidc/providers", h.saveNativeOIDCProvider)
 				r.With(h.nativeRequire("manage_oidc")).Patch("/admin/oidc/providers/{providerID}", h.saveNativeOIDCProvider)
@@ -1508,9 +1515,13 @@ func New(cfg *config.Config, db *store.DB, hub *ws.Hub, host *pluginhost.Host, l
 	}
 
 	r.HandleFunc("/api/v4/websocket", h.websocket)
+	// Same-origin path to a Momento collector; answers 404 unless an
+	// administrator turned Momento tracking with the proxy on.
+	r.HandleFunc(tracking.MomentoProxyPrefix+"/*", h.momentoProxy)
 	if ui, err := webui.New(webui.DefaultRoot); err != nil {
 		logger.Warn("production web UI unavailable", "root", webui.DefaultRoot, "err", err)
 	} else {
+		ui.SetTracking(h.trackingConfig)
 		r.NotFound(ui.ServeHTTP)
 	}
 

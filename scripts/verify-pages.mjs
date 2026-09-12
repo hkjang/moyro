@@ -34,6 +34,7 @@ const expectedScreenshots = [
   "settings-plugin-echosummary.jpg",
   "admin-overview.jpg",
   "admin-site.jpg",
+  "admin-tracking.jpg",
   "admin-keycloak.jpg",
   "admin-ai.jpg",
   "admin-key-policy.jpg",
