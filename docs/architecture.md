@@ -77,6 +77,12 @@ Important packages:
   from the bundle and `blob:` (the plugin runtime executes fetched bundles
   through object URLs), inline styles for MUI's runtime injection, and
   connections to this origin only, including its WebSocket endpoint.
+  `internal/tracking` is the one administrator-managed exception: when
+  visitor tracking is on, each page response carries a fresh nonce on the
+  injected snippet and in `script-src`, the snippet's origins are added, and
+  `report-uri` collects what the browser still refused. Off by default and
+  never `'unsafe-inline'`; Momento can be proxied through `/momento/*` so no
+  external origin enters the policy at all.
 - `internal/store` traces every statement through a pgx `QueryTracer`; the
   process feeds a latency histogram and a rate-limited slow-query log so a
   slow route can be traced to the statement responsible.

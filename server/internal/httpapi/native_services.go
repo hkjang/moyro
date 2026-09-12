@@ -21,6 +21,7 @@ import (
 	"github.com/hkjang/moyro/server/internal/secrets"
 	"github.com/hkjang/moyro/server/internal/settings"
 	"github.com/hkjang/moyro/server/internal/store"
+	"github.com/hkjang/moyro/server/internal/tracking"
 )
 
 type nativeServices struct {
@@ -34,6 +35,7 @@ type nativeServices struct {
 	oidcFlows *oidcauth.FlowStore
 	mcp       *mcpserver.Service
 	site      atomic.Pointer[siteSettingsView]
+	tracking  atomic.Pointer[tracking.Config]
 
 	// settingsUpdateMu serializes the durable commit and the corresponding
 	// in-process activation. Without it, two administrators can commit A then
@@ -122,6 +124,12 @@ func newNativeServices(ctx context.Context, cfg *config.Config, db *store.DB, h 
 	}
 	if err := native.reloadSite(ctx, h.outDisp); err != nil {
 		return nil, err
+	}
+	if err := native.reloadTracking(ctx); err != nil {
+		// A stored configuration this build no longer accepts must not take
+		// the management services down; tracking simply stays off.
+		logger.Warn("saved visitor tracking configuration disabled", "err", err)
+		native.applyTracking(tracking.Default())
 	}
 	// An empty administrator-managed URL deliberately stays empty here. OIDC
 	// then reuses its previously validated durable callback instead of silently

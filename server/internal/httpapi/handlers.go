@@ -48,6 +48,7 @@ import (
 	"github.com/hkjang/moyro/server/internal/teams"
 	"github.com/hkjang/moyro/server/internal/threads"
 	"github.com/hkjang/moyro/server/internal/tos"
+	"github.com/hkjang/moyro/server/internal/tracking"
 	"github.com/hkjang/moyro/server/internal/userstatus"
 	"github.com/hkjang/moyro/server/internal/webhooks"
 	"github.com/hkjang/moyro/server/internal/workitems"
@@ -94,7 +95,10 @@ type handlers struct {
 	hub          *ws.Hub
 	host         *pluginhost.Host
 	native       *nativeServices
-	logger       *slog.Logger
+	// violations holds what browsers reported the page policy refused while
+	// visitor tracking is on. In memory and bounded; see tracking.Recorder.
+	violations *tracking.Recorder
+	logger     *slog.Logger
 }
 
 type ctxKey string

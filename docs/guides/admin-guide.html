@@ -98,6 +98,8 @@
             <p><strong>메시지 초안 보안</strong>에서 브라우저 저장 방식을 local, 현재 session만, 저장 안 함 중 하나로 선택합니다. Local 보존 기간은 1~30일이며 기본값은 7일입니다. 로그아웃할 때 현재 사용자의 이 기기 초안을 지우는 옵션을 권장합니다. 저장 안 함을 적용하면 다음 워크스페이스 진입 때 기존 Moyro local·session 초안도 제거됩니다.</p>
             <p>v0.2.28은 전송할 callback과 시도 이력을 PostgreSQL에 저장하고 worker lease, 재시도 backoff와 dead 상태로 처리합니다. 프로세스 재시작과 메모리 queue 포화로 작업이 사라지는 문제를 줄였지만, post 저장과 delivery 등록은 아직 하나의 DB transaction이 아니므로 등록 실패 로그도 함께 감시해야 합니다.</p>
             <figure class="guide-figure"><picture><img src="../assets/screenshots/admin-site.jpg" width="1440" height="1000" loading="lazy" decoding="async" alt="moyro 사이트 이름, 로컬 가입과 사용자 초대, outbound host allowlist 설정"></picture><figcaption>사이트 설정에서 공개 가입 기본값과 제한된 초대 링크, webhook egress 허용 대상을 함께 관리합니다.</figcaption></figure>
+            <p><strong>방문 추적</strong>(<code>/admin/tracking</code>)은 관리자가 방문 통계 스크립트를 화면에 붙이는 곳입니다. 기본값은 꺼짐이며, 켜면 요청마다 nonce 를 단 스크립트가 페이지에 들어가고 콘텐츠 보안 정책은 그 스크립트가 필요로 하는 출처만큼만 넓어집니다. Momento 는 사내 수집기라 첫 자리에 있고, 같은 오리진 프록시(<code>/momento/*</code>)를 쓰면 외부 출처가 정책에 등장하지 않습니다. 정책이 막은 출처는 같은 화면에 기록되어 한 번에 허용 목록에 넣을 수 있습니다. 자세한 절차와 CSP 설명은 정본 <code>docs/ADMIN_GUIDE.md</code> 3.9 절을 보세요.</p>
+            <figure class="guide-figure"><picture><img src="../assets/screenshots/admin-tracking.jpg" width="1440" height="1000" loading="lazy" decoding="async" alt="moyro 방문 추적 설정 — 공급자, 삽입 위치, 허용 출처와 정책이 막은 출처"></picture><figcaption>방문 추적은 꺼짐이 기본이고, 켠 뒤에도 정책은 'unsafe-inline' 없이 nonce 와 스니펫이 쓰는 출처만 더합니다.</figcaption></figure>
           </section>
 
           <section id="keycloak">

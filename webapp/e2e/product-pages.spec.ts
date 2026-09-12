@@ -573,6 +573,7 @@ const routedPages: readonly RoutedPage[] = [
   { path: () => "/settings/ai", file: "settings-ai.jpg", marker: "AI 개인화" },
   { path: () => "/admin/overview", file: "admin-overview.jpg", marker: "운영 현황" },
   { path: () => "/admin/site", file: "admin-site.jpg", marker: "사이트 설정" },
+  { path: () => "/admin/tracking", file: "admin-tracking.jpg", marker: "방문 추적" },
   { path: () => "/admin/auth/keycloak", file: "admin-keycloak.jpg", marker: "Keycloak SSO" },
   { path: () => "/admin/ai/providers", file: "admin-ai.jpg", marker: "AI 공급자" },
   { path: () => "/admin/security/keys", file: "admin-key-policy.jpg", marker: "키 정책" },

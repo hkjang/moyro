@@ -41,7 +41,7 @@ func TestNativeSettingsPermissionIsSectionSpecific(t *testing.T) {
 	if got := nativeSettingsPermission("key-policy"); got != rbac.PermissionManageKeyPermissions {
 		t.Fatalf("key-policy permission = %q", got)
 	}
-	for _, section := range []string{"site", "mcp", "unknown"} {
+	for _, section := range []string{"site", "mcp", "tracking", "unknown"} {
 		if got := nativeSettingsPermission(section); got != rbac.PermissionManageSettings {
 			t.Fatalf("%s permission = %q", section, got)
 		}

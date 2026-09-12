@@ -78,6 +78,9 @@ const PluginSettingsPage = lazy(() =>
 const SiteSettingsPage = lazy(() =>
   import("@/features/admin/SiteSettingsPage").then((module) => ({ default: module.SiteSettingsPage })),
 );
+const TrackingSettingsPage = lazy(() =>
+  import("@/features/admin/TrackingSettingsPage").then((module) => ({ default: module.TrackingSettingsPage })),
+);
 
 const loadPersonalBasicsPages = () => import("@/features/settings/PersonalBasicsPages");
 const AppearanceSettingsPage = lazy(() =>
@@ -246,6 +249,7 @@ export function AppRouter() {
             <Route path="overview" element={routeElement(AdminOverviewPage)} />
             <Route element={<RequirePermission anyOf={["manage_settings"]} />}>
               <Route path="site" element={routeElement(SiteSettingsPage)} />
+              <Route path="tracking" element={routeElement(TrackingSettingsPage)} />
               <Route path="integrations/mcp" element={routeElement(MCPSettingsPage)} />
             </Route>
             <Route element={<RequirePermission anyOf={["manage_plugins"]} />}>
