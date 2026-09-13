@@ -116,6 +116,17 @@ func (p *provider) authorize(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid authorization request", http.StatusBadRequest)
 		return
 	}
+	if r.Method == http.MethodGet && r.Form.Get("prompt") == "none" {
+		// The test provider keeps no browser session, so a prompt=none request
+		// always gets the standard "no session" answer without drawing a page.
+		destination, _ := url.Parse(r.Form.Get("redirect_uri"))
+		query := destination.Query()
+		query.Set("error", "login_required")
+		query.Set("state", r.Form.Get("state"))
+		destination.RawQuery = query.Encode()
+		http.Redirect(w, r, destination.String(), http.StatusFound)
+		return
+	}
 	if r.Method == http.MethodGet {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.Header().Set("Cache-Control", "no-store")

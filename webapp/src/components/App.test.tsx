@@ -12,6 +12,7 @@ const mocks = vi.hoisted(() => ({
   exchangeSSOCode: vi.fn(),
   me: vi.fn(),
   adoptBrowserSession: vi.fn(),
+  systemInfo: { capabilities: { drafts: { clear_on_logout: true } } } as Record<string, unknown>,
 }));
 
 vi.mock("@/api/client", () => ({
@@ -23,7 +24,7 @@ vi.mock("@/api/client", () => ({
 }));
 vi.mock("@/app/AppRouter", () => ({ AppRouter: () => <div>app router</div> }));
 vi.mock("@/features/system/SystemInfoContext", () => ({
-  useSystemInfo: () => ({ capabilities: { drafts: { clear_on_logout: true } } }),
+  useSystemInfo: () => mocks.systemInfo,
 }));
 vi.mock("@/features/workspace/composer/useDraft", () => ({
   clearMoyroDraftsForUser: vi.fn(),
@@ -128,5 +129,112 @@ describe("App SSO callback", () => {
     await expect(session).resolves.toMatchObject({ token: "__moyro_browser_session__" });
     expect(mocks.exchangeSSOCode).toHaveBeenCalledTimes(2);
     vi.useRealTimers();
+  });
+});
+
+describe("App silent SSO", () => {
+  let container: HTMLDivElement;
+  let root: Root;
+  let assign: ReturnType<typeof vi.fn>;
+
+  function renderApp(preloadedToken: string | null = null) {
+    const store = configureStore({
+      reducer: { auth: authReducer },
+      preloadedState: preloadedToken
+        ? { auth: { token: preloadedToken, user: { id: "user-1", username: "u", email: "u@example.test" } } }
+        : undefined,
+    });
+    // jsdom does not implement navigation; swap in a snapshot of the real
+    // location whose assign() we can observe.
+    vi.spyOn(window, "location", "get").mockReturnValue({ ...window.location, assign } as unknown as Location);
+    return act(async () => {
+      root.render(
+        <StrictMode>
+          <Provider store={store}>
+            <App />
+          </Provider>
+        </StrictMode>,
+      );
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+  }
+
+  beforeEach(() => {
+    window.sessionStorage.clear();
+    window.history.replaceState(null, "", "/workspace/team-a?thread=1");
+    mocks.systemInfo = {
+      loaded: true,
+      oidc_enabled: true,
+      oidc_auto_login: true,
+      capabilities: { drafts: { clear_on_logout: true } },
+    };
+    mocks.me.mockReset();
+    mocks.adoptBrowserSession.mockReset();
+    assign = vi.fn();
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+  });
+
+  afterEach(async () => {
+    await act(async () => root.unmount());
+    container.remove();
+    window.sessionStorage.clear();
+    mocks.systemInfo = { capabilities: { drafts: { clear_on_logout: true } } };
+    vi.restoreAllMocks();
+  });
+
+  it("leaves for a prompt=none login exactly once and keeps the deep link", async () => {
+    await renderApp();
+
+    expect(assign).toHaveBeenCalledTimes(1);
+    expect(assign).toHaveBeenCalledWith(
+      "/api/moyro/v1/auth/oidc/login?prompt=none&return_to=%2Fworkspace%2Fteam-a%3Fthread%3D1",
+    );
+    expect(container.textContent).toContain("로그인 중");
+    expect(container.textContent).not.toContain("app router");
+    expect(window.sessionStorage.getItem("moyro.sso.silentAttempted")).toBe("true");
+  });
+
+  it("shows the login screen without retrying after the callback reported no session", async () => {
+    window.history.replaceState(null, "", "/login?sso=none&return_to=%2Fworkspace%2Fteam-a");
+    await renderApp();
+
+    expect(assign).not.toHaveBeenCalled();
+    expect(container.textContent).toContain("app router");
+  });
+
+  it("does not try while auto_login is off, even with Keycloak enabled", async () => {
+    mocks.systemInfo = { ...mocks.systemInfo, oidc_auto_login: false };
+    await renderApp();
+
+    expect(assign).not.toHaveBeenCalled();
+    expect(container.textContent).toContain("app router");
+  });
+
+  it("does not try after a deliberate sign-out", async () => {
+    window.sessionStorage.setItem("moyro.sso.signedOut", "true");
+    await renderApp();
+
+    expect(assign).not.toHaveBeenCalled();
+    expect(container.textContent).toContain("app router");
+  });
+
+  it("does not try before the server has said whether auto_login is on", async () => {
+    mocks.systemInfo = { ...mocks.systemInfo, loaded: false };
+    await renderApp();
+
+    expect(assign).not.toHaveBeenCalled();
+  });
+
+  it("does not try when a session is already being restored and lifts the sign-out flag once it is", async () => {
+    window.sessionStorage.setItem("moyro.sso.signedOut", "true");
+    mocks.me.mockResolvedValue({ id: "user-1", username: "u", email: "u@example.test" });
+    await renderApp("__moyro_browser_session__");
+
+    expect(assign).not.toHaveBeenCalled();
+    expect(container.textContent).toContain("app router");
+    expect(window.sessionStorage.getItem("moyro.sso.signedOut")).toBeNull();
   });
 });

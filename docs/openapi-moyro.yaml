@@ -141,13 +141,21 @@ paths:
         creates a one-time PKCE transaction, and redirects the browser to the
         provider. The transaction is also bound to an HttpOnly cookie. An
         optional return path is accepted only when it is a safe same-origin
-        absolute path; invalid values are replaced by `/`.
+        absolute path; invalid values are replaced by `/`. With `prompt=none`
+        and the provider's `auto_login` setting on, the authorization request
+        carries `prompt=none` so the provider answers from an existing session
+        only; when `auto_login` is off the parameter is ignored.
       parameters:
         - name: return_to
           in: query
           required: false
           description: Same-origin absolute path to restore after successful login.
           schema: { type: string, maxLength: 2048, example: "/work" }
+        - name: prompt
+          in: query
+          required: false
+          description: "`none` requests a silent attempt; honoured only while `auto_login` is on."
+          schema: { type: string, enum: [none] }
       responses:
         "302":
           description: Redirect to the provider authorization endpoint
@@ -174,7 +182,11 @@ paths:
         Every success or failure is returned as a `302`: success appends a
         five-minute opaque `sso_code` to the destination URL fragment and sets
         its independent HttpOnly binding cookie; failure redirects to
-        `/login#oauth_error=<safe-code>`. Call `POST /auth/sso/session` next to
+        `/login#oauth_error=<safe-code>`. A `login_required`,
+        `interaction_required`, or `consent_required` answer to a flow this
+        server started with `prompt=none` is not a failure: it redirects to
+        `/login?sso=none` (plus the safe `return_to`) so the browser shows the
+        login screen and does not retry. Call `POST /auth/sso/session` next to
         create the reusable local browser session.
       parameters:
         - name: state
@@ -1460,6 +1472,13 @@ components:
           type: boolean
           default: false
           description: Permit HTTP token, JWKS, and user-info endpoints for a trusted private network; authorization remains HTTPS-only when the issuer is HTTPS.
+        auto_login:
+          type: boolean
+          default: false
+          description: |
+            Let the web app sign a visitor in silently with `prompt=none` when the
+            provider still has a session. While this is off, `prompt=none` on the
+            login endpoint is downgraded to an ordinary login.
     OIDCProvider:
       type: object
       additionalProperties: false
@@ -1500,6 +1519,7 @@ components:
         allow_signup: { type: boolean }
         require_verified_email: { type: boolean }
         allow_insecure_backchannel: { type: boolean }
+        auto_login: { type: boolean }
         redirect_url: { type: string, format: uri }
         discovery_status: { type: string, enum: [unknown, ready, error] }
         last_tested_at: { type: integer, format: int64, minimum: 1 }
@@ -1529,6 +1549,9 @@ components:
         build_date: { type: string }
         oidc_enabled: { type: boolean }
         oidc_provider_name: { type: string }
+        oidc_auto_login:
+          type: boolean
+          description: True only when OIDC is live and the administrator turned `auto_login` on.
         approval_enabled: { type: boolean }
         local_signup_enabled: { type: boolean }
         capabilities:

@@ -8,6 +8,7 @@ const FALLBACK_INFO: SystemInfo = {
   build_date: "",
   oidc_enabled: false,
   oidc_provider_name: "Keycloak",
+  oidc_auto_login: false,
   approval_enabled: false,
   local_signup_enabled: false,
   capabilities: {
@@ -46,6 +47,9 @@ export function SystemInfoProvider({ children }: { children: React.ReactNode }) 
       build_date: native?.build_date || config.BuildDate || ping?.build_date || "",
       oidc_enabled: native?.oidc_enabled ?? (providers.includes("keycloak") || providers.includes("oidc")),
       oidc_provider_name: native?.oidc_provider_name || (providers.includes("keycloak") ? "Keycloak" : "OIDC"),
+      // Only the native endpoint knows the setting; the compat ping cannot
+      // vouch for it, so a missing field means "do not try".
+      oidc_auto_login: native?.oidc_auto_login === true,
       approval_enabled: native?.approval_enabled ?? false,
       local_signup_enabled: native?.local_signup_enabled ?? false,
       capabilities: {

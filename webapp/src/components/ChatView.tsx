@@ -3,6 +3,7 @@ import { useDispatch, useSelector } from "react-redux";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
 import type { RootState } from "@/store";
 import { clearAuth, setAuth } from "@/store/authSlice";
+import { markSignedOut } from "@/auth/silentSso";
 import { setCurrentChannel, upsertChannel } from "@/store/channelsSlice";
 import {
   api,
@@ -1756,6 +1757,9 @@ export function ChatView() {
           buildHash={systemInfo.build_hash}
           onLogout={async () => {
             setShowUserMenu(false);
+            // Remember the deliberate sign-out before the session goes away,
+            // otherwise silent SSO would sign the user straight back in.
+            markSignedOut();
             if (token) { try { await api.logout(token); } catch { /* best-effort */ } }
 			if (user?.id && systemInfo.capabilities?.drafts?.clear_on_logout !== false) {
 				clearMoyroDraftsForUser(user.id);

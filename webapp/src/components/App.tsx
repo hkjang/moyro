@@ -5,6 +5,7 @@ import { clearAuth, setAuth } from "@/store/authSlice";
 import { api } from "@/api/client";
 import { APIError, BROWSER_SESSION_TOKEN } from "@/api/transport";
 import { AppRouter } from "@/app/AppRouter";
+import { beginSilentSso, clearSilentSsoState, shouldAttemptSilentSso } from "@/auth/silentSso";
 import { isSSOCallbackFragment, parseSSOCallbackFragment } from "@/auth/ssoCallback";
 import { useSystemInfo } from "@/features/system/SystemInfoContext";
 import { clearMoyroDraftsForUser } from "@/features/workspace/composer/useDraft";
@@ -29,6 +30,10 @@ export function App() {
   const [restoringSession, setRestoringSession] = useState<boolean>(
     () => Boolean(initialTokenRef.current) && !initialSSOCallbackRef.current,
   );
+  // True from the moment a prompt=none navigation starts; keeps the "signing
+  // in" placeholder up instead of flashing the login form while the browser
+  // leaves for the provider.
+  const [silentSsoRedirecting, setSilentSsoRedirecting] = useState(false);
 
   // Callbacks carry only a short-lived, browser-bound code. Retry transient
   // transport/5xx failures twice; terminal failures require an explicit new
@@ -78,9 +83,28 @@ export function App() {
     ).finally(() => setRestoringSession(false));
   }, [dispatch]);
 
+  // A session exists again: lift the sign-out suppression so a later visit
+  // may try silently once more.
+  useEffect(() => {
+    if (token) clearSilentSsoState();
+  }, [token]);
+
+  // Silent SSO. Runs only once the session restore and any callback exchange
+  // have settled and the server has said whether auto_login is on. Every
+  // reason not to try — login/callback paths, a refusal marker in the
+  // address, a deliberate sign-out, a previous attempt in this tab, or
+  // unreadable storage — is decided inside shouldAttemptSilentSso.
+  useEffect(() => {
+    if (token || consumingHash || restoringSession || silentSsoRedirecting) return;
+    if (!systemInfo.loaded) return;
+    if (!shouldAttemptSilentSso(systemInfo, window.location)) return;
+    setSilentSsoRedirecting(true);
+    beginSilentSso(window.location.pathname + window.location.search);
+  }, [token, consumingHash, restoringSession, silentSsoRedirecting, systemInfo]);
+
   return (
     <div style={{ height: "100vh" }}>
-      {consumingHash || restoringSession ? (
+      {consumingHash || restoringSession || silentSsoRedirecting ? (
         <div className="login-page">
           <div className="login-card">
             <p className="login-subtitle">로그인 중…</p>

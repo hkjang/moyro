@@ -43,6 +43,7 @@ const DEFAULT_PROVIDER: ManagedOIDCProviderSettings = {
   allow_signup: true,
   require_verified_email: true,
   allow_insecure_backchannel: false,
+  auto_login: false,
   discovery_status: "unknown",
 };
 
@@ -174,6 +175,15 @@ export function KeycloakSettingsPage() {
               control={<Switch checked={provider.enabled} onChange={(event) => update("enabled", event.target.checked)} />}
               label="Keycloak 로그인을 사용합니다"
             />
+            <Stack spacing={0.5}>
+              <FormControlLabel
+                control={<Switch checked={provider.auto_login === true} onChange={(event) => update("auto_login", event.target.checked)} />}
+                label="Keycloak 세션이 있으면 로그인 화면 없이 바로 들어갑니다 (자동 로그인)"
+              />
+              <Typography variant="caption" color="text.secondary">
+                브라우저 탭마다 한 번만 prompt=none 으로 조용히 시도합니다. Keycloak 세션이 없으면 평소처럼 로그인 화면이 뜨고, 스스로 로그아웃한 뒤에는 다시 시도하지 않습니다.
+              </Typography>
+            </Stack>
             <Grid container spacing={2}>
               <Grid size={{ xs: 12, md: 8 }}>
                 <TextField

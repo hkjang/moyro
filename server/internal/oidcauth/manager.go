@@ -65,6 +65,12 @@ type Config struct {
 	// endpoints remain HTTPS-only because they are browser-facing.
 	AllowInsecureBackchannel bool   `json:"allow_insecure_backchannel"`
 	CACertificatePEM         string `json:"ca_certificate_pem,omitempty"`
+	// AutoLogin lets the browser ask for a prompt=none authorization so a
+	// visitor with a live provider session is signed in without seeing the
+	// login screen. Off by default; while it is off a prompt=none request is
+	// silently downgraded to an ordinary login so the query string alone can
+	// never change the flow.
+	AutoLogin bool `json:"auto_login"`
 }
 
 type Identity struct {
@@ -474,10 +480,14 @@ func (m *Manager) AuthCodeURL(state, nonce, verifier string) (string, error) {
 	if !ok {
 		return "", ErrDisabled
 	}
-	return m.AuthCodeURLFor(binding.ID, state, nonce, verifier)
+	return m.AuthCodeURLFor(binding.ID, state, nonce, verifier, false)
 }
 
-func (m *Manager) AuthCodeURLFor(snapshotID, state, nonce, verifier string) (string, error) {
+// AuthCodeURLFor builds the provider authorization URL. With silent set the
+// request carries prompt=none, which asks the provider to answer only from an
+// existing session: it never renders a page and comes back with
+// error=login_required when there is none.
+func (m *Manager) AuthCodeURLFor(snapshotID, state, nonce, verifier string, silent bool) (string, error) {
 	if state == "" || nonce == "" || verifier == "" {
 		return "", fmt.Errorf("%w: state, nonce, and PKCE verifier are required", ErrInvalidConfig)
 	}
@@ -485,11 +495,22 @@ func (m *Manager) AuthCodeURLFor(snapshotID, state, nonce, verifier string) (str
 	if err != nil {
 		return "", err
 	}
-	return s.oauth2.AuthCodeURL(
-		state,
-		gooidc.Nonce(nonce),
-		oauth2.S256ChallengeOption(verifier),
-	), nil
+	opts := []oauth2.AuthCodeOption{gooidc.Nonce(nonce), oauth2.S256ChallengeOption(verifier)}
+	if silent {
+		opts = append(opts, oauth2.SetAuthURLParam("prompt", "none"))
+	}
+	return s.oauth2.AuthCodeURL(state, opts...), nil
+}
+
+// SilentLoginRefused reports whether a provider callback error is the ordinary
+// prompt=none answer for "no session here" rather than a failure. Any of these
+// means the visitor must be shown the login screen, and must not be retried.
+func SilentLoginRefused(providerError string) bool {
+	switch providerError {
+	case "login_required", "interaction_required", "consent_required":
+		return true
+	}
+	return false
 }
 
 func (m *Manager) Exchange(ctx context.Context, code, verifier, expectedNonce string) (*Identity, error) {

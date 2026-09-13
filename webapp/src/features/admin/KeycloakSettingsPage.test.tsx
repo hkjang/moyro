@@ -162,4 +162,33 @@ describe("KeycloakSettingsPage", () => {
       expect.objectContaining({ allow_insecure_backchannel: true }),
     );
   });
+
+  it("defaults auto login to off and saves the explicit opt-in", async () => {
+    const patch = vi.spyOn(moyroAdminApi, "patchOIDCProvider").mockImplementation(
+      async (_token, _id, payload) => ({ ...providerFixture, ...payload }),
+    );
+    await renderPage();
+
+    const label = Array.from(container.querySelectorAll("label"))
+      .find((candidate) => candidate.textContent?.includes("자동 로그인"));
+    const toggle = label?.querySelector<HTMLInputElement>('input[type="checkbox"]');
+    if (!toggle) throw new Error("auto login toggle not found");
+    expect(toggle.checked).toBe(false);
+
+    await act(async () => { toggle.click(); });
+    const save = Array.from(container.querySelectorAll("button"))
+      .find((candidate) => candidate.textContent?.includes("설정 저장"));
+    if (!(save instanceof HTMLButtonElement)) throw new Error("save button not found");
+    await act(async () => {
+      save.click();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+
+    expect(patch).toHaveBeenCalledWith(
+      "admin-token",
+      "keycloak",
+      expect.objectContaining({ auto_login: true }),
+    );
+    expect(toggle.checked).toBe(true);
+  });
 });

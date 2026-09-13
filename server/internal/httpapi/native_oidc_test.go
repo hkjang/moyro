@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"reflect"
 	"testing"
 	"time"
@@ -369,5 +370,101 @@ func TestShouldBootstrapOIDCDefaultRetriesRegularButNeverExpandsGuestScope(t *te
 	}
 	if shouldBootstrapOIDCDefault(false, auth.User{Roles: "system_guest", GuestExpiresAt: time.Now().Add(time.Hour).UnixMilli()}) {
 		t.Fatal("guest without a current group mapping must not escape into the default space")
+	}
+}
+
+func TestSilentOIDCLoginRequestedIsGatedByAutoLogin(t *testing.T) {
+	t.Parallel()
+
+	silentRequest := httptest.NewRequest(http.MethodGet, "/api/moyro/v1/auth/oidc/login?prompt=none&return_to=%2Ftoday", nil)
+	plainRequest := httptest.NewRequest(http.MethodGet, "/api/moyro/v1/auth/oidc/login?return_to=%2Ftoday", nil)
+
+	if silentOIDCLoginRequested(silentRequest, oidcProviderView{Enabled: true}) {
+		t.Fatal("prompt=none must be downgraded to an ordinary login while auto_login is off")
+	}
+	if silentOIDCLoginRequested(silentRequest, oidcProviderView{Enabled: false, AutoLogin: true}) {
+		t.Fatal("prompt=none must not be honoured for a disabled provider record")
+	}
+	if !silentOIDCLoginRequested(silentRequest, oidcProviderView{Enabled: true, AutoLogin: true}) {
+		t.Fatal("prompt=none was not honoured with auto_login on")
+	}
+	if silentOIDCLoginRequested(plainRequest, oidcProviderView{Enabled: true, AutoLogin: true}) {
+		t.Fatal("auto_login alone must not turn an ordinary login silent")
+	}
+	if defaultOIDCProvider().AutoLogin {
+		t.Fatal("auto_login must default to off")
+	}
+}
+
+func TestRefusedSilentOIDCLoginOnlyForSilentFlows(t *testing.T) {
+	t.Parallel()
+
+	silent := oidcauth.Flow{Silent: true}
+	for _, code := range []string{"provider_login_required", "provider_interaction_required", "provider_consent_required"} {
+		if !refusedSilentOIDCLogin(silent, code) {
+			t.Errorf("silent flow %q was not treated as a refusal", code)
+		}
+		if refusedSilentOIDCLogin(oidcauth.Flow{}, code) {
+			t.Errorf("ordinary flow %q was treated as a silent refusal", code)
+		}
+	}
+	for _, code := range []string{"provider_access_denied", "state_mismatch", "login_required", ""} {
+		if refusedSilentOIDCLogin(silent, code) {
+			t.Errorf("callback error %q was treated as a silent refusal", code)
+		}
+	}
+}
+
+func TestSilentOIDCRefusalLocationMarksAddressAndKeepsSafeDeepLink(t *testing.T) {
+	t.Parallel()
+
+	if got := silentOIDCRefusalLocation(""); got != "/login?sso=none" {
+		t.Fatalf("refusal without deep link = %q", got)
+	}
+	if got := silentOIDCRefusalLocation("/"); got != "/login?sso=none" {
+		t.Fatalf("refusal with root deep link = %q", got)
+	}
+	got := silentOIDCRefusalLocation("/workspace/team-a/channel-b?thread=1")
+	parsed, err := url.Parse(got)
+	if err != nil || parsed.Path != "/login" {
+		t.Fatalf("refusal location = %q", got)
+	}
+	if parsed.Query().Get("sso") != "none" || parsed.Query().Get("return_to") != "/workspace/team-a/channel-b?thread=1" {
+		t.Fatalf("refusal location lost marker or deep link: %q", got)
+	}
+	for _, unsafe := range []string{"//attacker.example/", "https://attacker.example/", "/%5cattacker.example/"} {
+		if got := silentOIDCRefusalLocation(unsafe); got != "/login?sso=none" {
+			t.Errorf("unsafe return_to %q leaked into %q", unsafe, got)
+		}
+	}
+}
+
+func TestConsumeOIDCCallbackTransactionKeepsSilentFlowOnProviderError(t *testing.T) {
+	t.Parallel()
+
+	store := &recordingOIDCFlowConsumer{flow: oidcauth.Flow{Nonce: "nonce", Verifier: "verifier", ReturnTo: "/today", Silent: true}}
+	r := httptest.NewRequest(http.MethodGet, oidcCallbackPath+"?state=state-value&error=login_required", nil)
+	r.AddCookie(&http.Cookie{Name: oidcTransactionCookieName("state-value"), Value: "state-value", Path: oidcCallbackPath})
+	w := httptest.NewRecorder()
+
+	flow, code := consumeOIDCCallbackTransaction(w, r, store, true)
+	if code != "provider_login_required" {
+		t.Fatalf("callback error = %q", code)
+	}
+	if !flow.Silent || flow.ReturnTo != "/today" {
+		t.Fatalf("bound flow was not returned with the provider error: %+v", flow)
+	}
+	if !refusedSilentOIDCLogin(flow, code) {
+		t.Fatal("bound silent flow with login_required was not recognised as a refusal")
+	}
+	assertOIDCCookieCleared(t, w.Result(), "state-value")
+
+	// A state that never bound must not be reported as a silent refusal even
+	// when the query carries login_required: nothing about it is trustworthy.
+	unbound := &recordingOIDCFlowConsumer{err: oidcauth.ErrInvalidFlow}
+	r = httptest.NewRequest(http.MethodGet, oidcCallbackPath+"?state=other&error=login_required", nil)
+	flow, code = consumeOIDCCallbackTransaction(httptest.NewRecorder(), r, unbound, true)
+	if code != "state_mismatch" || flow.Silent || refusedSilentOIDCLogin(flow, code) {
+		t.Fatalf("unbound callback = (%+v, %q), want state_mismatch without refusal", flow, code)
 	}
 }

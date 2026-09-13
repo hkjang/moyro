@@ -30,6 +30,8 @@ export type OIDCProviderSettings = {
   allow_signup: boolean;
   require_verified_email: boolean;
   allow_insecure_backchannel: boolean;
+  /** Sign visitors in silently (prompt=none) when the provider still has a session. Off by default. */
+  auto_login?: boolean;
   ca_certificate_pem?: string;
   redirect_url?: string;
   discovery_status?: "unknown" | "ready" | "error";
