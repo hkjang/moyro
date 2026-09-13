@@ -34,6 +34,10 @@ type Flow struct {
 	ProviderSnapshotID string          `json:"provider_snapshot_id"`
 	ProviderPolicy     json.RawMessage `json:"provider_policy"`
 	ExpiresAt          int64           `json:"expires_at"`
+	// Silent marks a prompt=none attempt. The callback needs it to tell the
+	// provider's "no session" answer apart from a real error, and it lives in
+	// the sealed flow so the browser cannot claim it on the way back.
+	Silent bool `json:"silent,omitempty"`
 }
 
 type FlowStore struct {
@@ -50,7 +54,7 @@ func NewFlowStore(db *store.DB, secretManager *secrets.Manager) (*FlowStore, err
 	return &FlowStore{db: db, secrets: secretManager, ttl: 10 * time.Minute, clock: time.Now}, nil
 }
 
-func (s *FlowStore) Create(ctx context.Context, returnTo, providerSnapshotID string, providerPolicy json.RawMessage) (state string, flow Flow, err error) {
+func (s *FlowStore) Create(ctx context.Context, returnTo, providerSnapshotID string, providerPolicy json.RawMessage, silent bool) (state string, flow Flow, err error) {
 	providerSnapshotID = strings.TrimSpace(providerSnapshotID)
 	if err := validateFlowProviderBinding(providerSnapshotID, providerPolicy); err != nil {
 		return "", Flow{}, ErrInvalidFlow
@@ -73,6 +77,7 @@ func (s *FlowStore) Create(ctx context.Context, returnTo, providerSnapshotID str
 		ProviderSnapshotID: providerSnapshotID,
 		ProviderPolicy:     append(json.RawMessage(nil), providerPolicy...),
 		ExpiresAt:          s.clock().Add(s.ttl).UnixMilli(),
+		Silent:             silent,
 	}
 	payload, err := json.Marshal(flow)
 	if err != nil {

@@ -59,6 +59,7 @@ type oidcProviderView struct {
 	AllowSignup              bool                      `json:"allow_signup"`
 	RequireVerifiedEmail     bool                      `json:"require_verified_email"`
 	AllowInsecureBackchannel bool                      `json:"allow_insecure_backchannel"`
+	AutoLogin                bool                      `json:"auto_login"`
 	RedirectURL              string                    `json:"redirect_url,omitempty"`
 	DiscoveryStatus          string                    `json:"discovery_status,omitempty"`
 	LastTestedAt             int64                     `json:"last_tested_at,omitempty"`
@@ -146,6 +147,7 @@ func (v oidcProviderView) oidcConfig(secret string) oidcauth.Config {
 		RequireVerifiedEmail:     v.RequireVerifiedEmail,
 		AllowInsecureBackchannel: v.AllowInsecureBackchannel,
 		CACertificatePEM:         v.CACertificatePEM,
+		AutoLogin:                v.AutoLogin,
 	}
 }
 
@@ -355,12 +357,17 @@ func (h *handlers) nativeOIDCLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	returnTo := sanitizeReturnTo(r.URL.Query().Get("return_to"))
-	state, flow, err := h.native.oidcFlows.Create(r.Context(), returnTo, binding.ID, policy)
+	// prompt=none asks the provider to answer from an existing session only and
+	// never draws a page. The administrator setting gates it: while auto_login
+	// is off the request is silently downgraded to an ordinary login, so a
+	// query string pasted into a link cannot change the flow.
+	silent := silentOIDCLoginRequested(r, storedView)
+	state, flow, err := h.native.oidcFlows.Create(r.Context(), returnTo, binding.ID, policy, silent)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "api.moyro.oidc.flow", err.Error())
 		return
 	}
-	authURL, err := h.native.oidc.AuthCodeURLFor(binding.ID, state, flow.Nonce, flow.Verifier)
+	authURL, err := h.native.oidc.AuthCodeURLFor(binding.ID, state, flow.Nonce, flow.Verifier, flow.Silent)
 	if err != nil {
 		// The row was already created. Consume it now so a transient manager
 		// failure cannot leave a usable, unbound authorization transaction.
@@ -388,6 +395,15 @@ func (h *handlers) nativeOIDCCallback(w http.ResponseWriter, r *http.Request) {
 		w, r, h.native.oidcFlows, oidcCookieSecure(r, h.native.oidc),
 	)
 	if callbackErr != "" {
+		// login_required after prompt=none is the provider's ordinary "no
+		// session" answer, not a failure. Send the visitor to the login screen
+		// with a marker in the address so the browser never retries the silent
+		// attempt from that page, even if its storage was cleared meanwhile.
+		if refusedSilentOIDCLogin(flow, callbackErr) {
+			result = "login_required"
+			http.Redirect(w, r, silentOIDCRefusalLocation(flow.ReturnTo), http.StatusFound)
+			return
+		}
 		result = "invalid"
 		h.nativeOIDCRedirectError(w, r, callbackErr)
 		return
@@ -571,6 +587,31 @@ func (h *handlers) nativeOIDCRedirectError(w http.ResponseWriter, r *http.Reques
 	http.Redirect(w, r, "/login#oauth_error="+url.QueryEscape(code), http.StatusFound)
 }
 
+// silentOIDCLoginRequested honours prompt=none only when the administrator has
+// turned auto_login on for the stored provider record.
+func silentOIDCLoginRequested(r *http.Request, stored oidcProviderView) bool {
+	return stored.Enabled && stored.AutoLogin && r.URL.Query().Get("prompt") == "none"
+}
+
+// refusedSilentOIDCLogin is true only for the provider's "no session" answer
+// to a flow that this server itself started with prompt=none. The same error
+// on an ordinary login is still reported as a failure.
+func refusedSilentOIDCLogin(flow oidcauth.Flow, callbackErr string) bool {
+	providerErr, isProviderErr := strings.CutPrefix(callbackErr, "provider_")
+	return flow.Silent && isProviderErr && oidcauth.SilentLoginRefused(providerErr)
+}
+
+// silentOIDCRefusalLocation is where a refused prompt=none attempt lands. The
+// sso=none marker tells the web app not to try again; the sanitized deep link
+// rides along so a manual login still returns the visitor to where they were.
+func silentOIDCRefusalLocation(returnTo string) string {
+	query := url.Values{"sso": []string{"none"}}
+	if destination := sanitizeReturnTo(returnTo); destination != "" && destination != "/" {
+		query.Set("return_to", destination)
+	}
+	return "/login?" + query.Encode()
+}
+
 func (h *handlers) oidcCanResolveExisting(ctx context.Context, provider string, identity *oidcauth.Identity) (bool, error) {
 	normalizedEmail := oauth.NormalizeEmail(identity.Email)
 	var exists bool
@@ -687,7 +728,10 @@ func consumeOIDCCallbackTransaction(w http.ResponseWriter, r *http.Request, stor
 		return oidcauth.Flow{}, "state_mismatch"
 	}
 	if providerErr := sanitizeProviderError(r.URL.Query().Get("error")); providerErr != "" {
-		return oidcauth.Flow{}, "provider_" + providerErr
+		// The flow is returned alongside the error: the state and cookie were
+		// bound, so its Silent/ReturnTo fields are trustworthy and the caller
+		// needs them to recognise a refused prompt=none attempt.
+		return flow, "provider_" + providerErr
 	}
 	return flow, ""
 }

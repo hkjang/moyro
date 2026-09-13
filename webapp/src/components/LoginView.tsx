@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { useDispatch } from "react-redux";
 import { setAuth } from "@/store/authSlice";
 import { api, type InvitePreview } from "@/api/client";
+import { safeReturnTo } from "@/auth/silentSso";
 import { displayVersion, useSystemInfo } from "@/features/system/SystemInfoContext";
 import { BrandMark } from "@/components/brand/BrandMark";
 
@@ -53,6 +54,15 @@ function isDevAutoLoginDisabled(): boolean {
   }
 }
 
+// Where a manual sign-in lands. A deep link is kept as-is; on /login itself
+// the callback may have left a `return_to` (a refused silent SSO attempt does
+// this) so the visitor still gets back to where they were.
+function loginReturnTo(location: Pick<Location, "pathname" | "search">): string {
+  if (location.pathname !== "/login") return location.pathname + location.search;
+  const requested = safeReturnTo(new URLSearchParams(location.search).get("return_to"));
+  return requested === "/" ? "/today" : requested;
+}
+
 export function LoginView() {
   const systemInfo = useSystemInfo();
   const [mode, setMode] = useState<Mode>("login");
@@ -81,9 +91,7 @@ export function LoginView() {
       ? [systemInfo.oidc_provider_name === "Keycloak" ? "keycloak" : "oidc"]
       : [];
   const canRegister = Boolean(invite || systemInfo.local_signup_enabled);
-  const returnTo = window.location.pathname === "/login"
-    ? "/today"
-    : window.location.pathname + window.location.search;
+  const returnTo = loginReturnTo(window.location);
   const oidcLoginURL = `/api/moyro/v1/auth/oidc/login?return_to=${encodeURIComponent(
     returnTo,
   )}`;

@@ -2,6 +2,7 @@ import { useCallback, useState } from "react";
 import { useDispatch } from "react-redux";
 import { api, type SessionRow } from "@/api/client";
 import { clearAuth } from "@/store/authSlice";
+import { markSignedOut } from "@/auth/silentSso";
 import { clearMoyroDraftsForUser } from "@/features/workspace/composer/useDraft";
 
 /** Confirmation prompt the workspace already owns; passed in so this hook
@@ -89,6 +90,7 @@ export function useSessionManager({
         // the app would keep rendering against a credential the server has
         // already dropped.
         if (killedCurrent) {
+          markSignedOut();
           if (userId && clearDraftsOnLogout) clearMoyroDraftsForUser(userId);
           dispatch(clearAuth());
         }

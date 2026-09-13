@@ -164,7 +164,7 @@ func (h *handlers) nativeSystemInfo(w http.ResponseWriter, r *http.Request) {
 	info := buildinfo.Current()
 	view := map[string]any{
 		"name": "moyro", "version": info.Version, "build_hash": info.Commit,
-		"build_date": info.BuildDate, "oidc_enabled": false, "approval_enabled": false,
+		"build_date": info.BuildDate, "oidc_enabled": false, "oidc_auto_login": false, "approval_enabled": false,
 		"local_signup_enabled": false,
 		"capabilities": map[string]any{
 			"email_digest": map[string]bool{
@@ -184,6 +184,7 @@ func (h *handlers) nativeSystemInfo(w http.ResponseWriter, r *http.Request) {
 		if public, ok := h.native.oidc.PublicConfig(); ok {
 			view["oidc_enabled"] = true
 			view["oidc_provider_name"] = public.DisplayName
+			view["oidc_auto_login"] = public.AutoLogin
 		}
 		if enabled, err := h.native.approval.AnyEnabled(r.Context()); err == nil {
 			view["approval_enabled"] = enabled

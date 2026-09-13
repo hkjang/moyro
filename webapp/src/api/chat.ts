@@ -302,6 +302,8 @@ export type SystemInfo = {
   build_date?: string;
   oidc_enabled?: boolean;
   oidc_provider_name?: string;
+  /** Administrator opt-in for prompt=none silent sign-in; false unless set. */
+  oidc_auto_login?: boolean;
   approval_enabled?: boolean;
   local_signup_enabled?: boolean;
   capabilities?: {

@@ -80,6 +80,43 @@ func TestConfigureAndAuthCodeURLUsesNonceAndPKCE(t *testing.T) {
 	if query.Get("code_challenge") == "" || query.Get("code_challenge") == "pkce-verifier-value" {
 		t.Fatalf("code_challenge was not an S256 challenge: %q", query.Get("code_challenge"))
 	}
+	if _, present := query["prompt"]; present {
+		t.Fatalf("ordinary login carried prompt=%q", query.Get("prompt"))
+	}
+
+	binding, ok := manager.CurrentSnapshot()
+	if !ok {
+		t.Fatal("CurrentSnapshot() missing after Configure")
+	}
+	silentURL, err := manager.AuthCodeURLFor(binding.ID, "state-value", "nonce-value", "pkce-verifier-value", true)
+	if err != nil {
+		t.Fatalf("silent AuthCodeURLFor() error = %v", err)
+	}
+	silent, err := url.Parse(silentURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := silent.Query().Get("prompt"); got != "none" {
+		t.Fatalf("silent login prompt = %q, want none", got)
+	}
+	if silent.Query().Get("state") != "state-value" || silent.Query().Get("nonce") != "nonce-value" {
+		t.Fatalf("silent login dropped state/nonce: %s", silentURL)
+	}
+}
+
+func TestSilentLoginRefusedRecognisesOnlyNoSessionAnswers(t *testing.T) {
+	t.Parallel()
+
+	for _, code := range []string{"login_required", "interaction_required", "consent_required"} {
+		if !SilentLoginRefused(code) {
+			t.Errorf("SilentLoginRefused(%q) = false, want true", code)
+		}
+	}
+	for _, code := range []string{"", "access_denied", "invalid_request", "server_error", "LOGIN_REQUIRED"} {
+		if SilentLoginRefused(code) {
+			t.Errorf("SilentLoginRefused(%q) = true, want false", code)
+		}
+	}
 }
 
 func TestPrepareDoesNotMutateLiveProviderUntilActivated(t *testing.T) {
@@ -548,7 +585,7 @@ func TestExchangeForRemainsBoundToAuthorizationSnapshotAcrossActivation(t *testi
 	if !ok || original.ID == "" {
 		t.Fatal("original provider snapshot is unavailable")
 	}
-	if _, err := manager.AuthCodeURLFor(original.ID, "state", "nonce", "verifier"); err != nil {
+	if _, err := manager.AuthCodeURLFor(original.ID, "state", "nonce", "verifier", false); err != nil {
 		t.Fatalf("create flow against long-running current snapshot: %v", err)
 	}
 
