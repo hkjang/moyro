@@ -25,6 +25,7 @@ import (
 	"github.com/hkjang/moyro/server/internal/files"
 	"github.com/hkjang/moyro/server/internal/invites"
 	"github.com/hkjang/moyro/server/internal/links"
+	eventmail "github.com/hkjang/moyro/server/internal/mail"
 	"github.com/hkjang/moyro/server/internal/metrics"
 	"github.com/hkjang/moyro/server/internal/oauth"
 	"github.com/hkjang/moyro/server/internal/pat"
@@ -135,7 +136,11 @@ func New(cfg *config.Config, db *store.DB, hub *ws.Hub, host *pluginhost.Host, l
 	automationSvc := automations.New(db)
 	postSvc.SetTransactionalEnqueuer(automationSvc)
 	activitySvc := activityevents.New(db)
-	activityEmitter := &realtimeActivityEmitter{next: activitySvc, events: hub}
+	// Event mail rides on the same inbox funnel: whatever reaches a person's
+	// activity inbox may also reach their mailbox, if the administrator turned
+	// the relay on. The service is off until the stored settings load.
+	mailSvc := eventmail.New(db, mailDirectory{db: db}, logger)
+	activityEmitter := &realtimeActivityEmitter{next: activitySvc, events: hub, mail: mailSvc}
 	// Phase 21: Mattermost-shaped preferences. Pure DB CRUD; no worker.
 	prefsSvc := preferences.New(db)
 	// Phase 22: channel sidebar categories. Auto-bootstraps three defaults
@@ -283,6 +288,7 @@ func New(cfg *config.Config, db *store.DB, hub *ws.Hub, host *pluginhost.Host, l
 		hub:        hub,
 		host:       host,
 		violations: tracking.NewRecorder(),
+		mail:       mailSvc,
 		logger:     logger,
 	}
 	nativeCtx, nativeCancel := context.WithTimeout(context.Background(), 15*time.Second)
@@ -1484,6 +1490,8 @@ func New(cfg *config.Config, db *store.DB, hub *ws.Hub, host *pluginhost.Host, l
 				r.With(h.nativeRequireSettingsSection).Patch("/admin/settings/{section}", h.patchNativeSettings)
 				r.With(h.nativeRequire(rbac.PermissionManageSettings)).Get("/admin/tracking/violations", h.listTrackingViolations)
 				r.With(h.nativeRequire(rbac.PermissionManageSettings)).Delete("/admin/tracking/violations", h.clearTrackingViolations)
+				r.With(h.nativeRequire(rbac.PermissionManageSettings)).Get("/admin/mail/deliveries", h.listMailDeliveries)
+				r.With(h.nativeRequire(rbac.PermissionManageSettings)).Post("/admin/mail/test", h.sendTestMail)
 				r.With(h.nativeRequire("manage_oidc")).Get("/admin/oidc/providers", h.listNativeOIDCProviders)
 				r.With(h.nativeRequire("manage_oidc")).Post("/admin/oidc/providers", h.saveNativeOIDCProvider)
 				r.With(h.nativeRequire("manage_oidc")).Patch("/admin/oidc/providers/{providerID}", h.saveNativeOIDCProvider)

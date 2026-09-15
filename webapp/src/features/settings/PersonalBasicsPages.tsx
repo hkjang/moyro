@@ -167,7 +167,9 @@ export function NotificationSettingsPage() {
   const token = useSelector((state: RootState) => state.auth.token);
   const systemInfo = useSystemInfo();
   const emailDigestAvailable = systemInfo.capabilities?.email_digest?.enabled === true;
+  const eventMailAvailable = systemInfo.capabilities?.event_mail?.enabled === true;
   const [digest, setDigest] = useState(false);
+  const [eventMail, setEventMail] = useState(true);
   const [loaded, setLoaded] = useState(false);
   const [message, setMessage] = useState("");
   const [rules, setRules] = useState<InboxPreferences>(DEFAULT_INBOX_PREFERENCES);
@@ -178,16 +180,16 @@ export function NotificationSettingsPage() {
 
   useEffect(() => {
     if (!token || !systemInfo.loaded) return;
-    if (!emailDigestAvailable) {
+    if (!emailDigestAvailable && !eventMailAvailable) {
       setDigest(false);
       setLoaded(true);
       return;
     }
     api.getEmailPrefs(token).then(
-      (value) => { setDigest(value.digest_enabled); setLoaded(true); },
+      (value) => { setDigest(value.digest_enabled); setEventMail(value.events_enabled); setLoaded(true); },
       (err: unknown) => { setLoaded(true); setMessage(err instanceof Error ? err.message : "알림 설정을 불러오지 못했습니다."); },
     );
-  }, [emailDigestAvailable, systemInfo.loaded, token]);
+  }, [emailDigestAvailable, eventMailAvailable, systemInfo.loaded, token]);
 
   useEffect(() => {
     if (!token) return;
@@ -219,6 +221,22 @@ export function NotificationSettingsPage() {
       setMessage("알림 설정을 저장했습니다.");
     } catch (err) {
       setDigest(previous);
+      setMessage(err instanceof Error ? err.message : "알림 설정을 저장하지 못했습니다.");
+    }
+  }
+
+  // The recipient decides whether event mail (approval requests and
+  // decisions, task assignments) reaches them at all.
+  async function updateEventMail(next: boolean) {
+    if (!token) return;
+    const previous = eventMail;
+    setEventMail(next);
+    try {
+      const value = await api.updateEmailPrefs(token, { events_enabled: next });
+      setEventMail(value.events_enabled);
+      setMessage("알림 설정을 저장했습니다.");
+    } catch (err) {
+      setEventMail(previous);
       setMessage(err instanceof Error ? err.message : "알림 설정을 저장하지 못했습니다.");
     }
   }
@@ -264,6 +282,12 @@ export function NotificationSettingsPage() {
       <SettingsCard title="이메일 요약">
         <FormControlLabel control={<Switch checked={digest} disabled={!loaded || !emailDigestAvailable} onChange={(event) => void update(event.target.checked)} />} label="놓친 멘션을 하루 한 번 이메일로 받기" />
         {systemInfo.loaded && !emailDigestAvailable && <Alert severity="info" sx={{ mt: 2 }}>현재 릴리스는 SMTP 관리 설정과 이메일 요약 발송을 지원하지 않습니다.</Alert>}
+        <FormControlLabel
+          sx={{ mt: 1 }}
+          control={<Switch checked={eventMail} disabled={!loaded || !eventMailAvailable} onChange={(event) => void updateEventMail(event.target.checked)} />}
+          label="기다리는 일(승인 요청·결과, 작업 할당)을 메일로 받기"
+        />
+        {systemInfo.loaded && !eventMailAvailable && <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>관리자가 메일 알림을 켜면 여기서 끌 수 있습니다.</Typography>}
         {message && <Typography variant="body2" sx={{ mt: 2 }} role="status">{message}</Typography>}
       </SettingsCard>
       <SettingsCard title="우선순위와 묶음" description="VIP와 중요한 이벤트를 먼저 표시하고 반복 알림을 한 묶음으로 정리합니다.">

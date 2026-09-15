@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"mime"
 	"net"
 	"net/mail"
 	"net/smtp"
@@ -29,6 +30,10 @@ const (
 	TLSModePlain    TLSMode = "plain" // Alias accepted for operator-facing settings.
 	TLSModeSTARTTLS TLSMode = "starttls"
 	TLSModeImplicit TLSMode = "implicit"
+	// TLSModeAuto upgrades with STARTTLS when the relay advertises it and
+	// otherwise stays plaintext. Internal relays on port 25 commonly offer
+	// neither credentials nor TLS, so this is what "just works" for them.
+	TLSModeAuto TLSMode = "auto"
 )
 
 // ErrSTARTTLSUnavailable means encryption was required but the SMTP server
@@ -77,6 +82,9 @@ type SMTPSender struct {
 	RootCAs *x509.CertPool
 	// Timeout caps the complete SMTP exchange. Zero uses ten seconds.
 	Timeout time.Duration
+	// InsecureSkipVerify accepts any relay certificate. It is an explicit
+	// opt-in for internal relays with private certificates and nothing else.
+	InsecureSkipVerify bool
 }
 
 // Send validates the envelope and headers, establishes the selected transport,
@@ -103,7 +111,7 @@ func (s *SMTPSender) Send(ctx context.Context, to, subject, htmlBody, textBody s
 	operationContext, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	connection, err := configuration.dial(operationContext, s.RootCAs)
+	connection, err := configuration.dial(operationContext, s.RootCAs, s.InsecureSkipVerify)
 	if err != nil {
 		return operationError(operationContext, "connect", err)
 	}
@@ -127,21 +135,24 @@ func (s *SMTPSender) Send(ctx context.Context, to, subject, htmlBody, textBody s
 		return operationError(operationContext, "hello", err)
 	}
 
-	if configuration.mode == TLSModeSTARTTLS {
-		if supported, _ := client.Extension("STARTTLS"); !supported {
+	if configuration.mode == TLSModeSTARTTLS || configuration.mode == TLSModeAuto {
+		supported, _ := client.Extension("STARTTLS")
+		if !supported && configuration.mode == TLSModeSTARTTLS {
 			return ErrSTARTTLSUnavailable
 		}
-		if err := client.StartTLS(configuration.tlsConfig(s.RootCAs)); err != nil {
-			return operationError(operationContext, "STARTTLS", err)
+		if supported {
+			if err := client.StartTLS(configuration.tlsConfig(s.RootCAs, s.InsecureSkipVerify)); err != nil {
+				return operationError(operationContext, "STARTTLS", err)
+			}
 		}
 	}
 
 	if s.Username != "" {
-		if supported, _ := client.Extension("AUTH"); !supported {
+		supported, mechanisms := client.Extension("AUTH")
+		if !supported {
 			return errors.New("smtp: server doesn't support AUTH")
 		}
-		auth := smtp.PlainAuth("", s.Username, s.Password, configuration.host)
-		if err := client.Auth(auth); err != nil {
+		if err := client.Auth(s.authMechanism(mechanisms, configuration.host)); err != nil {
 			return operationError(operationContext, "authenticate", err)
 		}
 	}
@@ -212,6 +223,11 @@ func (s *SMTPSender) effectiveTLSMode(port string) (TLSMode, error) {
 		return TLSModeSTARTTLS, nil
 	}
 	switch configured {
+	case string(TLSModeAuto):
+		if port == "465" {
+			return TLSModeImplicit, nil
+		}
+		return TLSModeAuto, nil
 	case string(TLSModeNone), string(TLSModePlain):
 		return TLSModeNone, nil
 	case string(TLSModeSTARTTLS), "start_tls":
@@ -223,24 +239,58 @@ func (s *SMTPSender) effectiveTLSMode(port string) (TLSMode, error) {
 	}
 }
 
-func (c smtpConfiguration) dial(ctx context.Context, roots *x509.CertPool) (net.Conn, error) {
+func (c smtpConfiguration) dial(ctx context.Context, roots *x509.CertPool, insecure bool) (net.Conn, error) {
 	netDialer := &net.Dialer{}
 	if c.mode != TLSModeImplicit {
 		return netDialer.DialContext(ctx, "tcp", c.addr)
 	}
 	tlsDialer := &tls.Dialer{
 		NetDialer: netDialer,
-		Config:    c.tlsConfig(roots),
+		Config:    c.tlsConfig(roots, insecure),
 	}
 	return tlsDialer.DialContext(ctx, "tcp", c.addr)
 }
 
-func (c smtpConfiguration) tlsConfig(roots *x509.CertPool) *tls.Config {
+func (c smtpConfiguration) tlsConfig(roots *x509.CertPool, insecure bool) *tls.Config {
 	return &tls.Config{
-		MinVersion: tls.VersionTLS12,
-		ServerName: c.host,
-		RootCAs:    roots,
+		MinVersion:         tls.VersionTLS12,
+		ServerName:         c.host,
+		RootCAs:            roots,
+		InsecureSkipVerify: insecure, //nolint:gosec // administrator opt-in for private relay certificates
 	}
+}
+
+// authMechanism prefers PLAIN and falls back to LOGIN, which several
+// corporate relays offer instead. The standard library ships only PLAIN and
+// CRAM-MD5.
+func (s *SMTPSender) authMechanism(advertised, host string) smtp.Auth {
+	upper := strings.ToUpper(advertised)
+	if !strings.Contains(upper, "PLAIN") && strings.Contains(upper, "LOGIN") {
+		return loginAuth{username: s.Username, password: s.Password, host: host}
+	}
+	return smtp.PlainAuth("", s.Username, s.Password, host)
+}
+
+type loginAuth struct{ username, password, host string }
+
+func (a loginAuth) Start(server *smtp.ServerInfo) (string, []byte, error) {
+	if !server.TLS && server.Name != a.host {
+		return "", nil, errors.New("smtp: LOGIN authentication requires a trusted server")
+	}
+	return "LOGIN", nil, nil
+}
+
+func (a loginAuth) Next(fromServer []byte, more bool) ([]byte, error) {
+	if !more {
+		return nil, nil
+	}
+	switch strings.ToLower(strings.TrimRight(string(fromServer), ": ")) {
+	case "username":
+		return []byte(a.username), nil
+	case "password":
+		return []byte(a.password), nil
+	}
+	return nil, fmt.Errorf("smtp: unexpected LOGIN challenge %q", fromServer)
 }
 
 func validateMessageHeaders(from, to, subject string) (*mail.Address, *mail.Address, error) {
@@ -294,7 +344,8 @@ func composeMultipart(from, to, subject, htmlBody, textBody string) string {
 	var b strings.Builder
 	b.WriteString("From: " + from + "\r\n")
 	b.WriteString("To: " + to + "\r\n")
-	b.WriteString("Subject: " + subject + "\r\n")
+	// Non-ASCII subjects are RFC 2047 encoded; ASCII ones pass through unchanged.
+	b.WriteString("Subject: " + mime.QEncoding.Encode("utf-8", subject) + "\r\n")
 	b.WriteString("MIME-Version: 1.0\r\n")
 	b.WriteString("Content-Type: multipart/alternative; boundary=\"" + boundary + "\"\r\n\r\n")
 	b.WriteString("--" + boundary + "\r\n")

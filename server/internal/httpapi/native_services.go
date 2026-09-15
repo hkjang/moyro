@@ -125,6 +125,12 @@ func newNativeServices(ctx context.Context, cfg *config.Config, db *store.DB, h 
 	if err := native.reloadSite(ctx, h.outDisp); err != nil {
 		return nil, err
 	}
+	if h.mail != nil {
+		h.mail.SetBaseURLFallback(func() string { return native.currentSiteSettings().PublicBaseURL })
+	}
+	if err := native.reloadMail(ctx, h.mail); err != nil {
+		logger.Warn("saved mail configuration disabled", "err", err)
+	}
 	if err := native.reloadTracking(ctx); err != nil {
 		// A stored configuration this build no longer accepts must not take
 		// the management services down; tracking simply stays off.
