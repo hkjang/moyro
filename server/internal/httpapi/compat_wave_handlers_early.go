@@ -695,8 +695,8 @@ func (h *handlers) updateSidebarCategoriesBulk(w http.ResponseWriter, r *http.Re
 	if !decodeCollectionBody(w, r, "api.sidebar.bulk.invalid_body", &cats) {
 		return
 	}
-	// Each category costs a transaction, and each of its channels an INSERT
-	// inside that transaction, so both dimensions are capped.
+	// Each category costs a transaction, and its channel list is bound into
+	// that transaction's statements, so both dimensions are capped.
 	if tooManyBatchItems(w, "api.sidebar.bulk.too_many", len(cats)) {
 		return
 	}

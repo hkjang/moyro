@@ -13,9 +13,10 @@
 // type and any pre-existing `favorite_channel/<id>=true` rows in preferences
 // (so users upgrading from Phase 21 keep their stars).
 //
-// All multi-row writes (Update, UpdateOrder) run inside a single transaction
-// because Mattermost's webapp issues atomic batch updates after drag-drop and
-// expects either-all-or-nothing semantics.
+// All multi-row writes run either inside a single transaction (Create,
+// Update) or as a single statement (UpdateOrder) because Mattermost's webapp
+// issues atomic batch updates after drag-drop and expects either-all-or-nothing
+// semantics.
 package sidebar
 
 import (
@@ -370,7 +371,7 @@ func (s *Service) Create(ctx context.Context, userID, teamID, displayName string
 	`, id, userID, teamID, TypeCustom, displayName, maxOrder+10, SortingManual, now); err != nil {
 		return nil, err
 	}
-	if err := s.replaceChannelsTx(ctx, tx, id, channelIDs); err != nil {
+	if err := s.replaceChannelsTx(ctx, tx, userID, teamID, id, channelIDs); err != nil {
 		return nil, err
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -404,7 +405,7 @@ func (s *Service) Update(ctx context.Context, userID, teamID string, cat Categor
 	if tag.RowsAffected() == 0 {
 		return nil, pgx.ErrNoRows
 	}
-	if err := s.replaceChannelsTx(ctx, tx, cat.ID, cat.ChannelIDs); err != nil {
+	if err := s.replaceChannelsTx(ctx, tx, userID, teamID, cat.ID, cat.ChannelIDs); err != nil {
 		return nil, err
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -417,10 +418,19 @@ func (s *Service) Update(ctx context.Context, userID, teamID string, cat Categor
 // Channels added here are first removed from any *other* category for the
 // same user/team so a channel never ends up double-listed; this matches
 // Mattermost's drag-drop reorder semantics.
-func (s *Service) replaceChannelsTx(ctx context.Context, tx pgx.Tx, categoryID string, channelIDs []string) error {
+//
+// Only channels the user can see from this team are written — a live
+// channel they are a member of, or a DM/group DM — and the rest of the list
+// is dropped the way Mattermost's validateSidebarCategoryChannels does. The
+// read side already hides such rows, so writing them only let a caller park
+// ids of channels they were never in (and learn from the foreign-key error
+// whether an id exists at all). Whatever survives is inserted in a single
+// statement rather than one round trip per channel.
+func (s *Service) replaceChannelsTx(ctx context.Context, tx pgx.Tx, userID, teamID, categoryID string, channelIDs []string) error {
 	if _, err := tx.Exec(ctx, `DELETE FROM sidebar_category_channels WHERE category_id=$1`, categoryID); err != nil {
 		return err
 	}
+	channelIDs = dedupeIDs(channelIDs)
 	if len(channelIDs) == 0 {
 		return nil
 	}
@@ -430,49 +440,64 @@ func (s *Service) replaceChannelsTx(ctx context.Context, tx pgx.Tx, categoryID s
 		DELETE FROM sidebar_category_channels
 		WHERE channel_id = ANY($1)
 		  AND category_id IN (
-		      SELECT id FROM sidebar_categories
-		      WHERE (user_id, team_id) = (
-		          SELECT user_id, team_id FROM sidebar_categories WHERE id=$2
-		      )
+		      SELECT id FROM sidebar_categories WHERE user_id=$2 AND team_id=$3
 		  )
-	`, channelIDs, categoryID); err != nil {
+	`, channelIDs, userID, teamID); err != nil {
 		return err
 	}
-	for i, chanID := range channelIDs {
-		if _, err := tx.Exec(ctx, `
-			INSERT INTO sidebar_category_channels (category_id, channel_id, sort_order)
-			VALUES ($1,$2,$3)
-			ON CONFLICT (category_id, channel_id) DO UPDATE SET sort_order=EXCLUDED.sort_order
-		`, categoryID, chanID, i*10); err != nil {
-			return err
-		}
+	orders := make([]int, len(channelIDs))
+	for i := range channelIDs {
+		orders[i] = i * 10
 	}
-	return nil
+	_, err := tx.Exec(ctx, `
+		INSERT INTO sidebar_category_channels (category_id, channel_id, sort_order)
+		SELECT $1, x.channel_id, x.sort_order
+		FROM unnest($2::text[], $3::int[]) AS x(channel_id, sort_order)
+		JOIN channels c ON c.id = x.channel_id
+		JOIN channel_members m ON m.channel_id = c.id AND m.user_id = $4
+		WHERE c.delete_at = 0
+		  AND (c.team_id = $5 OR c.type IN ('D','G'))
+	`, categoryID, channelIDs, orders, userID, teamID)
+	return err
+}
+
+// dedupeIDs keeps the first occurrence of each id, preserving order. A
+// repeated id in a client payload used to be absorbed by ON CONFLICT one row
+// at a time; the single-statement insert must not see it twice.
+func dedupeIDs(ids []string) []string {
+	seen := make(map[string]bool, len(ids))
+	out := make([]string, 0, len(ids))
+	for _, id := range ids {
+		if id == "" || seen[id] {
+			continue
+		}
+		seen[id] = true
+		out = append(out, id)
+	}
+	return out
 }
 
 // UpdateOrder rewrites the sort_order of every category in `order` so it
 // matches the slice index. Categories not present in `order` keep their
 // existing sort_order (so a partial reorder doesn't smash unmentioned rows).
 func (s *Service) UpdateOrder(ctx context.Context, userID, teamID string, order []string) error {
+	order = dedupeIDs(order)
 	if len(order) == 0 {
 		return nil
 	}
-	now := time.Now().UnixMilli()
-	tx, err := s.db.Pool.Begin(ctx)
-	if err != nil {
-		return err
+	positions := make([]int, len(order))
+	for i := range order {
+		positions[i] = i * 10
 	}
-	defer tx.Rollback(ctx)
-	for i, id := range order {
-		if _, err := tx.Exec(ctx, `
-			UPDATE sidebar_categories
-			SET sort_order=$1, update_at=$2
-			WHERE id=$3 AND user_id=$4 AND team_id=$5
-		`, i*10, now, id, userID, teamID); err != nil {
-			return err
-		}
-	}
-	return tx.Commit(ctx)
+	// One statement for the whole list; the (user, team) filter keeps ids
+	// belonging to someone else's categories from being touched.
+	_, err := s.db.Pool.Exec(ctx, `
+		UPDATE sidebar_categories sc
+		SET sort_order=x.sort_order, update_at=$1
+		FROM unnest($2::text[], $3::int[]) AS x(id, sort_order)
+		WHERE sc.id = x.id AND sc.user_id=$4 AND sc.team_id=$5
+	`, time.Now().UnixMilli(), order, positions, userID, teamID)
+	return err
 }
 
 // Delete removes a custom category. The three defaults
