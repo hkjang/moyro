@@ -158,6 +158,151 @@ func TestDefaultCategoryExcludesChannelsClaimedElsewhere(t *testing.T) {
 	}
 }
 
+// TestWriteKeepsOnlyChannelsTheUserCanSee pins the membership gate on the
+// write side. Create/Update used to insert whatever ids the client sent: an
+// id the user was never a member of (or of another team, or archived) was
+// stored and merely hidden on read, and an id that did not exist at all came
+// back as a foreign-key error — so a caller could both park foreign channel
+// ids and probe which ids exist. Repeated ids in one payload must also
+// collapse rather than break the single-statement insert.
+func TestWriteKeepsOnlyChannelsTheUserCanSee(t *testing.T) {
+	db := newSidebarTestDB(t)
+	ctx := sidebarTestContext(t)
+	seedSidebarFixture(t, ctx, db)
+	service := New(db)
+
+	if _, err := db.Pool.Exec(ctx, `
+		INSERT INTO users (id, username, email, password_hash, roles, create_at, update_at)
+		VALUES ('user-b', 'user-b', 'b@example.test', 'hash', 'system_user', 1, 1);
+		INSERT INTO channels (id, team_id, type, display_name, name, create_at, update_at)
+		VALUES
+			('chan-private', 'team-main', 'P', 'Private', 'private', 1, 1),
+			('dm-ab',        NULL,        'D', 'user-a__user-b', 'user-a__user-b', 1, 1);
+		INSERT INTO channel_members (channel_id, user_id, roles, create_at)
+		VALUES
+			('chan-private', 'user-b', 'channel_user', 1),
+			('dm-ab',        'user-a', 'channel_user', 1),
+			('dm-ab',        'user-b', 'channel_user', 1);
+		UPDATE channels SET delete_at=99 WHERE id='chan-archived'
+	`); err != nil {
+		t.Fatalf("seed write fixture: %v", err)
+	}
+	if _, err := service.ListForTeam(ctx, "user-a", "team-main"); err != nil {
+		t.Fatalf("bootstrap defaults: %v", err)
+	}
+
+	// chan-private: exists, user-a is not a member. chan-side: member, but of
+	// the other team. chan-archived: member, archived. chan-ghost: no such
+	// row. dm-ab: a DM, so it belongs to every team's sidebar.
+	custom, err := service.Create(ctx, "user-a", "team-main", "Ops", []string{
+		"chan-beta", "chan-private", "chan-side", "chan-archived", "chan-ghost", "dm-ab", "chan-beta", "",
+	})
+	if err != nil {
+		t.Fatalf("create custom category: %v", err)
+	}
+	if !equalIDs(custom.ChannelIDs, []string{"chan-beta", "dm-ab"}) {
+		t.Fatalf("created category = %v, want only the visible channels in payload order", custom.ChannelIDs)
+	}
+	var stored int
+	if err := db.Pool.QueryRow(ctx, `
+		SELECT COUNT(*) FROM sidebar_category_channels WHERE category_id=$1
+	`, custom.ID).Scan(&stored); err != nil {
+		t.Fatalf("count stored rows: %v", err)
+	}
+	if stored != 2 {
+		t.Fatalf("stored %d rows for the custom category, want 2 (the invisible ids must not be written)", stored)
+	}
+
+	// Update replaces the list wholesale and applies the same gate; the order
+	// of the survivors follows the payload, not the previous state.
+	custom.ChannelIDs = []string{"chan-ghost", "dm-ab", "chan-private", "chan-alpha", "dm-ab"}
+	updated, err := service.Update(ctx, "user-a", "team-main", *custom)
+	if err != nil {
+		t.Fatalf("update custom category: %v", err)
+	}
+	if !equalIDs(updated.ChannelIDs, []string{"dm-ab", "chan-alpha"}) {
+		t.Fatalf("updated category = %v, want dm-ab then chan-alpha", updated.ChannelIDs)
+	}
+
+	// The channel the update dropped falls back to its default category.
+	listed, err := service.ListForTeam(ctx, "user-a", "team-main")
+	if err != nil {
+		t.Fatalf("list categories: %v", err)
+	}
+	if got := categoryChannels(t, listed.Categories, TypeChannels); !equalIDs(got, []string{"chan-beta"}) {
+		t.Fatalf("channels category = %v, want chan-beta back in the default", got)
+	}
+	if got := categoryChannels(t, listed.Categories, TypeDirectMessages); !equalIDs(got, []string{}) {
+		t.Fatalf("direct_messages category = %v, want empty because the custom category holds the DM", got)
+	}
+}
+
+// TestUpdateOrderOnlyTouchesTheCallersCategories pins the single-statement
+// reorder: every id in the list lands at its index, ids left out keep their
+// place, and an id that belongs to another user (or a duplicate) is ignored
+// rather than rewritten.
+func TestUpdateOrderOnlyTouchesTheCallersCategories(t *testing.T) {
+	db := newSidebarTestDB(t)
+	ctx := sidebarTestContext(t)
+	seedSidebarFixture(t, ctx, db)
+	service := New(db)
+
+	if _, err := db.Pool.Exec(ctx, `
+		INSERT INTO users (id, username, email, password_hash, roles, create_at, update_at)
+		VALUES ('user-b', 'user-b', 'b@example.test', 'hash', 'system_user', 1, 1);
+		INSERT INTO team_members (team_id, user_id, roles, create_at)
+		VALUES ('team-main', 'user-b', 'team_user', 1)
+	`); err != nil {
+		t.Fatalf("seed second user: %v", err)
+	}
+	mine, err := service.ListForTeam(ctx, "user-a", "team-main")
+	if err != nil {
+		t.Fatalf("bootstrap user-a: %v", err)
+	}
+	theirs, err := service.ListForTeam(ctx, "user-b", "team-main")
+	if err != nil {
+		t.Fatalf("bootstrap user-b: %v", err)
+	}
+	custom, err := service.Create(ctx, "user-a", "team-main", "Ops", nil)
+	if err != nil {
+		t.Fatalf("create custom category: %v", err)
+	}
+	byType := map[string]string{}
+	for _, c := range mine.Categories {
+		byType[c.Type] = c.ID
+	}
+	foreign := theirs.Order[0]
+	var foreignBefore int
+	if err := db.Pool.QueryRow(ctx, `SELECT sort_order FROM sidebar_categories WHERE id=$1`, foreign).Scan(&foreignBefore); err != nil {
+		t.Fatalf("read foreign sort_order: %v", err)
+	}
+
+	// Custom first, then direct messages, then favorites; "channels" is left
+	// out; user-b's favorites and a repeated id ride along.
+	order := []string{custom.ID, foreign, byType[TypeDirectMessages], byType[TypeFavorites], custom.ID}
+	if err := service.UpdateOrder(ctx, "user-a", "team-main", order); err != nil {
+		t.Fatalf("update order: %v", err)
+	}
+
+	got, err := service.Order(ctx, "user-a", "team-main")
+	if err != nil {
+		t.Fatalf("read order: %v", err)
+	}
+	// channels kept sort_order 10 from bootstrap, so it now sits between the
+	// custom category (0) and direct messages (20).
+	want := []string{custom.ID, byType[TypeChannels], byType[TypeDirectMessages], byType[TypeFavorites]}
+	if !equalIDs(got, want) {
+		t.Fatalf("order after update = %v, want %v", got, want)
+	}
+	var foreignAfter int
+	if err := db.Pool.QueryRow(ctx, `SELECT sort_order FROM sidebar_categories WHERE id=$1`, foreign).Scan(&foreignAfter); err != nil {
+		t.Fatalf("re-read foreign sort_order: %v", err)
+	}
+	if foreignAfter != foreignBefore {
+		t.Fatalf("user-b's category sort_order changed %d -> %d through user-a's reorder", foreignBefore, foreignAfter)
+	}
+}
+
 func categoryChannels(t *testing.T, cats []Category, typ string) []string {
 	t.Helper()
 	for _, c := range cats {
