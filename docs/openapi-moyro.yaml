@@ -1568,6 +1568,19 @@ components:
             enabled: { type: boolean }
         drafts:
           $ref: "#/components/schemas/DraftPolicy"
+        mcp_oauth:
+          type: object
+          description: |
+            Whether `/mcp` accepts Keycloak access tokens next to personal keys
+            (`mcp.oauth.enabled`, resolved against the live OIDC provider and the
+            resource identifier). The URLs are the ones an MCP client needs; the
+            same values are public in `GET /.well-known/oauth-protected-resource/mcp`
+            (outside this API prefix), which answers 404 while SSO is off.
+          required: [enabled]
+          properties:
+            enabled: { type: boolean }
+            mcp_url: { type: string, format: uri, description: The RFC 8707 resource identifier a client connects to. }
+            metadata_url: { type: string, format: uri, description: The RFC 9728 protected-resource metadata document. }
     DraftPolicy:
       type: object
       required: [storage_mode, retention_days, clear_on_logout]

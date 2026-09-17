@@ -21,6 +21,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useSelector } from "react-redux";
 import { moyroMeApi, type PersonalAPIKey } from "@/api/client";
 import { SettingsCard, SettingsPage } from "@/components/settings/SettingsPrimitives";
+import { useSystemInfo } from "@/features/system/SystemInfoContext";
 import type { RootState } from "@/store";
 
 const DEFAULT_SCOPES = [
@@ -32,8 +33,32 @@ const DEFAULT_SCOPES = [
   "review_approval",
 ];
 
+/** "Connect over SSO instead": shown only while the server accepts Keycloak tokens on /mcp. */
+export function MCPSSOConnectCard({ mcpUrl, metadataUrl }: { mcpUrl: string; metadataUrl?: string }) {
+  return (
+    <SettingsCard title="키 없이 SSO로 연결" description="MCP 클라이언트에 아래 주소 하나만 주면 됩니다. 클라이언트가 스스로 Keycloak 로그인 창을 띄우고 토큰을 받아 옵니다.">
+      <Stack spacing={1.5}>
+        <Stack direction="row" spacing={1} sx={{ alignItems: "center", flexWrap: "wrap" }}>
+          <Typography component="code" className="moyro-secret-value">{mcpUrl}</Typography>
+          <Button size="small" startIcon={<ContentCopyRounded />} onClick={() => void navigator.clipboard.writeText(mcpUrl)}>복사</Button>
+        </Stack>
+        <Typography variant="body2" color="text.secondary">
+          이미 Keycloak에 로그인해 있으면 화면은 거의 보이지 않습니다. 이 서버에 웹으로 한 번 이상 로그인한 계정만 연결되고, 권한은 관리자가 정한 범위와 내 역할의 교집합입니다.
+          토큰은 짧게 살고 클라이언트가 알아서 갱신하므로 만들거나 회전할 키가 없습니다. 폐쇄망·자동화 스크립트처럼 로그인 창을 띄울 수 없는 곳에서는 아래 개인 키를 그대로 씁니다.
+        </Typography>
+        {metadataUrl && (
+          <Typography variant="caption" color="text.secondary">
+            클라이언트가 읽는 안내 문서: <a href={metadataUrl} target="_blank" rel="noreferrer">{metadataUrl}</a>
+          </Typography>
+        )}
+      </Stack>
+    </SettingsCard>
+  );
+}
+
 export function PersonalKeysPage() {
   const token = useSelector((state: RootState) => state.auth.token);
+  const mcpOAuth = useSystemInfo().capabilities?.mcp_oauth;
   const [rows, setRows] = useState<PersonalAPIKey[]>([]);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [name, setName] = useState("");
@@ -145,6 +170,7 @@ export function PersonalKeysPage() {
           </Stack>
         </Alert>
       )}
+      {mcpOAuth?.enabled && mcpOAuth.mcp_url && <MCPSSOConnectCard mcpUrl={mcpOAuth.mcp_url} metadataUrl={mcpOAuth.metadata_url} />}
       <SettingsCard title={`발급된 키 ${rows.length}개`} description="목록에는 secret 대신 식별 가능한 prefix와 최근 상태만 표시합니다.">
         <DataGrid
           rows={rows}

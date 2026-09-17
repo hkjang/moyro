@@ -107,7 +107,12 @@ type snapshot struct {
 	provider  *gooidc.Provider
 	oauth2    oauth2.Config
 	verifier  *gooidc.IDTokenVerifier
-	client    *http.Client
+	// accessVerifier checks bearer access tokens presented to /mcp. It shares
+	// the provider (and so the cached JWKS) with the ID-token verifier but
+	// skips the library audience check: an access token names this server in
+	// aud or azp, which accesstoken.go compares against more than one value.
+	accessVerifier *gooidc.IDTokenVerifier
+	client         *http.Client
 }
 
 // Manager atomically replaces a fully discovered provider after an admin
@@ -199,7 +204,10 @@ func (m *Manager) Prepare(ctx context.Context, cfg Config) (*Prepared, error) {
 		provider: discovered.provider,
 		oauth2:   oauthCfg,
 		verifier: discovered.provider.VerifierContext(discoveryCtx, &gooidc.Config{ClientID: discovered.config.ClientID}),
-		client:   discovered.client,
+		accessVerifier: discovered.provider.VerifierContext(discoveryCtx, &gooidc.Config{
+			SkipClientIDCheck: true, SupportedSigningAlgs: accessTokenSigningAlgorithms,
+		}),
+		client: discovered.client,
 	}
 	return &Prepared{owner: m, next: next}, nil
 }

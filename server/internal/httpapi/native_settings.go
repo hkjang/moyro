@@ -137,6 +137,17 @@ type mcpSettingsView struct {
 	AllowedTools     []string `json:"allowed_tools"`
 	AllowedResources []string `json:"allowed_resources"`
 	RequiredScopes   []string `json:"required_scopes"`
+	// OAuth is mcp.oauth.*: accepting Keycloak access tokens on /mcp next to
+	// personal keys. Off by default; see native_mcp_oauth.go.
+	OAuth mcpOAuthSettingsView `json:"oauth"`
+}
+
+// mcpSettingsResponse is what the admin API returns: the stored settings
+// plus the computed SSO status (effective resource, metadata URL, why not
+// active) that the screen shows but never sends back.
+type mcpSettingsResponse struct {
+	mcpSettingsView
+	OAuthStatus mcpOAuthStatusView `json:"oauth_status"`
 }
 
 func defaultMCPSettings() mcpSettingsView {
@@ -145,7 +156,13 @@ func defaultMCPSettings() mcpSettingsView {
 		AllowedTools:     []string{"list_teams", "list_channels", "search_messages", "get_thread", "create_post", "reply_to_thread", "list_pending_approvals", "approve_request", "reject_request"},
 		AllowedResources: []string{"moyro://teams", "moyro://channels", "moyro://threads"},
 		RequiredScopes:   []string{"mcp_read"},
+		OAuth:            defaultMCPOAuthSettings(),
 	}
+}
+
+func (n *nativeServices) mcpSettingsResponse(value mcpSettingsView) mcpSettingsResponse {
+	_, status := n.mcpOAuthStatus(value)
+	return mcpSettingsResponse{mcpSettingsView: value, OAuthStatus: status}
 }
 
 func (n *nativeServices) reloadMCPPolicy(ctx context.Context) error {
@@ -189,6 +206,13 @@ func (h *handlers) nativeSystemInfo(w http.ResponseWriter, r *http.Request) {
 		if enabled, err := h.native.approval.AnyEnabled(r.Context()); err == nil {
 			view["approval_enabled"] = enabled
 		}
+		// The two URLs a person needs to connect an MCP client without a
+		// key; both are public already (the metadata document says the same).
+		mcpOAuth := map[string]any{"enabled": false}
+		if runtime, _, err := h.resolveMCPOAuthRuntime(r.Context()); err == nil && runtime != nil {
+			mcpOAuth = map[string]any{"enabled": true, "mcp_url": runtime.Resource, "metadata_url": runtime.MetadataURL}
+		}
+		view["capabilities"].(map[string]any)["mcp_oauth"] = mcpOAuth
 	}
 	if h.native == nil {
 		site := defaultSiteSettings()
@@ -224,6 +248,10 @@ func (h *handlers) getNativeSettings(w http.ResponseWriter, r *http.Request) {
 	err := h.native.loadJSON(r.Context(), section, nativeSettingsKey, target)
 	if err != nil && !errors.Is(err, settings.ErrNotFound) {
 		writeError(w, http.StatusInternalServerError, "api.moyro.settings.read", err.Error())
+		return
+	}
+	if value, ok := target.(*mcpSettingsView); ok {
+		writeJSON(w, http.StatusOK, h.native.mcpSettingsResponse(*value))
 		return
 	}
 	writeJSON(w, http.StatusOK, target)
@@ -332,6 +360,13 @@ func (h *handlers) patchNativeSettings(w http.ResponseWriter, r *http.Request) {
 		}
 		unlock := h.native.beginSettingsUpdate()
 		defer unlock()
+		// SSO acceptance is refused at save time when it could not work,
+		// instead of being stored and silently ignored: a metadata document
+		// that points nowhere sends every MCP client into a login loop.
+		if err := validateMCPOAuthSettings(&value.OAuth, h.native.oidc.Enabled(), h.native.currentSiteSettings().PublicBaseURL); err != nil {
+			writeError(w, http.StatusBadRequest, "api.moyro.settings.mcp_oauth", err.Error())
+			return
+		}
 		if _, err := h.native.settings.PutJSON(r.Context(), section, nativeSettingsKey, value, actor, nil); err != nil {
 			writeError(w, http.StatusInternalServerError, "api.moyro.settings.save", err.Error())
 			return
@@ -339,7 +374,7 @@ func (h *handlers) patchNativeSettings(w http.ResponseWriter, r *http.Request) {
 		if h.native.mcp != nil {
 			h.native.mcp.ConfigurePolicy(value.AllowedTools, value.AllowedResources)
 		}
-		writeJSON(w, http.StatusOK, value)
+		writeJSON(w, http.StatusOK, h.native.mcpSettingsResponse(value))
 	case trackingSettingsSection:
 		value := tracking.Default()
 		if err := decoder.Decode(&value); err != nil {
