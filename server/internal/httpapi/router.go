@@ -1507,12 +1507,18 @@ func New(cfg *config.Config, db *store.DB, hub *ws.Hub, host *pluginhost.Host, l
 	})
 
 	if h.native != nil && h.native.mcp != nil {
-		r.With(nativeBearerOnly, h.nativeAPIKeyMiddleware, h.requireAuth, h.nativeMCPGate).Handle("/mcp", h.native.mcp.Handler())
+		r.With(h.mcpAuthChain()...).Handle("/mcp", h.native.mcp.Handler())
 	} else {
 		r.HandleFunc("/mcp", func(w http.ResponseWriter, _ *http.Request) {
 			writeError(w, http.StatusServiceUnavailable, "api.moyro.mcp.unavailable", "MCP service is unavailable")
 		})
 	}
+	// RFC 9728: where a refused MCP client learns which authorization server
+	// to use. Unauthenticated, bare JSON, 404 while MCP SSO is off — and
+	// registered even without management services so the SPA never answers
+	// a well-known probe with its index page.
+	r.Get(mcpOAuthMetadataPath, h.protectedResourceMetadata)
+	r.Get(mcpOAuthMetadataPath+"/*", h.protectedResourceMetadata)
 
 	r.HandleFunc("/api/v4/websocket", h.websocket)
 	// Same-origin path to a Momento collector; answers 404 unless an

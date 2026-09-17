@@ -129,6 +129,25 @@ export type RBACRole = {
   update_at: number;
 };
 
+/** mcp.oauth.*: accepting Keycloak access tokens on /mcp next to personal keys. */
+export type MCPOAuthSettings = {
+  enabled: boolean;
+  resource: string;
+  audience: string[];
+  scopes: string[];
+};
+
+/** Read-only, computed by the server: what the metadata document says and why SSO is not active. */
+export type MCPOAuthStatus = {
+  active: boolean;
+  reason?: string;
+  resource?: string;
+  metadata_url?: string;
+  issuer_url?: string;
+  client_id?: string;
+  oidc_configured: boolean;
+};
+
 export type MCPSettings = {
   enabled: boolean;
   transport: "streamable-http";
@@ -136,6 +155,8 @@ export type MCPSettings = {
   allowed_tools: string[];
   allowed_resources: string[];
   required_scopes: string[];
+  oauth: MCPOAuthSettings;
+  oauth_status?: MCPOAuthStatus;
 };
 
 export type ApprovalPolicy = {

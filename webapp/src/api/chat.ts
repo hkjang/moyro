@@ -316,6 +316,12 @@ export type SystemInfo = {
 			retention_days: number;
 			clear_on_logout: boolean;
 		};
+    /** /mcp accepts Keycloak access tokens; the URLs an MCP client needs. */
+    mcp_oauth?: {
+      enabled: boolean;
+      mcp_url?: string;
+      metadata_url?: string;
+    };
   };
 };
 

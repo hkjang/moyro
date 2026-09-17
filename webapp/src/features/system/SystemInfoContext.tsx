@@ -14,6 +14,7 @@ const FALLBACK_INFO: SystemInfo = {
   capabilities: {
     email_digest: { configured: false, enabled: false },
     drafts: { storage_mode: "local", retention_days: 7, clear_on_logout: true },
+    mcp_oauth: { enabled: false },
   },
 };
 
@@ -58,6 +59,7 @@ export function SystemInfoProvider({ children }: { children: React.ReactNode }) 
           enabled: emailDigestEnabled,
         },
         drafts: native?.capabilities?.drafts ?? FALLBACK_INFO.capabilities?.drafts,
+        mcp_oauth: native?.capabilities?.mcp_oauth ?? { enabled: false },
       },
       loaded: true,
     });

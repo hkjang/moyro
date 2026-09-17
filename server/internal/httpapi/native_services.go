@@ -232,8 +232,7 @@ func newNativeServices(ctx context.Context, cfg *config.Config, db *store.DB, h 
 			// narrowed grants, and narrowed resource constraints effective at
 			// execution time. RBAC then intersects those grants with the
 			// requester's current role assignments.
-			principal, key, err := keyService.ResolveCurrent(ctx, requesterID, credentialID)
-			if err != nil || key.Kind != apikeys.KindMCP || resourceType != "channel" {
+			if resourceType != "channel" {
 				return false, nil
 			}
 			channel, err := h.channels.Get(ctx, resourceID)
@@ -241,6 +240,16 @@ func newNativeServices(ctx context.Context, cfg *config.Config, db *store.DB, h 
 				return false, err
 			}
 			scope := rbac.Scope{TeamID: channel.TeamID, ChannelID: channel.ID}
+			// An SSO subject has no key row to reload; its short-lived token
+			// is gone. The door is re-checked instead: MCP and SSO still on,
+			// the administrator's scopes still covering the action, RBAC now.
+			if strings.HasPrefix(credentialID, mcpOAuthCredentialPrefix) {
+				return native.mcpOAuthApprovedAllowed(ctx, requesterID, permission, scope)
+			}
+			principal, key, err := keyService.ResolveCurrent(ctx, requesterID, credentialID)
+			if err != nil || key.Kind != apikeys.KindMCP {
+				return false, nil
+			}
 
 			// Approval may be executed minutes or hours after submission. Re-read
 			// both administrator policies here so disabling MCP, disabling keys,
@@ -368,7 +377,7 @@ func (h *handlers) nativeMCPGate(next http.Handler) http.Handler {
 		}
 		for _, permission := range value.RequiredScopes {
 			if _, ok := principal.GrantedPermissions[permission]; !ok {
-				writeError(w, http.StatusForbidden, "api.moyro.mcp.scope", "MCP API key is missing required scope: "+permission)
+				writeError(w, http.StatusForbidden, "api.moyro.mcp.scope", "MCP credential is missing required scope: "+permission)
 				return
 			}
 		}
