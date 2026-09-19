@@ -295,6 +295,8 @@ export type SystemPing = {
   build_date?: string;
 };
 
+export type EmailPrefs = { digest_enabled: boolean; events_enabled: boolean };
+
 export type SystemInfo = {
   name: string;
   version: string;
@@ -309,6 +311,10 @@ export type SystemInfo = {
   capabilities?: {
     email_digest?: {
       configured: boolean;
+      enabled: boolean;
+    };
+    /** Event notification mail through the administrator's SMTP relay. */
+    event_mail?: {
       enabled: boolean;
     };
 		drafts?: {
@@ -421,9 +427,9 @@ export const api = {
   // Shape is intentionally small; the server stores it as JSONB so adding
   // more keys later is schema-free.
   getEmailPrefs: (token: string) =>
-    request<{ digest_enabled: boolean }>(token, "/users/me/email_prefs"),
-  updateEmailPrefs: (token: string, prefs: { digest_enabled: boolean }) =>
-    request<{ digest_enabled: boolean }>(token, "/users/me/email_prefs", {
+    request<EmailPrefs>(token, "/users/me/email_prefs"),
+  updateEmailPrefs: (token: string, prefs: Partial<EmailPrefs>) =>
+    request<EmailPrefs>(token, "/users/me/email_prefs", {
       method: "PUT",
       body: prefs,
     }),

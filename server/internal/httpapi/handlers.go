@@ -32,6 +32,7 @@ import (
 	"github.com/hkjang/moyro/server/internal/files"
 	"github.com/hkjang/moyro/server/internal/invites"
 	"github.com/hkjang/moyro/server/internal/links"
+	eventmail "github.com/hkjang/moyro/server/internal/mail"
 	"github.com/hkjang/moyro/server/internal/metrics"
 	"github.com/hkjang/moyro/server/internal/oauth"
 	"github.com/hkjang/moyro/server/internal/pluginhost"
@@ -98,7 +99,10 @@ type handlers struct {
 	// violations holds what browsers reported the page policy refused while
 	// visitor tracking is on. In memory and bounded; see tracking.Recorder.
 	violations *tracking.Recorder
-	logger     *slog.Logger
+	// mail sends event notifications through the company SMTP relay; nil
+	// only in tests that build handlers by hand.
+	mail   *eventmail.Service
+	logger *slog.Logger
 }
 
 type ctxKey string
@@ -767,19 +771,23 @@ func (h *handlers) updateProfile(w http.ResponseWriter, r *http.Request) {
 
 type emailPrefsReq struct {
 	DigestEnabled *bool `json:"digest_enabled"`
+	// EventsEnabled is the recipient's say over event notification mail
+	// (approval requests and decisions, task assignments). Default true.
+	EventsEnabled *bool `json:"events_enabled"`
 }
 
 type emailPrefsResp struct {
 	DigestEnabled bool `json:"digest_enabled"`
+	EventsEnabled bool `json:"events_enabled"`
 }
 
 func (h *handlers) getMyEmailPrefs(w http.ResponseWriter, r *http.Request) {
-	enabled, err := h.loadDigestEnabled(r.Context(), userID(r))
+	prefs, err := h.loadEmailPrefs(r.Context(), userID(r))
 	if err != nil {
 		writeError(w, 500, "api.email_prefs.get.app_error", err.Error())
 		return
 	}
-	writeJSON(w, 200, emailPrefsResp{DigestEnabled: enabled})
+	writeJSON(w, 200, prefs)
 }
 
 func (h *handlers) updateMyEmailPrefs(w http.ResponseWriter, r *http.Request) {
@@ -788,46 +796,49 @@ func (h *handlers) updateMyEmailPrefs(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 400, "api.email_prefs.update.invalid_body", err.Error())
 		return
 	}
-	if req.DigestEnabled != nil {
+	for key, value := range map[string]*bool{"digest_enabled": req.DigestEnabled, "events_enabled": req.EventsEnabled} {
+		if value == nil {
+			continue
+		}
 		val := "false"
-		if *req.DigestEnabled {
+		if *value {
 			val = "true"
 		}
 		if _, err := h.auth.DB().Pool.Exec(r.Context(), `
 			UPDATE users
 			SET email_prefs = jsonb_set(
 			    COALESCE(email_prefs, '{}'::jsonb),
-			    '{digest_enabled}',
+			    ARRAY[$3::text],
 			    $2::jsonb,
 			    true)
 			WHERE id = $1
-		`, userID(r), val); err != nil {
+		`, userID(r), val, key); err != nil {
 			writeError(w, 500, "api.email_prefs.update.app_error", err.Error())
 			return
 		}
 	}
-	enabled, err := h.loadDigestEnabled(r.Context(), userID(r))
+	prefs, err := h.loadEmailPrefs(r.Context(), userID(r))
 	if err != nil {
 		writeError(w, 500, "api.email_prefs.update.reload", err.Error())
 		return
 	}
-	writeJSON(w, 200, emailPrefsResp{DigestEnabled: enabled})
+	writeJSON(w, 200, prefs)
 }
 
-// loadDigestEnabled centralises the "default true unless explicitly
-// false" rule so both GET and PUT responses agree.
-func (h *handlers) loadDigestEnabled(ctx context.Context, uid string) (bool, error) {
-	var val *string
+// loadEmailPrefs centralises the "default true unless explicitly false"
+// rule so both GET and PUT responses agree.
+func (h *handlers) loadEmailPrefs(ctx context.Context, uid string) (emailPrefsResp, error) {
+	var digest, events *string
 	err := h.auth.DB().Pool.QueryRow(ctx, `
-		SELECT email_prefs ->> 'digest_enabled' FROM users WHERE id = $1
-	`, uid).Scan(&val)
+		SELECT email_prefs ->> 'digest_enabled', email_prefs ->> 'events_enabled' FROM users WHERE id = $1
+	`, uid).Scan(&digest, &events)
 	if err != nil {
-		return false, err
+		return emailPrefsResp{}, err
 	}
-	if val == nil {
-		return true, nil
-	}
-	return *val != "false", nil
+	return emailPrefsResp{
+		DigestEnabled: digest == nil || *digest != "false",
+		EventsEnabled: events == nil || *events != "false",
+	}, nil
 }
 
 type updatePasswordReq struct {

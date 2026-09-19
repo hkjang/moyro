@@ -8,6 +8,7 @@ import (
 
 	"github.com/hkjang/moyro/server/internal/activityevents"
 	"github.com/hkjang/moyro/server/internal/channels"
+	eventmail "github.com/hkjang/moyro/server/internal/mail"
 	"github.com/hkjang/moyro/server/internal/posts"
 	"github.com/hkjang/moyro/server/internal/ws"
 )
@@ -22,6 +23,7 @@ type activityBroadcaster interface {
 type realtimeActivityEmitter struct {
 	next   activityevents.Emitter
 	events activityBroadcaster
+	mail   *eventmail.Service
 }
 
 func (e *realtimeActivityEmitter) Emit(ctx context.Context, input activityevents.EmitInput) (*activityevents.Event, error) {
@@ -38,6 +40,7 @@ func (e *realtimeActivityEmitter) Emit(ctx context.Context, input activityevents
 			},
 		})
 	}
+	notifyMailForActivity(ctx, e.mail, event)
 	return event, nil
 }
 

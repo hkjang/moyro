@@ -188,6 +188,9 @@ func (h *handlers) nativeSystemInfo(w http.ResponseWriter, r *http.Request) {
 				"configured": h.emailDigestEnabled(),
 				"enabled":    h.emailDigestEnabled(),
 			},
+			"event_mail": map[string]bool{
+				"enabled": h.mail != nil && h.mail.Enabled(),
+			},
 		},
 	}
 	if h.native != nil {
@@ -241,6 +244,9 @@ func (h *handlers) getNativeSettings(w http.ResponseWriter, r *http.Request) {
 	case trackingSettingsSection:
 		value := h.native.currentTracking()
 		target = &value
+	case mailSettingsSection:
+		h.getMailSettings(w, r)
+		return
 	default:
 		writeError(w, http.StatusNotFound, "api.moyro.settings.section", "unknown settings section")
 		return
@@ -393,6 +399,11 @@ func (h *handlers) patchNativeSettings(w http.ResponseWriter, r *http.Request) {
 		}
 		h.native.applyTracking(value)
 		writeJSON(w, http.StatusOK, value)
+	case mailSettingsSection:
+		// Writes its own audit entry because the payload must not echo the
+		// password.
+		h.patchMailSettings(w, r, decoder, actor)
+		return
 	default:
 		writeError(w, http.StatusNotFound, "api.moyro.settings.section", "unknown settings section")
 		return

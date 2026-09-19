@@ -95,6 +95,50 @@ export type TrackingSettings = {
   placement: "head" | "body";
 };
 
+export type MailSecurity = "auto" | "none" | "starttls" | "tls";
+
+// The administrator-managed SMTP relay. `password` is write-only: the server
+// answers with `password_configured` and never echoes the secret.
+export type MailSettings = {
+  enabled: boolean;
+  smtp_host: string;
+  smtp_port: number;
+  security: MailSecurity;
+  skip_tls_verify: boolean;
+  username: string;
+  from_address: string;
+  from_name: string;
+  base_url: string;
+  timeout_seconds: number;
+  notify_approval_requested: boolean;
+  notify_approval_decided: boolean;
+  notify_task_assigned: boolean;
+  password_configured: boolean;
+  password?: string;
+  clear_password?: boolean;
+};
+
+export type MailDelivery = {
+  id: string;
+  event: string;
+  recipient_id?: string;
+  recipient: string;
+  subject: string;
+  actor_id?: string;
+  status: "queued" | "sent" | "failed";
+  attempts: number;
+  error_message?: string;
+  create_at: number;
+  update_at: number;
+};
+
+export type MailDeliveryPage = {
+  items: MailDelivery[];
+  summary: { total: number; status: Record<string, number> };
+};
+
+export type MailTestResult = { sent: boolean; recipient: string; message?: string };
+
 export type TrackingViolation = {
   origin: string;
   directive: string;
@@ -252,9 +296,9 @@ export const publicMoyroApi = {
 };
 
 export const moyroAdminApi = {
-  getSettings: <T>(token: string, section: "site" | "key-policy" | "mcp" | "tracking") =>
+  getSettings: <T>(token: string, section: "site" | "key-policy" | "mcp" | "tracking" | "mail") =>
     moyroRequest<T>(token, `/admin/settings/${encodeURIComponent(section)}`),
-  patchSettings: <T>(token: string, section: "site" | "key-policy" | "mcp" | "tracking", value: T) =>
+  patchSettings: <T>(token: string, section: "site" | "key-policy" | "mcp" | "tracking" | "mail", value: T) =>
     moyroRequest<T>(token, `/admin/settings/${encodeURIComponent(section)}`, {
       method: "PATCH",
       body: value,
@@ -264,6 +308,14 @@ export const moyroAdminApi = {
     moyroRequest<{ items: TrackingViolation[] }>(token, "/admin/tracking/violations"),
   clearTrackingViolations: (token: string) =>
     moyroRequest<void>(token, "/admin/tracking/violations", { method: "DELETE" }),
+
+  listMailDeliveries: (token: string, status = "", limit = 50) =>
+    moyroRequest<MailDeliveryPage>(
+      token,
+      `/admin/mail/deliveries?limit=${encodeURIComponent(String(limit))}${status ? `&status=${encodeURIComponent(status)}` : ""}`,
+    ),
+  sendTestMail: (token: string, recipient: string) =>
+    moyroRequest<MailTestResult>(token, "/admin/mail/test", { method: "POST", body: { recipient } }),
 
   listPermissions: (token: string) =>
     moyroRequest<RBACPermission[]>(token, "/admin/permissions"),

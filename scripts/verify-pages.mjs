@@ -35,6 +35,7 @@ const expectedScreenshots = [
   "admin-overview.jpg",
   "admin-site.jpg",
   "admin-tracking.jpg",
+  "admin-mail.jpg",
   "admin-keycloak.jpg",
   "admin-ai.jpg",
   "admin-key-policy.jpg",
