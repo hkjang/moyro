@@ -22,6 +22,7 @@ package sidebar
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"time"
 
@@ -39,6 +40,17 @@ const (
 	SortingAlpha  = "alpha"
 	SortingRecent = "recent"
 	SortingManual = "manual"
+)
+
+// Sentinel causes the HTTP layer branches on with errors.Is. Everything else
+// the service returns is a storage fault.
+var (
+	// ErrNotFound means no category matches the (user, team, id) triple — the
+	// row is missing or belongs to someone else, which callers must not be
+	// able to tell apart.
+	ErrNotFound = errors.New("sidebar: category not found")
+	// ErrInvalid means the caller's payload was rejected before any write.
+	ErrInvalid = errors.New("sidebar: invalid category")
 )
 
 // Category mirrors Mattermost's `SidebarCategoryWithChannels` shape exactly.
@@ -329,6 +341,9 @@ func (s *Service) Get(ctx context.Context, userID, teamID, categoryID string) (*
 		WHERE id=$1 AND user_id=$2 AND team_id=$3
 	`, categoryID, userID, teamID).Scan(&c.ID, &c.UserID, &c.TeamID, &c.Type, &c.DisplayName,
 		&c.SortOrder, &c.Sorting, &c.Muted, &c.Collapsed)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrNotFound
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -346,7 +361,7 @@ func (s *Service) Get(ctx context.Context, userID, teamID, categoryID string) (*
 func (s *Service) Create(ctx context.Context, userID, teamID, displayName string, channelIDs []string) (*Category, error) {
 	displayName = strings.TrimSpace(displayName)
 	if displayName == "" {
-		return nil, errors.New("sidebar: display_name required")
+		return nil, fmt.Errorf("%w: display_name required", ErrInvalid)
 	}
 	now := time.Now().UnixMilli()
 	id := uuid.NewString()
@@ -386,24 +401,53 @@ func (s *Service) Create(ctx context.Context, userID, teamID, displayName string
 // diff. ChannelIDs ownership transfer is handled inside the same tx so a
 // drag from "channels" → "custom" doesn't leave the channel listed under
 // both for any observer.
+//
+// The payload is checked before anything is written, so a rejected update
+// leaves the row (update_at included) untouched. `sorting` must be one of
+// the known values; an empty string keeps the stored one — Mattermost's
+// "" sorting passes its validation as "default", so it is not a client
+// error. `display_name` only applies to custom categories: the three
+// defaults keep theirs whatever the client sends, as Mattermost's
+// updateSidebarCategories does for every non-custom type.
 func (s *Service) Update(ctx context.Context, userID, teamID string, cat Category) (*Category, error) {
+	switch cat.Sorting {
+	case "", SortingAlpha, SortingRecent, SortingManual:
+	default:
+		return nil, fmt.Errorf("%w: sorting %q", ErrInvalid, cat.Sorting)
+	}
+	displayName := strings.TrimSpace(cat.DisplayName)
 	now := time.Now().UnixMilli()
 	tx, err := s.db.Pool.Begin(ctx)
 	if err != nil {
 		return nil, err
 	}
 	defer tx.Rollback(ctx)
-	tag, err := tx.Exec(ctx, `
-		UPDATE sidebar_categories
-		SET display_name=$1, sorting=$2, muted=$3, collapsed=$4, update_at=$5
-		WHERE id=$6 AND user_id=$7 AND team_id=$8
-	`, cat.DisplayName, cat.Sorting, cat.Muted, cat.Collapsed, now,
-		cat.ID, userID, teamID)
+	// Lock the row first: the name rule depends on its type, and a missing
+	// row has to come back as not-found rather than as a zero-row UPDATE.
+	var typ string
+	err = tx.QueryRow(ctx, `
+		SELECT type FROM sidebar_categories
+		WHERE id=$1 AND user_id=$2 AND team_id=$3
+		FOR UPDATE
+	`, cat.ID, userID, teamID).Scan(&typ)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrNotFound
+	}
 	if err != nil {
 		return nil, err
 	}
-	if tag.RowsAffected() == 0 {
-		return nil, pgx.ErrNoRows
+	if typ == TypeCustom && displayName == "" {
+		return nil, fmt.Errorf("%w: display_name required", ErrInvalid)
+	}
+	if _, err := tx.Exec(ctx, `
+		UPDATE sidebar_categories
+		SET display_name = CASE WHEN type=$1 THEN $2 ELSE display_name END,
+		    sorting      = COALESCE(NULLIF($3, ''), sorting),
+		    muted=$4, collapsed=$5, update_at=$6
+		WHERE id=$7 AND user_id=$8 AND team_id=$9
+	`, TypeCustom, displayName, cat.Sorting, cat.Muted, cat.Collapsed, now,
+		cat.ID, userID, teamID); err != nil {
+		return nil, err
 	}
 	if err := s.replaceChannelsTx(ctx, tx, userID, teamID, cat.ID, cat.ChannelIDs); err != nil {
 		return nil, err
@@ -502,18 +546,22 @@ func (s *Service) UpdateOrder(ctx context.Context, userID, teamID string, order 
 
 // Delete removes a custom category. The three defaults
 // (favorites/channels/direct_messages) cannot be deleted; an attempt returns
-// an error. Channel memberships in the deleted category cascade and reappear
-// under the appropriate default on next list.
+// ErrInvalid, and an id the caller cannot see returns ErrNotFound. Channel
+// memberships in the deleted category cascade and reappear under the
+// appropriate default on next list.
 func (s *Service) Delete(ctx context.Context, userID, teamID, categoryID string) error {
 	var typ string
 	err := s.db.Pool.QueryRow(ctx, `
 		SELECT type FROM sidebar_categories WHERE id=$1 AND user_id=$2 AND team_id=$3
 	`, categoryID, userID, teamID).Scan(&typ)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ErrNotFound
+	}
 	if err != nil {
 		return err
 	}
 	if typ != TypeCustom {
-		return errors.New("sidebar: only custom categories can be deleted")
+		return fmt.Errorf("%w: only custom categories can be deleted", ErrInvalid)
 	}
 	_, err = s.db.Pool.Exec(ctx, `DELETE FROM sidebar_categories WHERE id=$1`, categoryID)
 	return err
