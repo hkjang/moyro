@@ -2,6 +2,7 @@ package sidebar
 
 import (
 	"context"
+	"errors"
 	"os"
 	"strings"
 	"testing"
@@ -301,6 +302,194 @@ func TestUpdateOrderOnlyTouchesTheCallersCategories(t *testing.T) {
 	if foreignAfter != foreignBefore {
 		t.Fatalf("user-b's category sort_order changed %d -> %d through user-a's reorder", foreignBefore, foreignAfter)
 	}
+}
+
+// TestUpdateRejectsBadFieldsAndKeepsDefaultNames pins the validation Update
+// used to lack: a blank display_name on a custom category and a sorting value
+// outside the known set were stored as sent (the webapp reads sorting as a
+// closed union), and the three default categories could be renamed even
+// though Mattermost keeps their display_name for every non-custom type. An
+// empty sorting means "leave it alone", the way Mattermost's "" sorting is
+// accepted rather than rejected.
+func TestUpdateRejectsBadFieldsAndKeepsDefaultNames(t *testing.T) {
+	db := newSidebarTestDB(t)
+	ctx := sidebarTestContext(t)
+	seedSidebarFixture(t, ctx, db)
+	service := New(db)
+
+	listed, err := service.ListForTeam(ctx, "user-a", "team-main")
+	if err != nil {
+		t.Fatalf("bootstrap defaults: %v", err)
+	}
+	custom, err := service.Create(ctx, "user-a", "team-main", "Ops", []string{"chan-alpha"})
+	if err != nil {
+		t.Fatalf("create custom category: %v", err)
+	}
+	before := categoryRow(t, ctx, db, custom.ID)
+
+	for _, tc := range []struct {
+		name string
+		edit func(c *Category)
+	}{
+		{"blank display_name", func(c *Category) { c.DisplayName = "   " }},
+		{"unknown sorting", func(c *Category) { c.Sorting = "bogus" }},
+	} {
+		bad := *custom
+		bad.Muted = true
+		bad.ChannelIDs = []string{"chan-beta"}
+		tc.edit(&bad)
+		if _, err := service.Update(ctx, "user-a", "team-main", bad); !errors.Is(err, ErrInvalid) {
+			t.Fatalf("%s: Update error = %v, want ErrInvalid", tc.name, err)
+		}
+		if after := categoryRow(t, ctx, db, custom.ID); after != before {
+			t.Fatalf("%s: row changed although the update was rejected: %+v -> %+v", tc.name, before, after)
+		}
+		if got := storedChannels(t, ctx, db, custom.ID); !equalIDs(got, []string{"chan-alpha"}) {
+			t.Fatalf("%s: channel list changed to %v although the update was rejected", tc.name, got)
+		}
+	}
+
+	// An empty sorting keeps the stored value (manual for a fresh custom
+	// category) while the other fields still apply; the name is trimmed.
+	edited := *custom
+	edited.DisplayName = "  Ops Team  "
+	edited.Sorting = ""
+	edited.Collapsed = true
+	updated, err := service.Update(ctx, "user-a", "team-main", edited)
+	if err != nil {
+		t.Fatalf("update with empty sorting: %v", err)
+	}
+	if updated.DisplayName != "Ops Team" || updated.Sorting != SortingManual || !updated.Collapsed {
+		t.Fatalf("updated custom = %+v, want display_name=Ops Team sorting=manual collapsed=true", *updated)
+	}
+
+	// A default category ignores the display_name it is sent — even a blank
+	// one — and applies everything else.
+	var favorites Category
+	for _, c := range listed.Categories {
+		if c.Type == TypeFavorites {
+			favorites = c
+		}
+	}
+	for _, name := range []string{"Renamed", ""} {
+		edited := favorites
+		edited.DisplayName = name
+		edited.Sorting = SortingRecent
+		edited.Muted = true
+		edited.ChannelIDs = []string{"chan-beta"}
+		updated, err := service.Update(ctx, "user-a", "team-main", edited)
+		if err != nil {
+			t.Fatalf("update favorites with display_name %q: %v", name, err)
+		}
+		if updated.DisplayName != "Favorites" {
+			t.Fatalf("favorites display_name = %q after sending %q, want the stored name kept", updated.DisplayName, name)
+		}
+		if updated.Sorting != SortingRecent || !updated.Muted || !equalIDs(updated.ChannelIDs, []string{"chan-beta"}) {
+			t.Fatalf("favorites after update = %+v, want sorting=recent muted=true channels=[chan-beta]", *updated)
+		}
+	}
+}
+
+// TestUpdateAndDeleteReportMissingCategoriesAsNotFound pins the error
+// identity the handlers branch on: a category id that does not exist, or
+// belongs to another user or team, is ErrNotFound from Update, Delete and Get
+// alike (it used to surface as a raw pgx.ErrNoRows that the handlers turned
+// into a 400), while deleting a default category is ErrInvalid.
+func TestUpdateAndDeleteReportMissingCategoriesAsNotFound(t *testing.T) {
+	db := newSidebarTestDB(t)
+	ctx := sidebarTestContext(t)
+	seedSidebarFixture(t, ctx, db)
+	service := New(db)
+
+	if _, err := db.Pool.Exec(ctx, `
+		INSERT INTO users (id, username, email, password_hash, roles, create_at, update_at)
+		VALUES ('user-b', 'user-b', 'b@example.test', 'hash', 'system_user', 1, 1);
+		INSERT INTO team_members (team_id, user_id, roles, create_at)
+		VALUES ('team-main', 'user-b', 'team_user', 1)
+	`); err != nil {
+		t.Fatalf("seed second user: %v", err)
+	}
+	mine, err := service.ListForTeam(ctx, "user-a", "team-main")
+	if err != nil {
+		t.Fatalf("bootstrap user-a: %v", err)
+	}
+	theirs, err := service.Create(ctx, "user-b", "team-main", "Theirs", nil)
+	if err != nil {
+		t.Fatalf("create user-b category: %v", err)
+	}
+	sideTeam, err := service.Create(ctx, "user-a", "team-side", "Side", nil)
+	if err != nil {
+		t.Fatalf("create side-team category: %v", err)
+	}
+
+	for _, tc := range []struct{ name, id string }{
+		{"no such category", "no-such-category"},
+		{"another user's category", theirs.ID},
+		{"another team's category", sideTeam.ID},
+	} {
+		if _, err := service.Update(ctx, "user-a", "team-main", Category{ID: tc.id, DisplayName: "X"}); !errors.Is(err, ErrNotFound) {
+			t.Fatalf("%s: Update error = %v, want ErrNotFound", tc.name, err)
+		}
+		if err := service.Delete(ctx, "user-a", "team-main", tc.id); !errors.Is(err, ErrNotFound) {
+			t.Fatalf("%s: Delete error = %v, want ErrNotFound", tc.name, err)
+		}
+		if _, err := service.Get(ctx, "user-a", "team-main", tc.id); !errors.Is(err, ErrNotFound) {
+			t.Fatalf("%s: Get error = %v, want ErrNotFound", tc.name, err)
+		}
+	}
+	// The foreign rows are still there — nothing was touched through the
+	// wrong (user, team).
+	if row := categoryRow(t, ctx, db, theirs.ID); row.DisplayName != "Theirs" {
+		t.Fatalf("user-b's category = %+v, want untouched", row)
+	}
+
+	for _, c := range mine.Categories {
+		if err := service.Delete(ctx, "user-a", "team-main", c.ID); !errors.Is(err, ErrInvalid) {
+			t.Fatalf("delete default %s: error = %v, want ErrInvalid", c.Type, err)
+		}
+	}
+	if err := service.Delete(ctx, "user-a", "team-side", sideTeam.ID); err != nil {
+		t.Fatalf("delete own custom category: %v", err)
+	}
+}
+
+// sidebarRow is the stored shape a rejected write must leave alone.
+type sidebarRow struct {
+	Type, DisplayName, Sorting string
+	Muted, Collapsed           bool
+	UpdateAt                   int64
+}
+
+func categoryRow(t *testing.T, ctx context.Context, db *store.DB, id string) sidebarRow {
+	t.Helper()
+	var row sidebarRow
+	if err := db.Pool.QueryRow(ctx, `
+		SELECT type, display_name, sorting, muted, collapsed, update_at
+		FROM sidebar_categories WHERE id=$1
+	`, id).Scan(&row.Type, &row.DisplayName, &row.Sorting, &row.Muted, &row.Collapsed, &row.UpdateAt); err != nil {
+		t.Fatalf("read category %s: %v", id, err)
+	}
+	return row
+}
+
+func storedChannels(t *testing.T, ctx context.Context, db *store.DB, categoryID string) []string {
+	t.Helper()
+	rows, err := db.Pool.Query(ctx, `
+		SELECT channel_id FROM sidebar_category_channels WHERE category_id=$1 ORDER BY sort_order
+	`, categoryID)
+	if err != nil {
+		t.Fatalf("read stored channels: %v", err)
+	}
+	defer rows.Close()
+	out := []string{}
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			t.Fatalf("scan stored channel: %v", err)
+		}
+		out = append(out, id)
+	}
+	return out
 }
 
 func categoryChannels(t *testing.T, cats []Category, typ string) []string {

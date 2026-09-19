@@ -598,6 +598,22 @@ func (h *handlers) updateSidebarCategoryOrder(w http.ResponseWriter, r *http.Req
 	writeJSON(w, 200, order)
 }
 
+// writeSidebarError maps a sidebar service failure onto the status the
+// write endpoints answer with: a category the caller cannot see is 404 (the
+// same answer Get gives for that id), a rejected payload is 400, and
+// anything else is a storage fault reported as 500 rather than blamed on the
+// request. The error id is the caller's so clients keep matching on it.
+func writeSidebarError(w http.ResponseWriter, id string, err error) {
+	status := http.StatusInternalServerError
+	switch {
+	case errors.Is(err, sidebar.ErrNotFound):
+		status = http.StatusNotFound
+	case errors.Is(err, sidebar.ErrInvalid):
+		status = http.StatusBadRequest
+	}
+	writeError(w, status, id, err.Error())
+}
+
 // getSidebarCategory mirrors
 // GET /api/v4/users/{user_id}/teams/{team_id}/channels/categories/{category_id}.
 func (h *handlers) getSidebarCategory(w http.ResponseWriter, r *http.Request) {
@@ -638,7 +654,7 @@ func (h *handlers) createSidebarCategory(w http.ResponseWriter, r *http.Request)
 	}
 	cat, err := h.sidebar.Create(r.Context(), uid, teamID, req.DisplayName, req.ChannelIDs)
 	if err != nil {
-		writeError(w, 400, "api.sidebar.create.app_error", err.Error())
+		writeSidebarError(w, "api.sidebar.create.app_error", err)
 		return
 	}
 	h.hub.Broadcast(ws.Event{
@@ -669,7 +685,7 @@ func (h *handlers) updateSidebarCategory(w http.ResponseWriter, r *http.Request)
 	cat.ID = categoryID
 	updated, err := h.sidebar.Update(r.Context(), uid, teamID, cat)
 	if err != nil {
-		writeError(w, 400, "api.sidebar.update.app_error", err.Error())
+		writeSidebarError(w, "api.sidebar.update.app_error", err)
 		return
 	}
 	h.hub.Broadcast(ws.Event{
@@ -709,7 +725,7 @@ func (h *handlers) updateSidebarCategoriesBulk(w http.ResponseWriter, r *http.Re
 	for _, c := range cats {
 		updated, err := h.sidebar.Update(r.Context(), uid, teamID, c)
 		if err != nil {
-			writeError(w, 400, "api.sidebar.bulk.app_error", err.Error())
+			writeSidebarError(w, "api.sidebar.bulk.app_error", err)
 			return
 		}
 		out = append(out, *updated)
@@ -725,7 +741,7 @@ func (h *handlers) updateSidebarCategoriesBulk(w http.ResponseWriter, r *http.Re
 // deleteSidebarCategory mirrors
 // DELETE /api/v4/users/{user_id}/teams/{team_id}/channels/categories/{category_id}.
 // Only custom categories can be removed; the service refuses the three
-// defaults and returns 400 in that case.
+// defaults and that is a 400, while an id the caller cannot see is a 404.
 func (h *handlers) deleteSidebarCategory(w http.ResponseWriter, r *http.Request) {
 	uid, ok := h.requireUserParamAccess(w, r, "userID")
 	if !ok {
@@ -734,7 +750,7 @@ func (h *handlers) deleteSidebarCategory(w http.ResponseWriter, r *http.Request)
 	teamID := chi.URLParam(r, "teamID")
 	categoryID := chi.URLParam(r, "categoryID")
 	if err := h.sidebar.Delete(r.Context(), uid, teamID, categoryID); err != nil {
-		writeError(w, 400, "api.sidebar.delete.app_error", err.Error())
+		writeSidebarError(w, "api.sidebar.delete.app_error", err)
 		return
 	}
 	h.hub.Broadcast(ws.Event{
