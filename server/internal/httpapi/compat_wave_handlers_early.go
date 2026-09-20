@@ -599,10 +599,10 @@ func (h *handlers) updateSidebarCategoryOrder(w http.ResponseWriter, r *http.Req
 }
 
 // writeSidebarError maps a sidebar service failure onto the status the
-// write endpoints answer with: a category the caller cannot see is 404 (the
-// same answer Get gives for that id), a rejected payload is 400, and
-// anything else is a storage fault reported as 500 rather than blamed on the
-// request. The error id is the caller's so clients keep matching on it.
+// category endpoints answer with: a category the caller cannot see is 404, a
+// rejected payload is 400, and anything else is a storage fault reported as
+// 500 rather than blamed on the request. The error id is the caller's so
+// clients keep matching on it.
 func writeSidebarError(w http.ResponseWriter, id string, err error) {
 	status := http.StatusInternalServerError
 	switch {
@@ -616,6 +616,8 @@ func writeSidebarError(w http.ResponseWriter, id string, err error) {
 
 // getSidebarCategory mirrors
 // GET /api/v4/users/{user_id}/teams/{team_id}/channels/categories/{category_id}.
+// Only a category the caller cannot see is 404; a storage fault used to be
+// reported the same way, as if the category did not exist.
 func (h *handlers) getSidebarCategory(w http.ResponseWriter, r *http.Request) {
 	uid, ok := h.requireUserParamAccess(w, r, "userID")
 	if !ok {
@@ -625,7 +627,7 @@ func (h *handlers) getSidebarCategory(w http.ResponseWriter, r *http.Request) {
 	categoryID := chi.URLParam(r, "categoryID")
 	cat, err := h.sidebar.Get(r.Context(), uid, teamID, categoryID)
 	if err != nil {
-		writeError(w, 404, "api.sidebar.get.not_found", err.Error())
+		writeSidebarError(w, "api.sidebar.get.not_found", err)
 		return
 	}
 	writeJSON(w, 200, cat)
@@ -699,8 +701,9 @@ func (h *handlers) updateSidebarCategory(w http.ResponseWriter, r *http.Request)
 // updateSidebarCategoriesBulk mirrors
 // PUT /api/v4/users/{user_id}/teams/{team_id}/channels/categories.
 // Body is an array of categories — Mattermost's drag-drop reorder hands the
-// whole new state in one call so we apply each one inside its own
-// service.Update transaction.
+// whole new state in one call, so the whole array is applied in one
+// service.UpdateMany transaction: a rejected item rolls back the items before
+// it rather than leaving them committed behind the error response.
 func (h *handlers) updateSidebarCategoriesBulk(w http.ResponseWriter, r *http.Request) {
 	uid, ok := h.requireUserParamAccess(w, r, "userID")
 	if !ok {
@@ -711,8 +714,9 @@ func (h *handlers) updateSidebarCategoriesBulk(w http.ResponseWriter, r *http.Re
 	if !decodeCollectionBody(w, r, "api.sidebar.bulk.invalid_body", &cats) {
 		return
 	}
-	// Each category costs a transaction, and its channel list is bound into
-	// that transaction's statements, so both dimensions are capped.
+	// Each category costs a row lock plus its channel statements inside the
+	// one transaction, and its channel list is bound into those statements,
+	// so both dimensions are capped.
 	if tooManyBatchItems(w, "api.sidebar.bulk.too_many", len(cats)) {
 		return
 	}
@@ -721,14 +725,10 @@ func (h *handlers) updateSidebarCategoriesBulk(w http.ResponseWriter, r *http.Re
 			return
 		}
 	}
-	out := make([]sidebar.Category, 0, len(cats))
-	for _, c := range cats {
-		updated, err := h.sidebar.Update(r.Context(), uid, teamID, c)
-		if err != nil {
-			writeSidebarError(w, "api.sidebar.bulk.app_error", err)
-			return
-		}
-		out = append(out, *updated)
+	out, err := h.sidebar.UpdateMany(r.Context(), uid, teamID, cats)
+	if err != nil {
+		writeSidebarError(w, "api.sidebar.bulk.app_error", err)
+		return
 	}
 	h.hub.Broadcast(ws.Event{
 		Event:     "sidebar_categories_updated",
