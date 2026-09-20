@@ -582,11 +582,16 @@ func (h *handlers) updateSidebarCategoryOrder(w http.ResponseWriter, r *http.Req
 	if !decodeCollectionBody(w, r, "api.sidebar.order.invalid_body", &order) {
 		return
 	}
-	// UpdateOrder issues one UPDATE per id.
+	// Bound the batch passed to UpdateOrder's single UPDATE statement.
 	if tooManyBatchItems(w, "api.sidebar.order.too_many", len(order)) {
 		return
 	}
 	if err := h.sidebar.UpdateOrder(r.Context(), uid, teamID, order); err != nil {
+		writeError(w, 500, "api.sidebar.order.app_error", err.Error())
+		return
+	}
+	order, err := h.sidebar.Order(r.Context(), uid, teamID)
+	if err != nil {
 		writeError(w, 500, "api.sidebar.order.app_error", err.Error())
 		return
 	}
