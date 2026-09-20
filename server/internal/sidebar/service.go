@@ -410,34 +410,86 @@ func (s *Service) Create(ctx context.Context, userID, teamID, displayName string
 // defaults keep theirs whatever the client sends, as Mattermost's
 // updateSidebarCategories does for every non-custom type.
 func (s *Service) Update(ctx context.Context, userID, teamID string, cat Category) (*Category, error) {
-	switch cat.Sorting {
-	case "", SortingAlpha, SortingRecent, SortingManual:
-	default:
-		return nil, fmt.Errorf("%w: sorting %q", ErrInvalid, cat.Sorting)
-	}
-	displayName := strings.TrimSpace(cat.DisplayName)
-	now := time.Now().UnixMilli()
 	tx, err := s.db.Pool.Begin(ctx)
 	if err != nil {
 		return nil, err
 	}
 	defer tx.Rollback(ctx)
+	if err := s.updateTx(ctx, tx, userID, teamID, cat); err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, err
+	}
+	return s.Get(ctx, userID, teamID, cat.ID)
+}
+
+// UpdateMany applies a whole array of category updates — Mattermost's bulk
+// PUT, which the drag-drop reorder uses to hand over the new state in one
+// call — inside a single transaction. Any item that fails (ErrNotFound,
+// ErrInvalid or a database error) rolls back every item before it, so the
+// caller never ends up with half the array committed and the other half
+// rejected; the returned error is that item's, sentinel intact, so handlers
+// branch on it exactly as they do for Update.
+//
+// The result follows the input order and each element is re-read after the
+// commit, the same shape Update returns. An empty array opens no transaction.
+func (s *Service) UpdateMany(ctx context.Context, userID, teamID string, cats []Category) ([]Category, error) {
+	out := make([]Category, 0, len(cats))
+	if len(cats) == 0 {
+		return out, nil
+	}
+	tx, err := s.db.Pool.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback(ctx)
+	for _, cat := range cats {
+		if err := s.updateTx(ctx, tx, userID, teamID, cat); err != nil {
+			return nil, err
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, err
+	}
+	// Get reads through the pool, so it has to run after the commit.
+	for _, cat := range cats {
+		updated, err := s.Get(ctx, userID, teamID, cat.ID)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, *updated)
+	}
+	return out, nil
+}
+
+// updateTx is the shared body of Update and UpdateMany: validate, lock the
+// row, write it, replace its channels — all on the caller's transaction so
+// the caller decides what else commits or rolls back with it.
+func (s *Service) updateTx(ctx context.Context, tx pgx.Tx, userID, teamID string, cat Category) error {
+	switch cat.Sorting {
+	case "", SortingAlpha, SortingRecent, SortingManual:
+	default:
+		return fmt.Errorf("%w: sorting %q", ErrInvalid, cat.Sorting)
+	}
+	displayName := strings.TrimSpace(cat.DisplayName)
+	now := time.Now().UnixMilli()
 	// Lock the row first: the name rule depends on its type, and a missing
 	// row has to come back as not-found rather than as a zero-row UPDATE.
 	var typ string
-	err = tx.QueryRow(ctx, `
+	err := tx.QueryRow(ctx, `
 		SELECT type FROM sidebar_categories
 		WHERE id=$1 AND user_id=$2 AND team_id=$3
 		FOR UPDATE
 	`, cat.ID, userID, teamID).Scan(&typ)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, ErrNotFound
+		return ErrNotFound
 	}
 	if err != nil {
-		return nil, err
+		return err
 	}
 	if typ == TypeCustom && displayName == "" {
-		return nil, fmt.Errorf("%w: display_name required", ErrInvalid)
+		return fmt.Errorf("%w: display_name required", ErrInvalid)
 	}
 	if _, err := tx.Exec(ctx, `
 		UPDATE sidebar_categories
@@ -447,15 +499,9 @@ func (s *Service) Update(ctx context.Context, userID, teamID string, cat Categor
 		WHERE id=$7 AND user_id=$8 AND team_id=$9
 	`, TypeCustom, displayName, cat.Sorting, cat.Muted, cat.Collapsed, now,
 		cat.ID, userID, teamID); err != nil {
-		return nil, err
+		return err
 	}
-	if err := s.replaceChannelsTx(ctx, tx, userID, teamID, cat.ID, cat.ChannelIDs); err != nil {
-		return nil, err
-	}
-	if err := tx.Commit(ctx); err != nil {
-		return nil, err
-	}
-	return s.Get(ctx, userID, teamID, cat.ID)
+	return s.replaceChannelsTx(ctx, tx, userID, teamID, cat.ID, cat.ChannelIDs)
 }
 
 // replaceChannelsTx swaps a category's channel membership inside a tx.

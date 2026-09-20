@@ -453,6 +453,119 @@ func TestUpdateAndDeleteReportMissingCategoriesAsNotFound(t *testing.T) {
 	}
 }
 
+// TestUpdateManyRollsBackEveryItemWhenOneIsRejected pins the all-or-nothing
+// contract of the bulk PUT. The handler used to call Update once per array
+// item, each in its own transaction, so a rejected second item left the
+// first one committed — with no broadcast telling other tabs about the
+// half-applied state. Now any item's error rolls back the whole batch and
+// keeps its identity (ErrNotFound / ErrInvalid) so the handler still picks
+// 404 / 400 the same way.
+func TestUpdateManyRollsBackEveryItemWhenOneIsRejected(t *testing.T) {
+	db := newSidebarTestDB(t)
+	ctx := sidebarTestContext(t)
+	seedSidebarFixture(t, ctx, db)
+	service := New(db)
+
+	if _, err := service.ListForTeam(ctx, "user-a", "team-main"); err != nil {
+		t.Fatalf("bootstrap defaults: %v", err)
+	}
+	custom, err := service.Create(ctx, "user-a", "team-main", "Ops", []string{"chan-alpha"})
+	if err != nil {
+		t.Fatalf("create custom category: %v", err)
+	}
+	before := categoryRow(t, ctx, db, custom.ID)
+
+	valid := *custom
+	valid.DisplayName = "Renamed"
+	valid.Muted = true
+	valid.ChannelIDs = []string{"chan-beta"}
+
+	for _, tc := range []struct {
+		name string
+		bad  Category
+		want error
+	}{
+		{"missing category", Category{ID: "no-such-category", DisplayName: "X"}, ErrNotFound},
+		{"unknown sorting", Category{ID: custom.ID, DisplayName: "Ops", Sorting: "bogus"}, ErrInvalid},
+	} {
+		_, err := service.UpdateMany(ctx, "user-a", "team-main", []Category{valid, tc.bad})
+		if !errors.Is(err, tc.want) {
+			t.Fatalf("%s: UpdateMany error = %v, want %v", tc.name, err, tc.want)
+		}
+		if after := categoryRow(t, ctx, db, custom.ID); after != before {
+			t.Fatalf("%s: first item stayed applied although the batch was rejected: %+v -> %+v", tc.name, before, after)
+		}
+		if got := storedChannels(t, ctx, db, custom.ID); !equalIDs(got, []string{"chan-alpha"}) {
+			t.Fatalf("%s: channel list changed to %v although the batch was rejected", tc.name, got)
+		}
+	}
+}
+
+// TestUpdateManyAppliesEveryItemInInputOrder pins the success side: both
+// categories are written in one go and the result comes back in the order the
+// client sent, each element re-read after commit the way Update returns Get.
+func TestUpdateManyAppliesEveryItemInInputOrder(t *testing.T) {
+	db := newSidebarTestDB(t)
+	ctx := sidebarTestContext(t)
+	seedSidebarFixture(t, ctx, db)
+	service := New(db)
+
+	listed, err := service.ListForTeam(ctx, "user-a", "team-main")
+	if err != nil {
+		t.Fatalf("bootstrap defaults: %v", err)
+	}
+	custom, err := service.Create(ctx, "user-a", "team-main", "Ops", []string{"chan-alpha"})
+	if err != nil {
+		t.Fatalf("create custom category: %v", err)
+	}
+	var favorites Category
+	for _, c := range listed.Categories {
+		if c.Type == TypeFavorites {
+			favorites = c
+		}
+	}
+
+	empty, err := service.UpdateMany(ctx, "user-a", "team-main", nil)
+	if err != nil || len(empty) != 0 {
+		t.Fatalf("UpdateMany(nil) = %v, %v; want empty slice and no error", empty, err)
+	}
+
+	// Favorites first, custom second; chan-alpha moves from the custom
+	// category into Favorites within the same batch.
+	first := favorites
+	first.Sorting = SortingRecent
+	first.ChannelIDs = []string{"chan-alpha"}
+	second := *custom
+	second.DisplayName = "Ops Team"
+	second.Collapsed = true
+	second.ChannelIDs = []string{"chan-beta"}
+
+	out, err := service.UpdateMany(ctx, "user-a", "team-main", []Category{first, second})
+	if err != nil {
+		t.Fatalf("UpdateMany: %v", err)
+	}
+	if len(out) != 2 || out[0].ID != favorites.ID || out[1].ID != custom.ID {
+		t.Fatalf("UpdateMany returned %d items in order %v, want [%s %s]", len(out), idsOf(out), favorites.ID, custom.ID)
+	}
+	if out[0].Sorting != SortingRecent || !equalIDs(out[0].ChannelIDs, []string{"chan-alpha"}) {
+		t.Fatalf("favorites after batch = %+v, want sorting=recent channels=[chan-alpha]", out[0])
+	}
+	if out[1].DisplayName != "Ops Team" || !out[1].Collapsed || !equalIDs(out[1].ChannelIDs, []string{"chan-beta"}) {
+		t.Fatalf("custom after batch = %+v, want display_name=Ops Team collapsed=true channels=[chan-beta]", out[1])
+	}
+	if got := storedChannels(t, ctx, db, custom.ID); !equalIDs(got, []string{"chan-beta"}) {
+		t.Fatalf("stored custom channels = %v, want [chan-beta]", got)
+	}
+}
+
+func idsOf(cats []Category) []string {
+	out := make([]string, 0, len(cats))
+	for _, c := range cats {
+		out = append(out, c.ID)
+	}
+	return out
+}
+
 // sidebarRow is the stored shape a rejected write must leave alone.
 type sidebarRow struct {
 	Type, DisplayName, Sorting string
