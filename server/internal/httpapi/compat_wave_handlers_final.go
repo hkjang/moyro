@@ -183,7 +183,11 @@ func (h *handlers) listChannelViews(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	cid := chi.URLParam(r, "channelID")
-	ok, _ := h.channels.IsMember(r.Context(), cid, caller)
+	ok, err := h.channels.IsMember(r.Context(), cid, caller)
+	if err != nil {
+		writeError(w, 500, "api.context.permissions.app_error", "failed to check channel membership")
+		return
+	}
 	if !ok {
 		writeError(w, 403, "api.context.permissions.app_error", "not a channel member")
 		return
@@ -204,7 +208,11 @@ func (h *handlers) createChannelView(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	cid := chi.URLParam(r, "channelID")
-	ok, _ := h.channels.IsMember(r.Context(), cid, caller)
+	ok, err := h.channels.IsMember(r.Context(), cid, caller)
+	if err != nil {
+		writeError(w, 500, "api.context.permissions.app_error", "failed to check channel membership")
+		return
+	}
 	if !ok {
 		writeError(w, 403, "api.context.permissions.app_error", "not a channel member")
 		return
@@ -291,7 +299,11 @@ func (h *handlers) listChannelTimezones(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	cid := chi.URLParam(r, "channelID")
-	ok, _ := h.channels.IsMember(r.Context(), cid, caller)
+	ok, err := h.channels.IsMember(r.Context(), cid, caller)
+	if err != nil {
+		writeError(w, 500, "api.context.permissions.app_error", "failed to check channel membership")
+		return
+	}
 	if !ok {
 		writeError(w, 403, "api.context.permissions.app_error", "not a channel member")
 		return
