@@ -23,6 +23,7 @@ import (
 	"github.com/hkjang/moyro/server/internal/scheduled"
 	"github.com/hkjang/moyro/server/internal/sidebar"
 	"github.com/hkjang/moyro/server/internal/ws"
+	"github.com/jackc/pgx/v5"
 )
 
 // =====================================================================
@@ -76,7 +77,11 @@ func (h *handlers) listPreferencesInCategory(w http.ResponseWriter, r *http.Requ
 // getPreferenceByName mirrors
 // GET /api/v4/users/{user_id}/preferences/{category}/name/{preference_name}.
 // Returns 404 with a valid JSON envelope when the row is missing so callers
-// can decide between defaulting and signalling.
+// can decide between defaulting and signalling. Only a missing row is 404: a
+// storage fault used to be reported the same way, so a dead database looked
+// to a client exactly like "you never saved this setting" and the official
+// clients silently fell back to defaults. Those are 500 like the sibling list
+// endpoints, which already report storage faults as such.
 func (h *handlers) getPreferenceByName(w http.ResponseWriter, r *http.Request) {
 	uid, ok := h.requireUserParamAccess(w, r, "userID")
 	if !ok {
@@ -86,7 +91,11 @@ func (h *handlers) getPreferenceByName(w http.ResponseWriter, r *http.Request) {
 	name := chi.URLParam(r, "name")
 	p, err := h.prefs.GetByName(r.Context(), uid, category, name)
 	if err != nil {
-		writeError(w, 404, "api.preference.get.not_found", "preference not found")
+		if errors.Is(err, pgx.ErrNoRows) {
+			writeError(w, 404, "api.preference.get.not_found", "preference not found")
+			return
+		}
+		writeError(w, 500, "api.preference.get.app_error", err.Error())
 		return
 	}
 	writeJSON(w, 200, p)
