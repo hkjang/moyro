@@ -1157,7 +1157,7 @@ func (h *handlers) patchChannelBookmark(w http.ResponseWriter, r *http.Request) 
 		writeError(w, 400, "api.bookmark.body.app_error", err.Error())
 		return
 	}
-	out, err := h.bookmarks.Patch(r.Context(), bid, bookmarks.Patch{
+	out, err := h.bookmarks.Patch(r.Context(), cid, bid, bookmarks.Patch{
 		DisplayName: req.DisplayName,
 		LinkURL:     req.LinkURL,
 		ImageURL:    req.ImageURL,
@@ -1204,11 +1204,17 @@ func (h *handlers) deleteChannelBookmark(w http.ResponseWriter, r *http.Request)
 		writeError(w, 500, "api.bookmark.get.app_error", err.Error())
 		return
 	}
+	// The path names a channel; a row that lives elsewhere is not reachable
+	// through it, whatever the caller may administer.
+	if b.ChannelID != cid {
+		writeError(w, 404, "api.bookmark.not_found", "no such bookmark")
+		return
+	}
 	if b.OwnerID != caller && !h.callerCanAdminChannel(r.Context(), cid, caller) {
 		writeError(w, 403, "api.context.permissions.app_error", "owner or channel_admin required")
 		return
 	}
-	if err := h.bookmarks.Delete(r.Context(), bid); err != nil {
+	if err := h.bookmarks.Delete(r.Context(), cid, bid); err != nil {
 		writeError(w, 500, "api.bookmark.delete.app_error", err.Error())
 		return
 	}

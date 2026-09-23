@@ -127,7 +127,10 @@ type Patch struct {
 	SortOrder   *int
 }
 
-func (s *Service) Patch(ctx context.Context, id string, p Patch) (*Bookmark, error) {
+// Patch addresses the row through its channel. The handler authorizes the
+// caller against the channel in the request path, so resolving by id alone let
+// that authorization stand in for a channel the row does not belong to.
+func (s *Service) Patch(ctx context.Context, channelID, id string, p Patch) (*Bookmark, error) {
 	now := time.Now().UnixMilli()
 	tag, err := s.db.Pool.Exec(ctx, `
 		UPDATE channel_bookmarks SET
@@ -138,7 +141,7 @@ func (s *Service) Patch(ctx context.Context, id string, p Patch) (*Bookmark, err
 		  file_id      = CASE WHEN $10 THEN $11 ELSE file_id END,
 		  sort_order   = CASE WHEN $12 THEN $13 ELSE sort_order END,
 		  update_at    = $14
-		WHERE id=$1 AND delete_at=0
+		WHERE id=$1 AND channel_id=$15 AND delete_at=0
 	`,
 		id,
 		p.DisplayName != nil, derefStr(p.DisplayName),
@@ -148,6 +151,7 @@ func (s *Service) Patch(ctx context.Context, id string, p Patch) (*Bookmark, err
 		p.FileID != nil, derefStr(p.FileID),
 		p.SortOrder != nil, derefInt(p.SortOrder),
 		now,
+		channelID,
 	)
 	if err != nil {
 		return nil, err
@@ -158,12 +162,13 @@ func (s *Service) Patch(ctx context.Context, id string, p Patch) (*Bookmark, err
 	return s.Get(ctx, id)
 }
 
-// Delete soft-deletes a bookmark. Returns ErrNotFound if it didn't exist.
-func (s *Service) Delete(ctx context.Context, id string) error {
+// Delete soft-deletes a bookmark inside one channel. Returns ErrNotFound if
+// the channel has no such active row.
+func (s *Service) Delete(ctx context.Context, channelID, id string) error {
 	tag, err := s.db.Pool.Exec(ctx, `
 		UPDATE channel_bookmarks SET delete_at=$2, update_at=$2
-		WHERE id=$1 AND delete_at=0
-	`, id, time.Now().UnixMilli())
+		WHERE id=$1 AND channel_id=$3 AND delete_at=0
+	`, id, time.Now().UnixMilli(), channelID)
 	if err != nil {
 		return err
 	}
