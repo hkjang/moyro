@@ -12,6 +12,9 @@ import (
 	"github.com/hkjang/moyro/server/internal/ws"
 )
 
+// stampTimeout bounds the delivery stamp that releases a reminder's claim.
+const stampTimeout = 5 * time.Second
+
 // PostResolver returns the minimum post fields the worker needs for the
 // reminder payload. Kept as an interface so the worker doesn't pin a
 // concrete dependency on posts.Service at type-level.
@@ -113,9 +116,24 @@ func (w *Worker) fire(ctx context.Context, r *Reminder) {
 
 	w.hub.Broadcast(reminderFiredEvent(r, channelID, excerpt))
 
-	if err := w.svc.MarkDelivered(fireCtx, r.ID, time.Now().UnixMilli()); err != nil {
+	// The broadcast has already left, so release the claim on a context
+	// independent from the lookup budget and from shutdown. Losing this stamp
+	// only parks the row until its lease expires, and the next worker then
+	// broadcasts the same reminder a second time.
+	stampCtx, stampCancel := freshWorkerContext(ctx, stampTimeout)
+	defer stampCancel()
+	if err := w.svc.MarkDelivered(stampCtx, r.ID, time.Now().UnixMilli()); err != nil {
 		w.logger.Warn("reminder mark delivered", "id", r.ID, "err", err)
 	}
+}
+
+// freshWorkerContext detaches from the caller's deadline and cancellation so a
+// finished delivery is still recorded. Mirrors the scheduled-posts worker.
+func freshWorkerContext(parent context.Context, timeout time.Duration) (context.Context, context.CancelFunc) {
+	if parent == nil {
+		parent = context.Background()
+	}
+	return context.WithTimeout(context.WithoutCancel(parent), timeout)
 }
 
 func reminderFiredEvent(r *Reminder, channelID, excerpt string) ws.Event {

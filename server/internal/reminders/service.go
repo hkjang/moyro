@@ -4,7 +4,9 @@
 // link back to the channel.
 //
 // Same claim discipline as the scheduled-posts worker: delivered_at=0 is
-// pending, flip to -1 during dispatch, then stamp to now on success. A
+// pending, flip to -1 during dispatch, then stamp to now on success. The -1 is
+// a lease recorded in claimed_at, not a terminal state — a worker that stops
+// mid-dispatch would otherwise strand the row out of reach of every reader. A
 // dropped delivery isn't catastrophic (user can see the post already in
 // their sidebar badge) so we don't retry failed claims aggressively.
 package reminders
@@ -16,6 +18,12 @@ import (
 	"github.com/google/uuid"
 	"github.com/hkjang/moyro/server/internal/store"
 )
+
+// claimLeaseDuration bounds an in-flight dispatch. A worker that stops before
+// stamping delivered_at holds its row only this long; the next ClaimDue then
+// takes it back. Matches the scheduled-posts worker, whose delivery path has
+// the same shape and a far larger per-item budget than a reminder broadcast.
+const claimLeaseDuration = 2 * time.Minute
 
 type Reminder struct {
 	ID          string `json:"id"`
@@ -86,24 +94,27 @@ func (s *Service) Delete(ctx context.Context, id, userID string) (bool, error) {
 	return tag.RowsAffected() > 0, nil
 }
 
-// ClaimDue atomically picks pending reminders whose remind_at <= now.
-// Matches the scheduled-posts pattern.
+// ClaimDue atomically picks pending reminders whose remind_at <= now, plus any
+// in-flight claim whose lease has expired. Matches the scheduled-posts pattern:
+// a claim is a lease, not a terminal state, so a worker that stops mid-dispatch
+// does not strand its rows where no reader can reach them.
 func (s *Service) ClaimDue(ctx context.Context, now int64, limit int) ([]*Reminder, error) {
 	if limit <= 0 {
 		limit = 50
 	}
 	rows, err := s.db.Pool.Query(ctx, `
 		UPDATE post_reminders
-		SET delivered_at = -1
+		SET delivered_at = -1, claimed_at = $1
 		WHERE id IN (
 			SELECT id FROM post_reminders
-			WHERE delivered_at = 0 AND remind_at <= $1
+			WHERE (delivered_at = 0 AND remind_at <= $1)
+			   OR (delivered_at = -1 AND claimed_at <= $1 - $3)
 			ORDER BY remind_at ASC
 			LIMIT $2
 			FOR UPDATE SKIP LOCKED
 		)
 		RETURNING id, user_id, post_id, remind_at, create_at, delivered_at
-	`, now, limit)
+	`, now, limit, claimLeaseDuration.Milliseconds())
 	if err != nil {
 		return nil, err
 	}
@@ -119,8 +130,8 @@ func (s *Service) ClaimDue(ctx context.Context, now int64, limit int) ([]*Remind
 	return out, rows.Err()
 }
 
-// MarkDelivered stamps delivered_at = now.
+// MarkDelivered stamps delivered_at = now and releases the lease.
 func (s *Service) MarkDelivered(ctx context.Context, id string, at int64) error {
-	_, err := s.db.Pool.Exec(ctx, `UPDATE post_reminders SET delivered_at=$1 WHERE id=$2`, at, id)
+	_, err := s.db.Pool.Exec(ctx, `UPDATE post_reminders SET delivered_at=$1, claimed_at=0 WHERE id=$2`, at, id)
 	return err
 }
