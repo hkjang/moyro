@@ -595,6 +595,40 @@ func stripReservedProps(props map[string]any) map[string]any {
 	return filtered
 }
 
+// MergeEditedProps returns the props an edit should store on an existing post.
+// Creation already refuses client-supplied provenance — every transport builds
+// a Command and stripReservedProps runs before the INSERT — but the edit
+// routes hand posts.Update whatever the client sent, so without this the
+// author of any post could re-introduce on edit exactly the keys create had
+// just removed. Server-owned keys therefore come from the stored row and only
+// from there: the client can neither forge them nor erase the ones a trusted
+// adapter stamped.
+//
+// Trusted callers that legitimately set provenance (pluginhost's UpdatePost)
+// talk to posts.Update directly and are deliberately not routed through here.
+func MergeEditedProps(stored, client map[string]any) map[string]any {
+	merged := stripReservedProps(client)
+	carried := 0
+	for key := range stored {
+		if isReservedProp(key) {
+			carried++
+		}
+	}
+	if carried == 0 {
+		return merged
+	}
+	out := make(map[string]any, len(merged)+carried)
+	for key, value := range merged {
+		out[key] = value
+	}
+	for key, value := range stored {
+		if isReservedProp(key) {
+			out[key] = value
+		}
+	}
+	return out
+}
+
 func isReservedProp(key string) bool {
 	return key == "approval_request_id" || key == "scheduled_post_id" ||
 		key == "from_mcp" || key == "from_webhook" || key == "webhook_depth" ||

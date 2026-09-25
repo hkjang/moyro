@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/hkjang/moyro/server/internal/application/postcommand"
 	"github.com/hkjang/moyro/server/internal/audit"
 	"github.com/hkjang/moyro/server/internal/auth"
 	"github.com/hkjang/moyro/server/internal/commands"
@@ -506,6 +507,10 @@ func (h *handlers) patchPost(w http.ResponseWriter, r *http.Request) {
 	if req.Props != nil {
 		props = *req.Props
 	}
+	// Server-owned props come from the stored row, never from the body — see
+	// postcommand.MergeEditedProps. With no props key in the request this is
+	// the identity, so an omitted field stays an omitted field.
+	props = postcommand.MergeEditedProps(existing.Props, props)
 	updated, err := h.posts.Update(r.Context(), postID, uid, msg, props)
 	if err != nil {
 		writeError(w, 500, "api.post.patch.app_error", err.Error())
