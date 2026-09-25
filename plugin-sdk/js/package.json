@@ -1,6 +1,6 @@
 {
   "name": "@moyro/plugin-sdk",
-  "version": "0.2.37",
+  "version": "0.2.38",
   "type": "module",
   "main": "src/index.ts",
   "types": "src/index.ts"
