@@ -18,6 +18,7 @@ import (
 	"github.com/hkjang/moyro/server/internal/userstatus"
 	"github.com/hkjang/moyro/server/internal/webhooks"
 	"github.com/hkjang/moyro/server/internal/ws"
+	"github.com/jackc/pgx/v5"
 )
 
 // ----------------------------------------------------------------------
@@ -1022,11 +1023,19 @@ func (h *handlers) createUserPostReminder(w http.ResponseWriter, r *http.Request
 		return
 	}
 	post, err := h.posts.Get(r.Context(), postID)
-	if err != nil || post == nil {
+	if errors.Is(err, pgx.ErrNoRows) || (err == nil && post == nil) {
 		writeError(w, 404, "api.reminder.create.not_found", "post not found")
 		return
 	}
-	isMember, _ := h.channels.IsMember(r.Context(), post.ChannelID, target)
+	if err != nil {
+		writeError(w, 500, "api.reminder.create.app_error", err.Error())
+		return
+	}
+	isMember, err := h.channels.IsMember(r.Context(), post.ChannelID, target)
+	if err != nil {
+		writeError(w, 500, "api.reminder.create.member_check", err.Error())
+		return
+	}
 	if !isMember {
 		writeError(w, http.StatusForbidden, "api.reminder.create.forbidden", "not a channel member")
 		return

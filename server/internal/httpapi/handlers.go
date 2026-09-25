@@ -53,6 +53,7 @@ import (
 	"github.com/hkjang/moyro/server/internal/webhooks"
 	"github.com/hkjang/moyro/server/internal/workitems"
 	"github.com/hkjang/moyro/server/internal/ws"
+	"github.com/jackc/pgx/v5"
 )
 
 type handlers struct {
@@ -2175,8 +2176,12 @@ func (h *handlers) createPostReminder(w http.ResponseWriter, r *http.Request) {
 	}
 	uid := userID(r)
 	p, err := h.posts.Get(r.Context(), postID)
-	if err != nil || p == nil {
+	if errors.Is(err, pgx.ErrNoRows) || (err == nil && p == nil) {
 		writeError(w, 404, "api.reminder.create.not_found", "post not found")
+		return
+	}
+	if err != nil {
+		writeError(w, 500, "api.reminder.create.app_error", err.Error())
 		return
 	}
 	isMember, err := h.channels.IsMember(r.Context(), p.ChannelID, uid)
