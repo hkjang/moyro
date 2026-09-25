@@ -1787,7 +1787,20 @@ func (h *handlers) updatePost(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 400, "api.post.update.invalid_body", err.Error())
 		return
 	}
-	updated, err := h.posts.Update(r.Context(), postID, userID(r), req.Message, req.Props)
+	// Server-owned props come from the stored row, never from the body — see
+	// postcommand.MergeEditedProps. A missing row keeps the 403 below as the
+	// answer, so only a real storage fault short-circuits here.
+	existing, err := h.posts.Get(r.Context(), postID)
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		writeError(w, 500, "api.post.update.app_error", err.Error())
+		return
+	}
+	var storedProps map[string]any
+	if existing != nil {
+		storedProps = existing.Props
+	}
+	updated, err := h.posts.Update(r.Context(), postID, userID(r), req.Message,
+		postcommand.MergeEditedProps(storedProps, req.Props))
 	if err != nil {
 		writeError(w, 500, "api.post.update.app_error", err.Error())
 		return
