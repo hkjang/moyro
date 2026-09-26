@@ -1287,7 +1287,16 @@ func (h *handlers) patchCustomProfileValuesGlobal(w http.ResponseWriter, r *http
 	if h.audit != nil {
 		h.audit.LogAsync(uid, audit.ActionCustomValuesPatch, "", map[string]any{"count": len(values)})
 	}
-	out, _ := h.customProf.GetUserValues(r.Context(), uid)
+	// The write is committed by now, so the audit record above stands either
+	// way; what we cannot do is answer 200 with a body we failed to read.
+	// `null` is indistinguishable from "this user has nothing set" and would
+	// blank the profile form the caller just filled in. Same id the sibling
+	// GET uses — three paths read this map, they answer alike.
+	out, err := h.customProf.GetUserValues(r.Context(), uid)
+	if err != nil {
+		writeError(w, 500, "api.custom_profile.values.get.app_error", err.Error())
+		return
+	}
 	writeJSON(w, 200, out)
 }
 
@@ -1331,7 +1340,13 @@ func (h *handlers) patchUserCustomProfileValues(w http.ResponseWriter, r *http.R
 	if h.audit != nil {
 		h.audit.LogAsync(userID(r), audit.ActionCustomValuesPatch, uid, map[string]any{"count": len(values)})
 	}
-	out, _ := h.customProf.GetUserValues(r.Context(), uid)
+	// Read-back failure is a 500, not a 200 with a null map — see the global
+	// path above for why, and for why the audit record stays put.
+	out, err := h.customProf.GetUserValues(r.Context(), uid)
+	if err != nil {
+		writeError(w, 500, "api.custom_profile.values.get.app_error", err.Error())
+		return
+	}
 	writeJSON(w, 200, out)
 }
 
