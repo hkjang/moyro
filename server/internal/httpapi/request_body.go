@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 )
 
@@ -55,6 +56,35 @@ func decodeCollectionBody(w http.ResponseWriter, r *http.Request, errID string, 
 // resource bound.
 func decodeCappedBody(w http.ResponseWriter, r *http.Request, dst any) error {
 	return json.NewDecoder(http.MaxBytesReader(w, r.Body, collectionBodyMaxBytes)).Decode(dst)
+}
+
+// drainCappedBody reads and discards a request body under limit bytes and
+// reports how many bytes it consumed and whether the body fit. The multipart
+// upload stubs don't persist anything yet, so draining is all they do with the
+// bytes — but a drain that stopped because MaxBytesReader refused to hand over
+// byte limit+1 has not received the upload, and neither has one that died
+// mid-read. Answering 200 there tells the client its file landed, leaves an
+// audit row for an upload that never happened, and — for the chunk endpoint —
+// hands back the truncated count as the offset a resuming client continues
+// from. So call sites read `if n, ok := drainCappedBody(...); !ok { return }`
+// and must return before their audit call.
+//
+// errID stays with the caller because each endpoint documents its own
+// Mattermost-style id; as in decodeCollectionBody it is the status code, not
+// the id, that separates "too large" from "malformed".
+func drainCappedBody(w http.ResponseWriter, r *http.Request, limit int64, errID string) (int64, bool) {
+	n, err := io.Copy(io.Discard, http.MaxBytesReader(w, r.Body, limit))
+	if err == nil {
+		return n, true
+	}
+	var tooLarge *http.MaxBytesError
+	if errors.As(err, &tooLarge) {
+		writeError(w, http.StatusRequestEntityTooLarge, errID,
+			fmt.Sprintf("request body exceeds %d bytes", limit))
+		return n, false
+	}
+	writeError(w, http.StatusBadRequest, errID, err.Error())
+	return n, false
 }
 
 // tooManyBatchItems answers 400 and returns true when a batch that writes once

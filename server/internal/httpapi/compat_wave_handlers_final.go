@@ -11,7 +11,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"strconv"
 	"strings"
@@ -138,9 +137,12 @@ func (h *handlers) uploadTeamImage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// Cap at 10MB then drain — protects against a runaway upload while
-	// the stub doesn't persist anything.
-	r.Body = http.MaxBytesReader(w, r.Body, 10<<20)
-	_, _ = io.Copy(io.Discard, r.Body)
+	// the stub doesn't persist anything. A body past the cap was never
+	// received, so it gets 413 instead of a success envelope and an audit
+	// row for an upload that didn't happen.
+	if _, ok := drainCappedBody(w, r, 10<<20, "api.team.image.upload_too_large"); !ok {
+		return
+	}
 	if h.audit != nil {
 		h.audit.LogAsync(userID(r), audit.ActionTeamImageUpload, chi.URLParam(r, "teamID"), nil)
 	}
@@ -607,10 +609,11 @@ func (h *handlers) uploadBotIcon(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 403, "api.context.permissions.app_error", "system_admin required")
 		return
 	}
-	r.Body = http.MaxBytesReader(w, r.Body, 256<<10)
-	_, _ = io.Copy(io.Discard, r.Body)
+	if _, ok := drainCappedBody(w, r, 256<<10, "api.bot.icon.upload_too_large"); !ok {
+		return
+	}
 	if h.audit != nil {
-		h.audit.LogAsync(userID(r), audit.ActionBotIconUpload, chi.URLParam(r, "botID"), nil)
+		h.audit.LogAsync(userID(r), audit.ActionBotIconUpload, chi.URLParam(r, "botUserID"), nil)
 	}
 	writeJSON(w, 200, map[string]any{"status": "OK"})
 }
@@ -622,7 +625,7 @@ func (h *handlers) deleteBotIcon(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if h.audit != nil {
-		h.audit.LogAsync(userID(r), audit.ActionBotIconDelete, chi.URLParam(r, "botID"), nil)
+		h.audit.LogAsync(userID(r), audit.ActionBotIconDelete, chi.URLParam(r, "botUserID"), nil)
 	}
 	writeJSON(w, 200, map[string]any{"status": "OK"})
 }
@@ -918,8 +921,14 @@ func (h *handlers) uploadChunk(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 401, "api.context.session_expired.app_error", "missing token")
 		return
 	}
-	r.Body = http.MaxBytesReader(w, r.Body, 50<<20)
-	n, _ := io.Copy(io.Discard, r.Body)
+	// file_offset is where a resuming client continues from, so it can only
+	// ever be a count of bytes this server actually took. A chunk that
+	// overran the cap gets 413 rather than a truncated offset dressed up as
+	// progress.
+	n, ok := drainCappedBody(w, r, 50<<20, "api.upload.chunk.too_large")
+	if !ok {
+		return
+	}
 	if h.audit != nil {
 		h.audit.LogAsync(caller, audit.ActionUploadChunk, chi.URLParam(r, "uploadID"), map[string]any{"bytes": n})
 	}
