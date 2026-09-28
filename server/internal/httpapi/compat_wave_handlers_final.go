@@ -90,8 +90,9 @@ func (h *handlers) removeTeamMember(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 400, "api.team.member.remove.app_error", "missing user")
 		return
 	}
-	if uid != caller && !h.callerCanAdminTeam(r.Context(), tid, caller) {
-		writeError(w, 403, "api.context.permissions.app_error", "team_admin required")
+	// Self-removal is Leave: it never asks about team administration, so it
+	// must not touch the roles tables at all.
+	if uid != caller && !h.requireTeamAdmin(w, r, tid, caller, "team_admin required") {
 		return
 	}
 	changed, err := h.teams.RemoveMember(r.Context(), tid, uid)
@@ -117,8 +118,7 @@ func (h *handlers) deleteTeamImage(w http.ResponseWriter, r *http.Request) {
 	if h.denyGuestMutation(w, r, "api.team.image.guest_forbidden") {
 		return
 	}
-	if !h.callerCanAdminTeam(r.Context(), chi.URLParam(r, "teamID"), userID(r)) {
-		writeError(w, 403, "api.context.permissions.app_error", "team_admin required")
+	if !h.requireTeamAdmin(w, r, chi.URLParam(r, "teamID"), userID(r), "team_admin required") {
 		return
 	}
 	if h.audit != nil {
@@ -132,8 +132,7 @@ func (h *handlers) deleteTeamImage(w http.ResponseWriter, r *http.Request) {
 // console's drag-drop upload form doesn't hang on EOF; future work
 // would tie this into the existing files.Service backend.
 func (h *handlers) uploadTeamImage(w http.ResponseWriter, r *http.Request) {
-	if !h.callerCanAdminTeam(r.Context(), chi.URLParam(r, "teamID"), userID(r)) {
-		writeError(w, 403, "api.context.permissions.app_error", "team_admin required")
+	if !h.requireTeamAdmin(w, r, chi.URLParam(r, "teamID"), userID(r), "team_admin required") {
 		return
 	}
 	// Cap at 10MB then drain — protects against a runaway upload while
@@ -1145,8 +1144,7 @@ func (h *handlers) clearRecentCustomStatuses(w http.ResponseWriter, r *http.Requ
 // guest accounts. Same audit posture: we don't ship SMTP-based guest
 // invites yet, so this just stamps + 200s.
 func (h *handlers) inviteGuestsByEmail(w http.ResponseWriter, r *http.Request) {
-	if !h.callerCanAdminTeam(r.Context(), chi.URLParam(r, "teamID"), userID(r)) {
-		writeError(w, 403, "api.context.permissions.app_error", "team_admin required")
+	if !h.requireTeamAdmin(w, r, chi.URLParam(r, "teamID"), userID(r), "team_admin required") {
 		return
 	}
 	if h.audit != nil {

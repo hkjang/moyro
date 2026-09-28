@@ -135,8 +135,7 @@ func (h *handlers) updateTeamFull(w http.ResponseWriter, r *http.Request) {
 	teamID := chi.URLParam(r, "teamID")
 	uid := userID(r)
 	// Caller must be team_admin or system_admin to mutate the team row.
-	if !h.callerCanAdminTeam(r.Context(), teamID, uid) {
-		writeError(w, http.StatusForbidden, "api.context.permissions.app_error", "team admin required")
+	if !h.requireTeamAdmin(w, r, teamID, uid, "team admin required") {
 		return
 	}
 	var req updateTeamReq
@@ -184,8 +183,7 @@ func (h *handlers) updateTeamPrivacy(w http.ResponseWriter, r *http.Request) {
 	}
 	teamID := chi.URLParam(r, "teamID")
 	uid := userID(r)
-	if !h.callerCanAdminTeam(r.Context(), teamID, uid) {
-		writeError(w, http.StatusForbidden, "api.context.permissions.app_error", "team admin required")
+	if !h.requireTeamAdmin(w, r, teamID, uid, "team admin required") {
 		return
 	}
 	var req teamPrivacyReq
@@ -212,18 +210,47 @@ func (h *handlers) updateTeamPrivacy(w http.ResponseWriter, r *http.Request) {
 }
 
 // callerCanAdminTeam is a tiny helper that returns true if the caller is
-// system_admin OR team_admin for the given team.
-func (h *handlers) callerCanAdminTeam(ctx context.Context, teamID, uid string) bool {
+// system_admin OR team_admin for the given team. A missing users row (deleted
+// account) or a missing team_members row (not on the team) is an answer rather
+// than a fault, so pgx.ErrNoRows folds into "not an admin" and the caller
+// still gets its 403. Anything else — a dead connection, a broken table, a
+// cancelled context — is reported so the handler can say so.
+func (h *handlers) callerCanAdminTeam(ctx context.Context, teamID, uid string) (bool, error) {
 	if uid == "" {
+		return false, nil
+	}
+	ok, err := h.auth.HasRole(ctx, uid, "system_admin")
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return false, err
+	}
+	if ok {
+		return true, nil
+	}
+	ok, err = h.teams.IsTeamAdmin(ctx, teamID, uid)
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return false, err
+	}
+	return ok, nil
+}
+
+// requireTeamAdmin gates a handler on callerCanAdminTeam and writes the
+// refusal itself. A storage fault while resolving the caller's roles is not an
+// authorization verdict, so it surfaces as 500 instead of the permanent 403 no
+// client retries — the same split listChannelViews already makes for channel
+// membership. forbidden stays a parameter because the existing call sites
+// disagree on the wording and those response bodies are contract.
+func (h *handlers) requireTeamAdmin(w http.ResponseWriter, r *http.Request, teamID, uid, forbidden string) bool {
+	ok, err := h.callerCanAdminTeam(r.Context(), teamID, uid)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "api.context.permissions.app_error",
+			"failed to check team admin permissions")
 		return false
 	}
-	if ok, _ := h.auth.HasRole(ctx, uid, "system_admin"); ok {
-		return true
+	if !ok {
+		writeError(w, http.StatusForbidden, "api.context.permissions.app_error", forbidden)
+		return false
 	}
-	if ok, _ := h.teams.IsTeamAdmin(ctx, teamID, uid); ok {
-		return true
-	}
-	return false
+	return true
 }
 
 // --- Pillar C: Webhooks + Bot updates (3 endpoints) --------------------
@@ -714,8 +741,7 @@ func (h *handlers) setTeamMemberRoles(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnauthorized, "api.context.session_expired.app_error", "missing token")
 		return
 	}
-	if !h.callerCanAdminTeam(r.Context(), teamID, caller) {
-		writeError(w, http.StatusForbidden, "api.context.permissions.app_error", "team admin required")
+	if !h.requireTeamAdmin(w, r, teamID, caller, "team admin required") {
 		return
 	}
 	var req rolesPayload
@@ -1245,8 +1271,7 @@ func (h *handlers) regenerateTeamInviteID(w http.ResponseWriter, r *http.Request
 		writeError(w, 400, "api.team.invite.regen.missing_id", "team id required")
 		return
 	}
-	if !h.callerCanAdminTeam(r.Context(), teamID, caller) {
-		writeError(w, http.StatusForbidden, "api.context.permissions.app_error", "team admin required")
+	if !h.requireTeamAdmin(w, r, teamID, caller, "team admin required") {
 		return
 	}
 	// 90-day TTL, unlimited uses — matches the contract of Mattermost's
@@ -1289,8 +1314,7 @@ func (h *handlers) inviteTeamMembersByEmail(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	teamID := chi.URLParam(r, "teamID")
-	if !h.callerCanAdminTeam(r.Context(), teamID, caller) {
-		writeError(w, http.StatusForbidden, "api.context.permissions.app_error", "team admin required")
+	if !h.requireTeamAdmin(w, r, teamID, caller, "team admin required") {
 		return
 	}
 	var req inviteEmailReq
