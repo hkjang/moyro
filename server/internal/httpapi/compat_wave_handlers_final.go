@@ -132,6 +132,9 @@ func (h *handlers) deleteTeamImage(w http.ResponseWriter, r *http.Request) {
 // console's drag-drop upload form doesn't hang on EOF; future work
 // would tie this into the existing files.Service backend.
 func (h *handlers) uploadTeamImage(w http.ResponseWriter, r *http.Request) {
+	if h.denyGuestMutation(w, r, "api.team.image.guest_forbidden") {
+		return
+	}
 	if !h.requireTeamAdmin(w, r, chi.URLParam(r, "teamID"), userID(r), "team_admin required") {
 		return
 	}

@@ -35,6 +35,7 @@ import (
 // audit services and the chi patterns copied from router.go:
 //   - a missing row is still an answer — a non-member and a deleted user get
 //     the same 403 they always did, because pgx.ErrNoRows means "not an admin"
+//     (unless a preceding guest guard rejects the deleted session with 401)
 //   - anything else is a fault and must surface as 500, before the audit row,
 //     the write and the broadcast
 //
@@ -125,7 +126,7 @@ func TestTeamAdminCheckFaultIsNotForbidden(t *testing.T) {
 		{
 			name: "upload team image", method: http.MethodPost,
 			okPath: "/teams/team-main/image", denyPath: "/teams/team-main/image",
-			forbidden: "team_admin required",
+			forbidden: "team_admin required", guestGated: true,
 		},
 		{
 			name: "invite guests by email", method: http.MethodPost,
