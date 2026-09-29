@@ -3154,9 +3154,18 @@ func (h *handlers) fireIncomingWebhook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// Creator must still be a member of the channel — if they were removed
-	// after the hook was minted, refuse rather than leaking posts.
+	// after the hook was minted, refuse rather than leaking posts. A lookup
+	// that never produced an answer is not a refusal: IsMember runs a
+	// SELECT EXISTS, so it always returns a row and every error is a real
+	// fault. Reporting one as 403 would tell the sender the hook is finished
+	// and stop it retrying. Fire's own membership fault below already answers
+	// the same question with 500 under this id; the two agree here.
 	ok, err := h.channels.IsMember(r.Context(), hk.ChannelID, hk.CreatorID)
-	if err != nil || !ok {
+	if err != nil {
+		writeError(w, 500, "api.webhook.incoming.fire.permission_check", err.Error())
+		return
+	}
+	if !ok {
 		writeError(w, 403, "api.webhook.incoming.fire.creator_not_member", "hook creator no longer a channel member")
 		return
 	}
