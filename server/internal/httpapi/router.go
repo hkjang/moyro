@@ -1051,7 +1051,14 @@ func New(cfg *config.Config, db *store.DB, hub *ws.Hub, host *pluginhost.Host, l
 			r.Post("/client_perf", h.postClientPerf)
 			r.Get("/permissions/ancillary", h.postPermissionsAncillary)
 			r.Post("/permissions/ancillary", h.postPermissionsAncillary)
-			r.Post("/teams/{teamID}/invite/email", h.inviteTeamMembersFromBody)
+			// NOTE: /teams/{teamID}/invite/email is deliberately NOT
+			// registered here. It already belongs to
+			// inviteTeamMembersByEmail above, which gates on
+			// requireTeamAdmin and writes a team.invite.email audit
+			// row. chi keeps one handler per method+pattern, so a
+			// second registration is not a fallback — it replaces the
+			// gated handler with this stub and silently drops both the
+			// authorization check and the audit trail.
 			r.Post("/teams/members/invite", h.inviteTeamMembersFromBody)
 			r.Get("/custom_profile_attributes/group", h.listCustomProfileFields)
 
