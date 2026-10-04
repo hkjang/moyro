@@ -49,6 +49,31 @@ func decodeCollectionBody(w http.ResponseWriter, r *http.Request, errID string, 
 	return true
 }
 
+// decodeOptionalCollectionBody is decodeCollectionBody for a write batch whose
+// body is optional. json.Decode answers io.EOF for an absent body, and a
+// bulk endpoint that has always treated "no body" as "an empty batch" keeps
+// doing so — nothing documents that tolerance, but no caller was found to
+// depend on it either, so it is preserved conservatively rather than turned
+// into a 400 by this change. Every *other* decode failure is refused exactly as
+// decodeCollectionBody refuses it, because the alternative is reporting a
+// write that never happened: a body over the cap or truncated mid-array
+// leaves the destination zeroed, and answering 200 "count: 0" tells the
+// sender the batch was processed and stops it retrying.
+func decodeOptionalCollectionBody(w http.ResponseWriter, r *http.Request, errID string, dst any) bool {
+	err := decodeCappedBody(w, r, dst)
+	if err == nil || errors.Is(err, io.EOF) {
+		return true
+	}
+	var tooLarge *http.MaxBytesError
+	if errors.As(err, &tooLarge) {
+		writeError(w, http.StatusRequestEntityTooLarge, errID,
+			fmt.Sprintf("request body exceeds %d bytes", collectionBodyMaxBytes))
+		return false
+	}
+	writeError(w, http.StatusBadRequest, errID, err.Error())
+	return false
+}
+
 // decodeCappedBody is decodeCollectionBody without the response. A handful of
 // compat stubs deliberately tolerate a malformed body (they decode with
 // `_ =` and treat the result as empty); they still need the read capped, but

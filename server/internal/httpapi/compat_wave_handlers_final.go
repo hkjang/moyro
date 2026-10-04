@@ -1111,7 +1111,14 @@ func (h *handlers) bulkDeleteUsers(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		UserIDs []string `json:"user_ids"`
 	}
-	_ = decodeCappedBody(w, r, &body)
+	// Refuse an undecodable body before the audit loop: this is the one write
+	// batch among the stubs, so request_body.go's "a write batch rejects
+	// rather than silently shrinking" rule applies to it, and 200 "count: 0"
+	// would be a success report for a delete that never ran. A bodyless call
+	// still means an empty batch.
+	if !decodeOptionalCollectionBody(w, r, "api.user.bulk_delete.invalid_body", &body) {
+		return
+	}
 	caller := userID(r)
 	if tooManyBatchItems(w, "api.user.bulk_delete.too_many", len(body.UserIDs)) {
 		return

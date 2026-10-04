@@ -66,8 +66,11 @@ func TestSettingsUpdatesAreSerializedThroughActivation(t *testing.T) {
 	<-firstEntered
 	go func() {
 		unlock := native.beginSettingsUpdate()
-		close(secondEntered)
+		// Record the update before announcing entry: secondEntered is what the
+		// assertions below wait on, so signalling first lets them read the
+		// counter in the window before this Add lands.
 		completed.Add(1)
+		close(secondEntered)
 		unlock()
 	}()
 
