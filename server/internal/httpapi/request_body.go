@@ -52,8 +52,9 @@ func decodeCollectionBody(w http.ResponseWriter, r *http.Request, errID string, 
 // decodeOptionalCollectionBody is decodeCollectionBody for a write batch whose
 // body is optional. json.Decode answers io.EOF for an absent body, and a
 // bulk endpoint that has always treated "no body" as "an empty batch" keeps
-// doing so — that tolerance is a published contract we have no reason to
-// break. Every *other* decode failure is refused exactly as
+// doing so — nothing documents that tolerance, but no caller was found to
+// depend on it either, so it is preserved conservatively rather than turned
+// into a 400 by this change. Every *other* decode failure is refused exactly as
 // decodeCollectionBody refuses it, because the alternative is reporting a
 // write that never happened: a body over the cap or truncated mid-array
 // leaves the destination zeroed, and answering 200 "count: 0" tells the
