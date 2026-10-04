@@ -170,23 +170,49 @@ if ! wait_for_health; then
   exit 1
 fi
 
-probe_get "${base_url}/" | grep -F '<title>moyro</title>' >/dev/null
-probe_get "${base_url}/api/v4/config/client" | grep -F "\"Version\":\"${version}\"" >/dev/null
-
-login() {
-  docker exec "${postgres_container}" wget -q -T 10 -Y off -O - \
-    --header 'Content-Type: application/json' \
-    --post-data "{\"login_id\":\"admin@moyro.local\",\"password\":\"${bootstrap_password}\"}" \
-    "${base_url}/api/v4/users/login" >/dev/null
+# A bare `probe_get ... | grep -F ...` under `set -Eeuo pipefail` exits 1 with
+# nothing written anywhere, so a release run that fails here leaves a log that
+# cannot distinguish a dead probe from a page that is served but does not
+# match. Keep the same assertion and report what was expected and what arrived.
+assert_probe_contains() {
+  local url="$1"
+  local expected="$2"
+  local body
+  if ! body="$(probe_get "${url}")"; then
+    echo "probe of ${url} failed before it could be checked for ${expected}" >&2
+    docker logs --tail 50 "${app_container}" >&2 || true
+    exit 1
+  fi
+  if ! printf '%s' "${body}" | grep -F "${expected}" >/dev/null; then
+    echo "${url} does not contain ${expected}" >&2
+    echo "received ${#body} bytes, first 2000:" >&2
+    printf '%s\n' "${body:0:2000}" >&2
+    exit 1
+  fi
 }
 
-login
+assert_probe_contains "${base_url}/" '<title>moyro</title>'
+assert_probe_contains "${base_url}/api/v4/config/client" "\"Version\":\"${version}\""
+
+login() {
+  local label="$1"
+  if ! docker exec "${postgres_container}" wget -q -T 10 -Y off -O - \
+    --header 'Content-Type: application/json' \
+    --post-data "{\"login_id\":\"admin@moyro.local\",\"password\":\"${bootstrap_password}\"}" \
+    "${base_url}/api/v4/users/login" >/dev/null; then
+    echo "bootstrap login failed ${label}" >&2
+    docker logs --tail 50 "${app_container}" >&2 || true
+    exit 1
+  fi
+}
+
+login "on first start"
 docker restart "${app_container}" >/dev/null
 if ! wait_for_health; then
   echo "moyro did not recover after restart" >&2
   exit 1
 fi
-login
+login "after restart"
 
 configured_names="$(docker inspect --format '{{range .Config.Env}}{{println .}}{{end}}' "${app_container}" |
   cut -d= -f1 | sed '/^$/d' | sort)"
