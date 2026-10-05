@@ -1293,7 +1293,14 @@ func (h *handlers) patchCustomProfileValuesGlobal(w http.ResponseWriter, r *http
 		return
 	}
 	var values map[string]json.RawMessage
-	_ = decodeCappedBody(w, r, &values)
+	// Not `_ =`: a map is a collection body like any other (request_body.go),
+	// and here a dropped decode error is invisible — an empty map is a no-op
+	// write, then the read-back below answers 200 with the *stored* map, which
+	// is byte-identical to a successful save. Over-cap and truncated bodies
+	// have to be refused before the audit row claims they landed.
+	if !decodeOptionalCollectionBody(w, r, "api.custom_profile.values.patch.invalid_body", &values) {
+		return
+	}
 	if err := h.customProf.PatchUserValues(r.Context(), uid, values); err != nil {
 		writeError(w, 500, "api.custom_profile.values.patch.app_error", err.Error())
 		return
@@ -1346,7 +1353,12 @@ func (h *handlers) patchUserCustomProfileValues(w http.ResponseWriter, r *http.R
 		return
 	}
 	var values map[string]json.RawMessage
-	_ = decodeCappedBody(w, r, &values)
+	// Same refusal as the global path, same error id. It matters more here:
+	// this is the admin-backfills-another-user's-profile route, so a swallowed
+	// body left a false success in the audit ledger under an operator's name.
+	if !decodeOptionalCollectionBody(w, r, "api.custom_profile.values.patch.invalid_body", &values) {
+		return
+	}
 	if err := h.customProf.PatchUserValues(r.Context(), uid, values); err != nil {
 		writeError(w, 500, "api.custom_profile.values.patch.app_error", err.Error())
 		return
