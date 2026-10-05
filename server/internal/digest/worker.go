@@ -12,6 +12,7 @@ import (
 	"encoding/json"
 	"log/slog"
 	"time"
+	"unicode/utf8"
 
 	"github.com/hkjang/moyro/server/internal/email"
 	"github.com/hkjang/moyro/server/internal/store"
@@ -176,18 +177,28 @@ func (w *Worker) loadMentions(ctx context.Context, userID string) ([]email.Diges
 		if err := rows.Scan(&uname, &ch, &msg, &postedAt); err != nil {
 			return nil, err
 		}
-		excerpt := msg
-		if len(excerpt) > 160 {
-			excerpt = excerpt[:160] + "…"
-		}
 		out = append(out, email.DigestMention{
 			Username:    uname,
 			ChannelName: ch,
-			Excerpt:     excerpt,
+			Excerpt:     truncateRunes(msg, 160),
 			PostedAt:    time.UnixMilli(postedAt).Local().Format("1/2 15:04"),
 		})
 	}
 	return out, rows.Err()
+}
+
+// truncateRunes shortens a mention excerpt to at most limit characters. The
+// cut counts runes rather than bytes because the digest templates are Korean
+// and one Hangul syllable is three UTF-8 bytes: a byte cut lands inside a
+// character far more often than not, and the excerpt that reaches the
+// recipient is then not valid UTF-8 — mail clients render it as a replacement
+// glyph. ASCII excerpts are unaffected, since there a rune is a byte. Mirrors
+// the rune-counting cut knowledge.truncateRunes already uses.
+func truncateRunes(value string, limit int) string {
+	if utf8.RuneCountInString(value) <= limit {
+		return value
+	}
+	return string([]rune(value)[:limit]) + "…"
 }
 
 // stamp writes last_digest_at = now into the user's email_prefs JSONB.
