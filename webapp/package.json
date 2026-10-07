@@ -1,6 +1,6 @@
 {
   "name": "moyro-web",
-  "version": "0.2.47",
+  "version": "0.2.49",
   "private": true,
   "type": "module",
   "scripts": {
