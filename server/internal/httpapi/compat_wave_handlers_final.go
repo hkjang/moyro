@@ -793,10 +793,24 @@ func (h *handlers) searchFiles(w http.ResponseWriter, r *http.Request) {
 	for rows.Next() {
 		var fi files.FileInfo
 		if err := rows.Scan(&fi.ID, &fi.UserID, &fi.PostID, &fi.ChannelID, &fi.Name, &fi.Size, &fi.MimeType, &fi.CreateAt, &fi.Width, &fi.Height, &fi.ThumbnailPath, &fi.DeleteAt); err != nil {
-			continue
+			// Not `continue`: an unreadable row must not disappear from a
+			// 200. pgx also marks a Scan failure fatal on the Rows, so the
+			// guard below would catch it anyway — reporting it here keeps
+			// that guarantee local instead of borrowing it from the driver.
+			writeError(w, 500, "api.file.search.app_error", err.Error())
+			return
 		}
 		order = append(order, fi.ID)
 		infos[fi.ID] = fi
+	}
+	// A failure that arrives mid-iteration only ends the loop; Next() answers
+	// false and parks the error here. Without this the caller would read an
+	// outage as "no file matches", so report it with the same 500 the failed
+	// query above uses — and before the audit row, so a refusal is not logged
+	// as a search.
+	if err := rows.Err(); err != nil {
+		writeError(w, 500, "api.file.search.app_error", err.Error())
+		return
 	}
 	if h.audit != nil {
 		h.audit.LogAsync(caller, audit.ActionFileSearch, "", map[string]any{"terms": terms, "scope": "global"})
@@ -851,10 +865,18 @@ func (h *handlers) searchTeamFiles(w http.ResponseWriter, r *http.Request) {
 	for rows.Next() {
 		var fi files.FileInfo
 		if err := rows.Scan(&fi.ID, &fi.UserID, &fi.PostID, &fi.ChannelID, &fi.Name, &fi.Size, &fi.MimeType, &fi.CreateAt, &fi.Width, &fi.Height, &fi.ThumbnailPath, &fi.DeleteAt); err != nil {
-			continue
+			// See searchFiles: a row we cannot read is reported, not dropped.
+			writeError(w, 500, "api.file.search.team.app_error", err.Error())
+			return
 		}
 		order = append(order, fi.ID)
 		infos[fi.ID] = fi
+	}
+	// See searchFiles: Next() swallows a mid-iteration failure, so an outage
+	// would otherwise leave this team search reporting "no match" with a 200.
+	if err := rows.Err(); err != nil {
+		writeError(w, 500, "api.file.search.team.app_error", err.Error())
+		return
 	}
 	if h.audit != nil {
 		h.audit.LogAsync(caller, audit.ActionFileSearch, tid, map[string]any{"terms": terms, "scope": "team"})
