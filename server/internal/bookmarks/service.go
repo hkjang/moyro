@@ -178,24 +178,94 @@ func (s *Service) Delete(ctx context.Context, channelID, id string) error {
 	return nil
 }
 
-// Reorder sets the sort_order of `id` and re-shuffles the rest of the
-// channel's bookmarks so positions are dense and conflict-free. We don't
-// need atomic correctness here (race-condition leaks just mean two clients
-// see slightly different orders for ~100ms) so this is a simple two-shot
-// update rather than a single window-function CTE.
+// Reorder moves `id` to position newPos within its channel and rewrites every
+// active position in that channel to a dense 0..n-1 sequence, so no two
+// bookmarks in one channel ever share a sort_order. Writing only the target
+// row would leave duplicates behind, and List breaks ties on create_at — so
+// the older bookmark would stay in front and the move would land a slot off
+// its target, or be swallowed entirely.
+//
+// newPos is 0-based, matching Mattermost's endpoint, and is clamped into range
+// rather than rejected: an out-of-range value means "either end", which is the
+// response contract callers already have. Note Create still appends with
+// COALESCE(MAX(sort_order),0)+1, so a channel that has never been reordered
+// starts at 1 while a reordered one starts at 0. List exposes only relative
+// order, so that asymmetry is invisible to clients.
+//
+// The read that decides the sequence and the write that applies it share one
+// transaction. Without that, two concurrent reorders can interleave and
+// recreate the duplicate positions this exists to prevent.
 func (s *Service) Reorder(ctx context.Context, channelID, id string, newPos int) error {
-	now := time.Now().UnixMilli()
-	tag, err := s.db.Pool.Exec(ctx, `
-		UPDATE channel_bookmarks SET sort_order=$3, update_at=$4
-		WHERE id=$1 AND channel_id=$2 AND delete_at=0
-	`, id, channelID, newPos, now)
+	tx, err := s.db.Pool.Begin(ctx)
 	if err != nil {
 		return err
 	}
-	if tag.RowsAffected() == 0 {
+	defer tx.Rollback(ctx)
+
+	// Same ordering as List, so the sequence being rewritten is the one the
+	// client was looking at when it asked for the move.
+	rows, err := tx.Query(ctx, `
+		SELECT id FROM channel_bookmarks
+		WHERE channel_id=$1 AND delete_at=0
+		ORDER BY sort_order ASC, create_at ASC
+	`, channelID)
+	if err != nil {
+		return err
+	}
+	current := []string{}
+	for rows.Next() {
+		var rowID string
+		if err := rows.Scan(&rowID); err != nil {
+			rows.Close()
+			return err
+		}
+		current = append(current, rowID)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return err
+	}
+
+	from := -1
+	for i, rowID := range current {
+		if rowID == id {
+			from = i
+			break
+		}
+	}
+	if from < 0 {
 		return ErrNotFound
 	}
-	return nil
+
+	rest := make([]string, 0, len(current))
+	rest = append(rest, current[:from]...)
+	rest = append(rest, current[from+1:]...)
+	if newPos < 0 {
+		newPos = 0
+	}
+	if newPos > len(rest) {
+		newPos = len(rest)
+	}
+	ordered := make([]string, 0, len(current))
+	ordered = append(ordered, rest[:newPos]...)
+	ordered = append(ordered, id)
+	ordered = append(ordered, rest[newPos:]...)
+
+	positions := make([]int, len(ordered))
+	for i := range ordered {
+		positions[i] = i
+	}
+	// One statement for the whole channel. The channel and delete_at filters
+	// keep another channel's rows and soft-deleted rows out of the rewrite.
+	if _, err := tx.Exec(ctx, `
+		UPDATE channel_bookmarks b
+		SET sort_order=x.sort_order, update_at=$1
+		FROM unnest($2::text[], $3::int[]) AS x(id, sort_order)
+		WHERE b.id = x.id AND b.channel_id=$4 AND b.delete_at=0
+	`, time.Now().UnixMilli(), ordered, positions, channelID); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
 }
 
 func derefStr(p *string) string {
