@@ -300,7 +300,10 @@ type postIDsReactionsReq struct {
 // ids. Returns `{post_id: [reactions...]}`. Mattermost's contract caps
 // at 200 ids; we mirror that. Visibility-gated by channel membership:
 // the reactions for a post in a channel the caller can't see are
-// silently filtered out (rather than 403'ing the whole batch).
+// silently filtered out (rather than 403'ing the whole batch). A
+// failure to *read* a visible post's reactions is not that, and is not
+// filtered: an omitted key means "no reactions", so folding an outage
+// into it would report emoji the user can see as gone.
 func (h *handlers) postsByIDsReactions(w http.ResponseWriter, r *http.Request) {
 	caller := userID(r)
 	if caller == "" {
@@ -343,7 +346,14 @@ func (h *handlers) postsByIDsReactions(w http.ResponseWriter, r *http.Request) {
 		}
 		list, err := h.reactions.ListForPost(r.Context(), pid)
 		if err != nil {
-			continue
+			// Not a visibility decision: the post is visible and we
+			// failed to read its reactions. Skipping it would leave
+			// the key out of the map, which is how this endpoint
+			// says "no reactions here" — an outage would arrive as
+			// "nobody reacted". Refuse the batch with the 500
+			// listReactions already owns for this same call.
+			writeError(w, 500, "api.reaction.list.app_error", err.Error())
+			return
 		}
 		out[pid] = list
 	}
