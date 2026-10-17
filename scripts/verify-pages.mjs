@@ -256,6 +256,25 @@ for (const required of [
   if (!index.includes(required)) failures.push(`index.html is missing required SEO/navigation marker: ${required}`);
 }
 
+// The expected release version is derived from webapp/package.json rather than written here as a
+// literal. This gate is itself one of the files a release has to carry forward, so a literal would
+// make it hold a hand-copied duplicate of the very answer it checks: miss one copy and
+// `node scripts/verify-pages.mjs` fails identically in ci.yml and release.yml on every re-run.
+// Comparing the declared sources against each other also catches drift between them.
+const versionSources = new Map([
+  ["webapp/package.json", readPackageVersion(join(root, "webapp", "package.json"))],
+  ["plugin-sdk/js/package.json", readPackageVersion(join(root, "plugin-sdk", "js", "package.json"))],
+  ["docs/openapi-v4.yaml", readOpenAPIVersion(join(root, "docs", "openapi-v4.yaml"))],
+  ["docs/openapi-moyro.yaml", readOpenAPIVersion(join(root, "docs", "openapi-moyro.yaml"))],
+]);
+const declaredVersion = versionSources.get("webapp/package.json");
+for (const [name, version] of versionSources) {
+  if (version !== null && declaredVersion !== null && version !== declaredVersion) {
+    failures.push(`declared version in ${name} is ${version}, want ${declaredVersion} from webapp/package.json`);
+  }
+}
+const releaseVersion = declaredVersion === null ? null : `v${declaredVersion}`;
+
 for (const releasePage of [
   join(docs, "index.html"),
   join(docs, "guides", "user-guide.html"),
@@ -263,7 +282,9 @@ for (const releasePage of [
   join(docs, "guides", "offline-deployment.html"),
 ]) {
   const html = htmlByFile.get(releasePage) ?? "";
-  if (!html.includes("v0.2.51")) failures.push(`v0.2.51 release marker is missing in ${relative(root, releasePage)}`);
+  if (releaseVersion && !html.includes(releaseVersion)) {
+    failures.push(`${releaseVersion} release marker is missing in ${relative(root, releasePage)}`);
+  }
   if (/v0\.1\.[01]/.test(html)) failures.push(`stale v0.1.x release marker remains in ${relative(root, releasePage)}`);
   if (!html.includes('"dateModified": "2026-09-07"')) {
     failures.push(`2026-09-07 dateModified is missing in ${relative(root, releasePage)}`);
@@ -283,7 +304,10 @@ for (const page of ["https://hkjang.github.io/moyro/", "https://hkjang.github.io
 const sitemapDates = [...sitemap.matchAll(/<lastmod>([^<]+)<\/lastmod>/g)].map((match) => match[1]);
 if (sitemapDates.filter((date) => date === "2026-09-07").length !== 4
   || sitemapDates.filter((date) => date === "2026-08-30").length !== 1) {
-  failures.push("sitemap must date current v0.2.51 pages at 2026-09-07 and the v0.2.1 gallery at 2026-08-30");
+  failures.push(
+    `sitemap must date current ${releaseVersion ?? "release"} pages at 2026-09-07 ` +
+    "and the v0.2.1 gallery at 2026-08-30",
+  );
 }
 
 try {
@@ -319,6 +343,30 @@ function walk(directory) {
     else if (entry.isFile() && statSync(path).size >= 0) result.push(path);
   }
   return result;
+}
+
+function readPackageVersion(file) {
+  try {
+    const { version } = JSON.parse(readFileSync(file, "utf8"));
+    if (typeof version !== "string" || !version) throw new Error("no string version field");
+    return version;
+  } catch (error) {
+    failures.push(`cannot read the declared version from ${relative(root, file)}: ${error.message}`);
+    return null;
+  }
+}
+
+function readOpenAPIVersion(file) {
+  try {
+    // info.version is the only two-space-indented `version:` line in both specs, so matching it
+    // narrowly keeps this gate on node's standard library instead of adding a YAML parser.
+    const match = /^\s{2}version:\s*(\S+)\s*$/m.exec(readFileSync(file, "utf8"));
+    if (!match) throw new Error("no indented info.version line");
+    return match[1];
+  } catch (error) {
+    failures.push(`cannot read the declared version from ${relative(root, file)}: ${error.message}`);
+    return null;
+  }
 }
 
 function readJPEGDimensions(bytes) {
